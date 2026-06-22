@@ -1,0 +1,22 @@
+# Binaries
+/sprite-agent
+/bin/
+*.exe
+*.test
+*.out
+
+# Local env / secrets (never commit credentials)
+.env
+.env.*
+!.env.example
+
+# Go build cache artifacts
+/vendor/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Runtime data
+/data/
+*.log
