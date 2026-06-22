@@ -3,6 +3,8 @@ package spawn
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,18 +16,21 @@ import (
 	"github.com/clouvet/sprite-agent/internal/config"
 )
 
-// apiSpawner creates sprites via the sprites REST API.
+// apiSpawner creates sprites via the sprites REST API (POST /v1/sprites, Bearer
+// auth with the full token). The endpoint, auth, and create body (name required;
+// env + labels accepted) were verified against the live cl-sprites API. The base
+// URL is overridable via SPRITE_API_BASE.
 //
-// NOTE (build brief / DESIGN §10): the token + request assembly below are real
-// and unit-tested. The live HTTP call is the seam that could not be verified at
-// build time (no SPRITE_API_TOKEN was present), so the exact endpoint/payload
-// may need confirming against the sprites API at first use. The base URL is
-// overridable via SPRITE_API_BASE.
+// What this does NOT do: provision the sprite-agent artifact onto the new sprite.
+// A bare create yields a base-environment sprite; making it boot sprite-agent and
+// register into the brain needs a follow-up provisioning step (push/build the
+// binary + run it as a service) — see BUILD_REPORT.
 type apiSpawner struct {
 	cfg    config.Config
 	token  tokenParts
 	base   string
 	client *http.Client
+	newID  func() string // short unique suffix for synthesized sprite names
 }
 
 // tokenParts is the SPRITE_API_TOKEN shape: org-slug/org-id/token-id/token-value.
@@ -60,23 +65,43 @@ func newAPISpawner(cfg config.Config) Spawner {
 		token:  tp,
 		base:   strings.TrimRight(base, "/"),
 		client: &http.Client{Timeout: 60 * time.Second},
+		newID:  randomSuffix,
 	}
+}
+
+// randomSuffix returns 8 hex chars for synthesizing unique sprite names.
+func randomSuffix() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "00000000"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func (a *apiSpawner) Available() bool { return true }
 
-// createSpriteRequest is the JSON body assembled for the sprites API. Kept as a
-// named type so it is constructed/serialized identically in tests.
+// createSpriteRequest is the JSON body for POST /v1/sprites. Verified against
+// the live API (cl-sprites): name is required; env + labels are accepted. The
+// sprite name carries the restricted-token prefix, so name_prefix/org_id are not
+// part of the body.
 type createSpriteRequest struct {
-	Name       string            `json:"name,omitempty"`
-	NamePrefix string            `json:"name_prefix,omitempty"`
-	OrgID      string            `json:"org_id"`
-	Labels     map[string]string `json:"labels,omitempty"`
-	Env        map[string]string `json:"env"`
+	Name   string            `json:"name"`
+	Labels map[string]string `json:"labels,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
+}
+
+// spriteName resolves the explicit name, or synthesizes <prefix><id> using the
+// new agent id so the restricted-token name_prefix cap is honored.
+func spriteName(req Request, newID string) string {
+	if req.Name != "" {
+		return req.Name
+	}
+	return req.NamePrefix + newID
 }
 
 // buildCreateRequest assembles the create-sprite payload, including the
-// bootstrap env that points the new sprite at the same brain + artifact.
+// bootstrap env that points the new sprite at the same brain + artifact. The
+// sprite's name is also its SPRITE_AGENT_ID so it registers under that id.
 func (a *apiSpawner) buildCreateRequest(req Request) createSpriteRequest {
 	role := req.Role
 	if role == "" {
@@ -86,16 +111,11 @@ func (a *apiSpawner) buildCreateRequest(req Request) createSpriteRequest {
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
-	newID := req.Name
-	if newID == "" {
-		newID = req.NamePrefix + "spawned"
-	}
+	name := spriteName(req, a.newID())
 	return createSpriteRequest{
-		Name:       req.Name,
-		NamePrefix: req.NamePrefix,
-		OrgID:      a.token.OrgID,
-		Labels:     labels,
-		Env:        BootstrapEnv(a.cfg, newID, role),
+		Name:   name,
+		Labels: labels,
+		Env:    BootstrapEnv(a.cfg, name, role),
 	}
 }
 
@@ -104,7 +124,7 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	url := fmt.Sprintf("%s/v1/orgs/%s/sprites", a.base, a.token.OrgID)
+	url := a.base + "/v1/sprites"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err

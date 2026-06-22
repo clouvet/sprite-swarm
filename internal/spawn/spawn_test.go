@@ -89,14 +89,30 @@ func TestBuildCreateRequest(t *testing.T) {
 	cfg := testConfig()
 	cfg.SpriteAPIToken = "myorg/org_123/tok_456/secretvalue"
 	a := newAPISpawner(cfg).(*apiSpawner)
+	a.newID = func() string { return "abcd1234" } // deterministic
+
 	cr := a.buildCreateRequest(Request{NamePrefix: "wk-", Role: "worker"})
-	if cr.OrgID != "org_123" {
-		t.Errorf("OrgID = %q", cr.OrgID)
+	// name carries the restricted-token prefix + synthesized id.
+	if cr.Name != "wk-abcd1234" {
+		t.Errorf("Name = %q, want wk-abcd1234", cr.Name)
 	}
 	if cr.Labels["fleet"] != "sprite-agent" || cr.Labels["role"] != "worker" {
 		t.Errorf("labels = %v", cr.Labels)
 	}
 	if cr.Env["S3_BUCKET"] != "sprite-agent" || cr.Env["SPRITE_AGENT_ARTIFACT"] == "" {
 		t.Errorf("bootstrap env missing brain/artifact: %v", cr.Env)
+	}
+	// the new sprite registers under its own name as the agent id.
+	if cr.Env["SPRITE_AGENT_ID"] != "wk-abcd1234" {
+		t.Errorf("SPRITE_AGENT_ID = %q, want wk-abcd1234", cr.Env["SPRITE_AGENT_ID"])
+	}
+}
+
+func TestSpriteNameExplicitWins(t *testing.T) {
+	if got := spriteName(Request{Name: "fixed", NamePrefix: "wk-"}, "rand"); got != "fixed" {
+		t.Errorf("spriteName = %q, want fixed", got)
+	}
+	if got := spriteName(Request{NamePrefix: "wk-"}, "rand"); got != "wk-rand" {
+		t.Errorf("spriteName = %q, want wk-rand", got)
 	}
 }

@@ -13,7 +13,7 @@ Autonomous build of Phase 1 (DESIGN §8 / BUILD brief M1–M4). Open PR:
 | Go toolchain (1.25.1) | ✅ | build |
 | claude-hub source | ✅ cloned for reference | kernel lifted |
 | S3/Tigris creds + bucket `sprite-agent` | ✅ | **brain live** |
-| `SPRITE_API_TOKEN` | ❌ absent | **spawn stubbed** (interface built, unit-tested, documented) |
+| `SPRITE_API_TOKEN` | ❌ at build → ✅ provided after | spawn **stubbed at build**, then **live-verified** once the token arrived (create call confirmed; see below) |
 | Target repo `clouvet/sprite-agent` (empty) | ✅ | pushed into it |
 
 ## Built and verified
@@ -72,20 +72,25 @@ Autonomous build of Phase 1 (DESIGN §8 / BUILD brief M1–M4). Open PR:
   `/api/fleet/spawn` — the same REST/session surface a human uses; the fleet affordance prompt points
   the agent there.
 
-## Stubbed / untested — and how to finish
-
-### Spawn live call (no `SPRITE_API_TOKEN`)
-- **Built:** `internal/spawn` — `Spawner` interface, `notConfigured` stub (returns a clear error;
-  `POST /api/fleet/spawn` → `501`), and `apiSpawner` with real token parsing, create-sprite payload,
-  and **bootstrap env** handing a new sprite the brain pointer + artifact + role (DESIGN §4.2).
+### Spawn — live call verified (token provided post-build); artifact provisioning remains
+A `SPRITE_API_TOKEN` was supplied after the initial build, so the live call was corrected and verified:
+- **Corrected against the live API** (org `cl-sprites`): the create endpoint is `POST /v1/sprites`
+  (the initial `/v1/orgs/<org>/sprites` guess was wrong → 404); auth is `Authorization: Bearer
+  <full-token>`; the body is `{name (required), env, labels}`. `apiSpawner` and its tests were updated.
+- **Verified end-to-end:** with the token loaded, the running agent's own endpoint
+  `POST /api/fleet/spawn {"name_prefix":"wk-","role":"worker"}` returned **HTTP 200** and created a
+  real sprite (`wk-080551f5`, with id + `…sprites.app` URL) — i.e. the agent created another sprite
+  over the same REST API a human uses (seam #2). The test sprite was then destroyed (DELETE → 204).
+- **Remaining gap — artifact provisioning (the honest limitation):** a bare create yields a
+  *base-environment* sprite; it does **not** run `sprite-agent`, so it does **not** register
+  (`GET /api/fleet` showed only the home agent after the spawn, as expected). Making a spawned sprite
+  boot this artifact and self-register needs a follow-up provisioning step on the new sprite — push or
+  `git clone`+`go build` the binary, then run it as a service (`--http-port`) with the bootstrap env
+  (already assembled by `BootstrapEnv`: brain pointer + artifact + role + id). That sequence (via the
+  sprites exec/fs API) is the next increment; the create call and bootstrap env it depends on are now
+  done and verified.
 - **Unit-tested:** token parse (incl. malformed), `New` stub-vs-live selection, `BootstrapEnv`
-  (with/without brain), create-request assembly.
-- **Not exercised:** the live `POST {SPRITE_API_BASE}/v1/orgs/<org>/sprites` — no token at build time.
-- **To finish:** create a restricted sprites token (`name_prefix` e.g. `wk-` + `max_sprites_total`
-  cap, per DESIGN §6.2), set `SPRITE_API_TOKEN` (`org-slug/org-id/token-id/token-value`) and, if the
-  API base differs, `SPRITE_API_BASE`. Then `POST /api/fleet/spawn {"name_prefix":"wk-","role":"worker"}`
-  and confirm B boots, registers (`GET /api/fleet` shows it), and serves its own session. Confirm the
-  endpoint/payload/auth shape against the live sprites API (the one piece that couldn't be verified).
+  (with/without brain), create-request assembly + name synthesis.
 
 ### Per-prefix brain credential scoping (DESIGN §6.3) — Phase 2
 Phase 1 uses one bucket-scoped key (per the brief). Phase 2: per-agent prefix-scoped creds

@@ -67,11 +67,18 @@ The build brief instructs taking the documented default and recording it here ra
 - **Brain key scoping deferred** — DESIGN §6.3 wants per-agent prefix-scoped S3 creds; the brief
   says that per-prefix scoping is a Phase 2 refinement and Phase 1 uses a single bucket-scoped key.
   Used the provided single key.
-- **`apiSpawner` HTTP call is the one unverified seam** — token parsing, the create-sprite payload,
-  and the bootstrap env (brain pointer + artifact + role) are real and unit-tested, but with no
-  token the live `POST /v1/orgs/<org>/sprites` could not be exercised; endpoint/auth shape may need
-  confirming at first use. Base URL defaults to `https://api.sprites.dev`, overridable via
-  `SPRITE_API_BASE`. Documented in BUILD_REPORT.
+- **`apiSpawner` API — verified once a token was provided.** Initially the live call could not be
+  exercised (no token), so the endpoint was a documented guess. A token (`cl-sprites`) was supplied
+  afterward and the call was corrected + verified against the live API: create is `POST /v1/sprites`
+  (the `/v1/orgs/<org>/sprites` guess 404'd); auth is `Bearer <full-token>`; body `{name, env,
+  labels}` with `name` required. Verified live via `POST /api/fleet/spawn` (HTTP 200, real sprite
+  created, then destroyed). Base URL defaults to `https://api.sprites.dev`, overridable via
+  `SPRITE_API_BASE`.
+- **Spawn provisioning is the next increment, not Phase-1 scope.** A bare create yields a
+  base-environment sprite that does not run sprite-agent, so it does not self-register. Booting the
+  artifact + registering needs a follow-up step (push/build the binary, run it as a service with the
+  already-assembled `BootstrapEnv`). The create call + bootstrap env it relies on are done/verified;
+  the provisioning sequence is documented in BUILD_REPORT as the remaining work.
 - **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
   reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
   over the same API a human uses) honest.
