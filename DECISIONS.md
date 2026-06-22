@@ -39,6 +39,22 @@ The build brief instructs taking the documented default and recording it here ra
   `gh` CLI is already authenticated on the sprite (`gh auth status` → clouvet), and git is
   configured to use it as a credential helper, so the agent's Claude inherits GitHub access with no
   secret copied into the repo. Gateway-injected connectors are a Phase 2 hardening.
+- **Scope tools with a `--settings` allow-list, not a blanket skip** — empirically, in headless
+  `--print` mode `--permission-mode acceptEdits` gates network/mutating Bash (`git`, `gh`) and, with
+  no interactive approver, auto-declines them — so the first PR attempt did nothing. Fix per DESIGN
+  §6.2 ("which tools/shell → Claude Code `--settings`/`--allowedTools`"): ship a scoped settings file
+  (`internal/config/default-claude-settings.json`) that allows `git`/`gh`/`go`/file tools and denies
+  catastrophic commands (`rm -rf /*`, `sudo`, `dd`, `mkfs`, fork-bomb). This is least-privilege, not
+  `--dangerously-skip-permissions`.
+- **Embed + materialize the settings file** — so the capability is on by default and
+  deploy-layout-independent, the settings JSON is embedded in the binary and written to
+  `<workdir>/.sprite-agent/claude-settings.json` on boot; `SPRITE_AGENT_SETTINGS` overrides.
+- **Note on host settings** — this sprite's host `~/.claude/settings.json` sets
+  `defaultMode: bypassPermissions`; the agent nonetheless passes its own scoped `--permission-mode`
+  + `--settings`, which is what a least-privilege deploy (without a permissive host default) relies
+  on. The scoping is the agent's contribution regardless of host config.
+- **Scratch repo `clouvet/sprite-agent-scratch`** — created for the acceptance test; the agent
+  opened PR #1 there, left open as evidence.
 
 ## M4 — Spawn + minimal brain
 - **Spawn is stubbed (no `SPRITE_API_TOKEN`)** — the token was absent from the environment at build
@@ -51,3 +67,31 @@ The build brief instructs taking the documented default and recording it here ra
 - **Brain key scoping deferred** — DESIGN §6.3 wants per-agent prefix-scoped S3 creds; the brief
   says that per-prefix scoping is a Phase 2 refinement and Phase 1 uses a single bucket-scoped key.
   Used the provided single key.
+- **`apiSpawner` HTTP call is the one unverified seam** — token parsing, the create-sprite payload,
+  and the bootstrap env (brain pointer + artifact + role) are real and unit-tested, but with no
+  token the live `POST /v1/orgs/<org>/sprites` could not be exercised; endpoint/auth shape may need
+  confirming at first use. Base URL defaults to `https://api.sprites.dev`, overridable via
+  `SPRITE_API_BASE`. Documented in BUILD_REPORT.
+- **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
+  reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
+  over the same API a human uses) honest.
+- **Fleet affordance via `--append-system-prompt`** — DESIGN §5 ("nothing tells it that's an
+  option"): a static blurb at spawn tells the agent it's a fleet peer, where the roster is
+  (`/api/fleet`), and how/whether it can spawn. Per-turn live-state injection is Phase 2.
+- **Multi-agent roster demonstrated by two registrations** — spawn is stubbed, so the M4
+  "A spawns B, both in roster" shape was proven by running two real agents (home + worker) that
+  register into live Tigris; the roster logic is also unit-tested with a fake brain. Test entries
+  were cleaned from the bucket afterward.
+
+## Cross-cutting
+- **Session metadata: in-memory + JSON file** (`<workdir>/.sprite-agent/sessions.json`) rather than
+  the embedded SQLite mentioned in DESIGN §3.1 — Phase 1 needs only titles/timestamps for the UI
+  list; the transcript `.jsonl` is the source of truth. SQLite can come when metadata grows.
+- **UUIDs without a dependency** — `crypto/rand` v4 UUIDs (Claude's `--session-id` needs a valid
+  UUID); avoids adding a uuid module.
+- **Markdown via CDN with graceful fallback** — the embedded UI loads `marked` from a CDN for rich
+  rendering but degrades to escaped plaintext if offline, keeping the binary self-contained while
+  avoiding bundling a markdown parser.
+- **Commit attribution** — used the Co-Authored-By trailer required by this environment's
+  conventions (sprite-mobile v1's "no co-author" rule is a different repo's policy and does not
+  apply here).
