@@ -26,12 +26,18 @@ import (
 // register into the brain needs a follow-up provisioning step (push/build the
 // binary + run it as a service) — see BUILD_REPORT.
 type apiSpawner struct {
-	cfg    config.Config
-	token  tokenParts
-	base   string
-	client *http.Client
-	newID  func() string // short unique suffix for synthesized sprite names
+	cfg       config.Config
+	token     tokenParts
+	base      string
+	client    *http.Client
+	newID        func() string // short unique suffix for synthesized sprite names
+	provision    bool          // provision sprite-agent onto the new sprite after create
+	pollInterval time.Duration // warm-poll interval (overridable in tests)
 }
+
+// artifactTTL is how long the presigned download URL handed to a new sprite is
+// valid — long enough to boot, short enough to not linger.
+const artifactTTL = 30 * time.Minute
 
 // tokenParts is the SPRITE_API_TOKEN shape: org-slug/org-id/token-id/token-value.
 type tokenParts struct {
@@ -61,11 +67,14 @@ func newAPISpawner(cfg config.Config) Spawner {
 		return notConfigured{}
 	}
 	return &apiSpawner{
-		cfg:    cfg,
-		token:  tp,
-		base:   strings.TrimRight(base, "/"),
-		client: &http.Client{Timeout: 60 * time.Second},
-		newID:  randomSuffix,
+		cfg:       cfg,
+		token:     tp,
+		base:      strings.TrimRight(base, "/"),
+		client:    &http.Client{Timeout: 90 * time.Second},
+		newID:        randomSuffix,
+		pollInterval: 2 * time.Second,
+		// Provision by default; SPRITE_AGENT_SPAWN_PROVISION=0 yields a bare create.
+		provision: cfg.Brain.Enabled() && os.Getenv("SPRITE_AGENT_SPAWN_PROVISION") != "0",
 	}
 }
 
@@ -119,20 +128,44 @@ func (a *apiSpawner) buildCreateRequest(req Request) createSpriteRequest {
 	}
 }
 
-func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
-	body, err := json.Marshal(a.buildCreateRequest(req))
-	if err != nil {
-		return Result{}, err
-	}
-	url := a.base + "/v1/sprites"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return Result{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+a.cfg.SpriteAPIToken)
-	httpReq.Header.Set("Content-Type", "application/json")
+// serviceSpec is the body for PUT /v1/sprites/<name>/services/<svc> (verified
+// against the live API): cmd + args, working dir, env, and an http_port that the
+// proxy routes to and auto-starts/keeps-alive.
+type serviceSpec struct {
+	Cmd      string            `json:"cmd"`
+	Args     []string          `json:"args"`
+	Dir      string            `json:"dir,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	HTTPPort int               `json:"http_port,omitempty"`
+}
 
-	resp, err := a.client.Do(httpReq)
+// Spawn creates a sprite and (unless provisioning is disabled) provisions
+// sprite-agent onto it so it boots and self-registers into the brain.
+func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
+	role := req.Role
+	if role == "" {
+		role = "worker"
+	}
+	cr := a.buildCreateRequest(req)
+	res, err := a.createSprite(ctx, cr)
+	if err != nil {
+		return Result{}, err
+	}
+	if a.provision {
+		if err := a.provisionAgent(ctx, res.Name, cr.Env); err != nil {
+			// Sprite exists but isn't running the agent yet; surface both.
+			return res, fmt.Errorf("spawn: created %s but provisioning failed: %w", res.Name, err)
+		}
+	}
+	return res, nil
+}
+
+func (a *apiSpawner) createSprite(ctx context.Context, cr createSpriteRequest) (Result, error) {
+	body, err := json.Marshal(cr)
+	if err != nil {
+		return Result{}, err
+	}
+	resp, err := a.do(ctx, http.MethodPost, a.base+"/v1/sprites", body)
 	if err != nil {
 		return Result{}, fmt.Errorf("spawn: create sprite: %w", err)
 	}
@@ -146,4 +179,127 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("spawn: decode response: %w", err)
 	}
 	return out, nil
+}
+
+// provisionAgent stages this binary in the brain, presigns a download URL, and
+// installs a service on the new sprite that fetches and runs it with the
+// bootstrap env (so it registers into the same brain). exec/fs are control-ws
+// only; this uses the plain-REST services API + a presigned URL instead.
+//
+// A freshly-created sprite is "cold": a service PUT to it returns 200 but does
+// NOT persist. So we warm it first and confirm the service stuck (retrying once),
+// which is the difference between a worker that registers and one that never boots.
+func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv map[string]string) error {
+	url, err := stageArtifact(ctx, a.cfg.Brain, artifactTTL)
+	if err != nil {
+		return err
+	}
+	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
+	for k, v := range bootEnv {
+		env[k] = v
+	}
+	boot := "set -e; curl -fsSL '" + url + "' -o /home/sprite/sprite-agent; " +
+		"chmod +x /home/sprite/sprite-agent; cd /home/sprite; exec ./sprite-agent"
+	body, err := json.Marshal(serviceSpec{
+		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", Env: env, HTTPPort: 8080,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Warm, install, confirm — retry once if the service didn't persist.
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := a.warmSprite(ctx, name); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := a.putService(ctx, name, body); err != nil {
+			lastErr = err
+			continue
+		}
+		if a.serviceExists(ctx, name) {
+			return nil
+		}
+		lastErr = fmt.Errorf("service did not persist (sprite not ready)")
+	}
+	return lastErr
+}
+
+// warmSprite triggers warming (a freshly-created sprite is cold) and waits until
+// its status is no longer cold, so subsequent service writes persist.
+func (a *apiSpawner) warmSprite(ctx context.Context, name string) error {
+	// A POST to exec warms the sprite (the body/output is irrelevant here).
+	if resp, err := a.do(ctx, http.MethodPost, fmt.Sprintf("%s/v1/sprites/%s/exec", a.base, name), []byte(`{"command":"true"}`)); err == nil {
+		resp.Body.Close()
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		status, err := a.spriteStatus(ctx, name)
+		if err == nil && status != "" && status != "cold" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("sprite %s did not warm (last status %q)", name, status)
+		}
+		interval := a.pollInterval
+		if interval <= 0 {
+			interval = 2 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+func (a *apiSpawner) spriteStatus(ctx context.Context, name string) (string, error) {
+	resp, err := a.do(ctx, http.MethodGet, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var s struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", err
+	}
+	return s.Status, nil
+}
+
+func (a *apiSpawner) putService(ctx context.Context, name string, body []byte) error {
+	resp, err := a.do(ctx, http.MethodPut, fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name), body)
+	if err != nil {
+		return fmt.Errorf("install service: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("install service: %d: %s", resp.StatusCode, string(data))
+	}
+	return nil
+}
+
+func (a *apiSpawner) serviceExists(ctx context.Context, name string) bool {
+	resp, err := a.do(ctx, http.MethodGet, fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name), nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode/100 == 2
+}
+
+func (a *apiSpawner) do(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.cfg.SpriteAPIToken)
+	req.Header.Set("Content-Type", "application/json")
+	return a.client.Do(req)
 }

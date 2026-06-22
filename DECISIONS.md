@@ -74,11 +74,20 @@ The build brief instructs taking the documented default and recording it here ra
   labels}` with `name` required. Verified live via `POST /api/fleet/spawn` (HTTP 200, real sprite
   created, then destroyed). Base URL defaults to `https://api.sprites.dev`, overridable via
   `SPRITE_API_BASE`.
-- **Spawn provisioning is the next increment, not Phase-1 scope.** A bare create yields a
-  base-environment sprite that does not run sprite-agent, so it does not self-register. Booting the
-  artifact + registering needs a follow-up step (push/build the binary, run it as a service with the
-  already-assembled `BootstrapEnv`). The create call + bootstrap env it relies on are done/verified;
-  the provisioning sequence is documented in BUILD_REPORT as the remaining work.
+- **Spawn provisioning — built (Phase 1.5, user-requested).** A bare create yields a base sprite that
+  doesn't run sprite-agent; full "spawn → boot → register" was then built and verified. Decisions:
+  - **Provision over the services API + a presigned URL, not exec/fs.** exec and fs are multiplexed
+    over a control WebSocket (`sprite-capabilities: control-ws`) that plain HTTP can't drive; the
+    services API is plain REST. So the spawner stages its own binary to the brain bucket, presigns a
+    GET URL, and installs a service that curls+runs it. Avoids an SDK dependency and a build/clone on
+    the worker; only S3 creds (carried in the bootstrap env) are needed.
+  - **Stage the binary in the brain bucket** (`fleet/artifacts/sprite-agent-linux-amd64`) rather than
+    cloning+building on the worker — self-contained binary (go:embed UI), no GitHub auth needed on the
+    worker for registration. Re-staged per spawn (simple; dedup is a later optimization).
+  - **Warm before provisioning.** A cold sprite accepts a service PUT (200) but doesn't persist it;
+    the spawner warms via `POST …/exec`, polls status until non-cold, PUTs, then confirms + retries
+    once. This was the difference between a worker that registers and one that never boots.
+  - **`SPRITE_AGENT_SPAWN_PROVISION=0`** opts back into a bare create; provisioning requires a brain.
 - **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
   reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
   over the same API a human uses) honest.

@@ -34,7 +34,9 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_AGENT_ROLE` | `worker` | `home` or `worker`, advertised in the roster. |
 | `SPRITE_AGENT_ARTIFACT` | `github.com/clouvet/sprite-agent@main` | bootstrap pointer handed to spawned sprites. |
 | `S3_BUCKET` `S3_REGION` `S3_ENDPOINT` `S3_ACCESS_KEY` `S3_SECRET_KEY` | _(unset)_ | fleet brain (Tigris/S3). Brain disabled if `S3_BUCKET` is empty. |
-| `SPRITE_API_TOKEN` | _(unset)_ | sprites API token for live spawn. Spawn is stubbed if unset. |
+| `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. Spawn is stubbed if unset. |
+| `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL. |
+| `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
 
 ## Smoke test (M2 acceptance)
 ```sh
@@ -57,3 +59,14 @@ Both the web UI and the terminal read/write the same
 With `S3_*` set, the agent registers itself on boot (`fleet/<id>/status.json`,
 `fleet/<id>/heartbeat.json`) and `GET /api/fleet` returns the roster derived from
 `ListObjects("fleet/")`. See `docs/sprite-agent-V2-plan.md` §4.
+
+## Spawning a worker that boots + registers (M4 + provisioning)
+With `SPRITE_API_TOKEN` and `S3_*` set:
+```sh
+curl -X POST localhost:8080/api/fleet/spawn -d '{"name_prefix":"wk-","role":"worker"}'
+```
+The agent: creates a sprite, stages its own binary in the brain bucket + presigns a
+download URL, warms the new (cold) sprite, then installs a service that fetches and
+runs the binary with the bootstrap env. The worker boots `sprite-agent` and
+self-registers — it appears in `GET /api/fleet` (`alive:true`) within ~1–2 min.
+Set `SPRITE_AGENT_SPAWN_PROVISION=0` for a bare create (no agent installed).
