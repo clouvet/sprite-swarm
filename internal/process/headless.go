@@ -26,6 +26,7 @@ type Options struct {
 	PermissionMode string // --permission-mode (e.g. acceptEdits, plan)
 	SettingsPath   string // --settings <file> when non-empty
 	MCPConfigPath  string // --mcp-config <file> when non-empty
+	AppendSystem   string // --append-system-prompt when non-empty (fleet affordance, DESIGN §5)
 }
 
 // HeadlessProcess is a supervised, long-lived `claude` process driven over
@@ -67,6 +68,9 @@ func buildArgs(opts Options) []string {
 	}
 	if opts.MCPConfigPath != "" {
 		args = append(args, "--mcp-config", opts.MCPConfigPath)
+	}
+	if opts.AppendSystem != "" {
+		args = append(args, "--append-system-prompt", opts.AppendSystem)
 	}
 
 	transcript := opts.ProjectsDir + "/" + opts.SessionID + ".jsonl"

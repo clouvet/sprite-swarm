@@ -13,6 +13,7 @@ import (
 
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/hub"
+	"github.com/clouvet/sprite-agent/internal/spawn"
 	"github.com/clouvet/sprite-agent/web"
 
 	"github.com/gorilla/websocket"
@@ -31,16 +32,19 @@ type Server struct {
 	hub      *hub.Hub
 	store    *metaStore
 	fleet    RosterProvider
+	spawner  spawn.Spawner
 	upgrader websocket.Upgrader
 }
 
-// New constructs a Server. fleetSvc may be nil if no brain is configured.
-func New(cfg config.Config, h *hub.Hub, fleetSvc RosterProvider) *Server {
+// New constructs a Server. fleetSvc may be nil if no brain is configured;
+// spawner is always non-nil (a stub when no sprites token is available).
+func New(cfg config.Config, h *hub.Hub, fleetSvc RosterProvider, spawner spawn.Spawner) *Server {
 	return &Server{
-		cfg:   cfg,
-		hub:   h,
-		store: newMetaStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "sessions.json")),
-		fleet: fleetSvc,
+		cfg:     cfg,
+		hub:     h,
+		store:   newMetaStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "sessions.json")),
+		fleet:   fleetSvc,
+		spawner: spawner,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -60,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions", s.serveSessions)
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
+	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -142,6 +147,35 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, roster)
+}
+
+// serveSpawn creates another sprite running this same artifact (M4). When no
+// sprites token is configured the capability is addressable but returns 501 with
+// a clear reason (the live call is stubbed; the interface is built).
+func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Name       string            `json:"name"`
+		NamePrefix string            `json:"name_prefix"`
+		Role       string            `json:"role"`
+		Labels     map[string]string `json:"labels"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !s.spawner.Available() {
+		http.Error(w, spawn.ErrNotConfigured.Error(), http.StatusNotImplemented)
+		return
+	}
+	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
+		Name: body.Name, NamePrefix: body.NamePrefix, Role: body.Role, Labels: body.Labels,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

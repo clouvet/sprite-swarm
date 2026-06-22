@@ -5,10 +5,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,7 +18,31 @@ import (
 	"github.com/clouvet/sprite-agent/internal/fleet"
 	"github.com/clouvet/sprite-agent/internal/hub"
 	"github.com/clouvet/sprite-agent/internal/server"
+	"github.com/clouvet/sprite-agent/internal/spawn"
 )
+
+// fleetAffordance is the baked-in "you are a fleet peer" system prompt (DESIGN
+// §5): a sprite won't spawn workers if nothing tells it that's an option. It is
+// appended to Claude's system prompt so the agent knows it can spin up isolated
+// worker sprites instead of doing all work on its own filesystem.
+func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
+	b := &strings.Builder{}
+	fmt.Fprintf(b, "You are sprite-agent %q, one peer in a symmetric fleet of identical agents — "+
+		"not a standalone assistant. For parallel or isolated work, prefer spinning up a worker "+
+		"sprite (its own microVM, filesystem, and git checkout) over doing everything here. ", cfg.AgentID)
+	if cfg.Brain.Enabled() {
+		b.WriteString("The live fleet roster is available at GET /api/fleet on this service. ")
+	}
+	if spawnAvailable {
+		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
+			"sprite boots this same artifact and registers into the shared brain automatically. ")
+	} else {
+		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
+			"do the work here and note when a worker sprite would have been the better tool. ")
+	}
+	b.WriteString("Coordination beyond the basic roster (task dispatch, shared memory) is not built yet.")
+	return b.String()
+}
 
 func main() {
 	cfg := config.FromEnv()
@@ -34,12 +60,17 @@ func main() {
 		log.Printf("settings: using %s", path)
 	}
 
+	// Spawn capability (M4): live when SPRITE_API_TOKEN is set, otherwise a stub.
+	spawner := spawn.New(cfg)
+	log.Printf("spawn: available=%v", spawner.Available())
+
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
 		PermissionMode: cfg.PermissionMode,
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
+		AppendSystem:   fleetAffordance(cfg, spawner.Available()),
 	})
 	go h.Run()
 
@@ -66,7 +97,7 @@ func main() {
 		log.Printf("fleet: disabled (no brain configured)")
 	}
 
-	srv := server.New(cfg, h, roster)
+	srv := server.New(cfg, h, roster, spawner)
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 
 	go func() {

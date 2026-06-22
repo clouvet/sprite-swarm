@@ -30,6 +30,7 @@ type Config struct {
 	PermissionMode string
 	SettingsPath   string
 	MCPConfigPath  string
+	AppendSystem   string
 }
 
 // Hub maintains active clients and broadcasts per-session.
@@ -57,6 +58,7 @@ type providers struct {
 	permissionMode string
 	settingsPath   string
 	mcpConfigPath  string
+	appendSystem   string
 }
 
 // BroadcastMessage is a message to deliver to all clients of a session.
@@ -75,6 +77,7 @@ func NewHub(cfg Config) *Hub {
 			permissionMode: cfg.PermissionMode,
 			settingsPath:   cfg.SettingsPath,
 			mcpConfigPath:  cfg.MCPConfigPath,
+			appendSystem:   cfg.AppendSystem,
 		},
 		sessions:   make(map[string]*session.Session),
 		clients:    make(map[string]map[*Client]bool),
@@ -125,6 +128,7 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 		PermissionMode: h.cfg.permissionMode,
 		SettingsPath:   h.cfg.settingsPath,
 		MCPConfigPath:  h.cfg.mcpConfigPath,
+		AppendSystem:   h.cfg.appendSystem,
 	}
 }
 
