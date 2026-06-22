@@ -23,6 +23,17 @@ func main() {
 	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
 		cfg.AgentID, cfg.Addr, cfg.WorkDir, cfg.ClaudeProjectsDir)
 
+	// Scope the agent's tools/shell via a settings allow-list (DESIGN §6.2)
+	// rather than a blanket skip — materialize the embedded default unless the
+	// operator pointed SPRITE_AGENT_SETTINGS elsewhere. This is what lets the
+	// agent's Claude run git/gh non-interactively (M3) while staying scoped.
+	if path, err := config.ResolveSettingsPath(cfg.WorkDir, cfg.SettingsPath); err != nil {
+		log.Printf("settings: failed to resolve (%v); continuing without --settings", err)
+	} else {
+		cfg.SettingsPath = path
+		log.Printf("settings: using %s", path)
+	}
+
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
