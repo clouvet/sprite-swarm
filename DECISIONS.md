@@ -130,3 +130,30 @@ The build brief instructs taking the documented default and recording it here ra
 - **Commit attribution** — used the Co-Authored-By trailer required by this environment's
   conventions (sprite-mobile v1's "no co-author" rule is a different repo's policy and does not
   apply here).
+
+## Phase 2 — Coordination (decisions under ambiguity)
+- **Dispatch transport = brain-pull, not session-API-push.** DESIGN §10 specifies delivery via the
+  target's session API. Empirically, private sprite URLs are gated by Fly OAuth (a cross-sprite HTTP
+  call hits the login wall), so a direct session-API call isn't possible without making workers public
+  (exposing the chat UI). Chose: the assigner writes the task to the brain (visible fleet state, which
+  §10 wants anyway) and the target polls + injects it into its own session locally — the seam (task in
+  the worker's transcript) holds; only the delivery hop differs. Exec-push was the alternative but
+  depends on the control-ws exec semantics; brain-pull uses capabilities already proven.
+- **Attach-to-worker = browser opens the worker URL.** The human is an org member, so their browser
+  passes the Fly OAuth gate to a private worker URL. No server-side proxy or making workers public.
+- **Worker Claude creds propagated (tradeoff).** A fresh sprite has no Anthropic creds → workers
+  couldn't run Claude on dispatched tasks. Chose to propagate the Claude OAuth credential to workers at
+  provision time so coordination actually works, documenting that the API Gateway is the
+  production-preferred path (no creds copied). Toggle: SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=0.
+- **Live fleet state via a UserPromptSubmit hook.** DESIGN §5's "inject live fleet state each turn"
+  realized as a hook (in the embedded settings) that curls GET /api/fleet/context — roster + presence
+  + memory index — so every turn the agent has current fleet awareness without per-turn server push.
+- **Policy: built-in defaults are the base; brain doc layers over them.** A partial control-plane doc
+  inherits sane baselines; explicit 0/false still wins. spawn max_total: <0 = unlimited, 0 = none, >0 =
+  cap (0 is expressible because built-ins always seed a value). Enforcement is app-layer (permission
+  mode + spawn cap); storage-level prefix scoping (so the human-held guardrail is physically enforced,
+  not just by the absence of a write code path) is the documented remaining hardening.
+- **Memory keyed under fleet/memory/<author>/; tasks under fleet/tasks/<to>/.** Separate top-level
+  prefixes from per-agent coordination (fleet/<id>/) so neither collides with status/heartbeat and both
+  survive reaping. The roster's exact-suffix match (/status.json, /heartbeat.json) already ignores
+  these, so no bogus roster entries.

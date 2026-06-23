@@ -11,10 +11,14 @@ is identical and fully capable:
 - **Minimal fleet brain** — on boot it registers itself into a shared S3/Tigris roster; any instance
   can list the roster.
 
-This is **Phase 1** of the design in [`docs/sprite-agent-V2-plan.md`](docs/sprite-agent-V2-plan.md):
-the full symmetric artifact (solo-capable, basic fleet-aware). It is *not* a "leader" — "leader" is
-only ever a hat (wherever the human is). Coordination (dispatch, durable memory, presence-routing,
-the fleet UI, the control plane) is Phase 2; insertion (take-the-wheel) is Phase 3.
+**Phases 1 and 2** of the design in [`docs/sprite-agent-V2-plan.md`](docs/sprite-agent-V2-plan.md) are
+built. Phase 1 is the symmetric artifact (session service, GitHub, spawn+provision, minimal brain).
+**Phase 2 (coordination)** adds: **dispatch** (assign work to a peer — it lands in the worker's
+session), **durable shared memory** (`fleet/memory`, index + on-demand retrieval), **presence-routing**
+(agents advertise human attachment; live fleet state injected each turn), the **fleet UI** with
+attach-to-worker, and the **capability/policy control plane** (`fleet/config/policy.json`, enforced via
+permission-mode + spawn cap, human-held guardrail). It is *not* a "leader" — "leader" is only ever a
+hat (wherever the human is). Insertion (take-the-wheel / needs-human) is Phase 3, not started.
 
 > **Positioning:** this is connective tissue around Claude Code, not a new agent framework. Claude
 > Code *is* the agent; we build the session service, fleet brain, spawning, and transports.
