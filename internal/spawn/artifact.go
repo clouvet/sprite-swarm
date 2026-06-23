@@ -3,7 +3,10 @@ package spawn
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,6 +42,43 @@ func stageArtifact(ctx context.Context, bc config.BrainConfig, expires time.Dura
 		return "", fmt.Errorf("spawn: locate own binary: %w", err)
 	}
 	return stageFile(ctx, bc, self, artifactKey, expires)
+}
+
+// uploadViaConnector uploads the spawner's own binary to the brain through the
+// s3 connector (identity-authed, no keys) and returns the URL a worker can GET it
+// from. Replaces presign on the token-free path.
+func uploadViaConnector(ctx context.Context, gatewayBase string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("spawn: locate own binary: %w", err)
+	}
+	f, err := os.Open(self)
+	if err != nil {
+		return "", fmt.Errorf("spawn: open own binary: %w", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(gatewayBase, "/")
+	url := base + "/" + artifactKey
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)
+	if err != nil {
+		return "", err
+	}
+	req.ContentLength = fi.Size()
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("spawn: upload artifact via connector: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("spawn: upload artifact: %d: %s", resp.StatusCode, string(body))
+	}
+	return url, nil
 }
 
 // stageClaudeCredential stages the local Claude credential (if present) and

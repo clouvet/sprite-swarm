@@ -222,16 +222,17 @@ follow from this are noted per-feature.
   (Phase 1/2 use one bucket-scoped key). Per-prefix-scoped creds (`fleet/<id>/*` write,
   `fleet/config/*` read-only) are the remaining hardening to make it physically enforced.
 - **Dispatch delivery** is brain-pull, not session-API-push (the OAuth-wall deviation above).
-- **Brain access uses copied S3 credentials (KNOWN — tracked, not yet addressed).** `BootstrapEnv`
-  copies the Tigris `S3_ACCESS_KEY`/`S3_SECRET_KEY` (+ bucket/region/endpoint) into each worker's spawn
-  env; the worker's `s3Brain` signs SigV4 directly against Tigris. So the Tigris secret sits in every
-  worker's service env (readable via the sprites service API and on the worker) — the same
-  credential-copy pattern the gateway removed for Anthropic, still present for the brain. Not moved to
-  the `s3_object_store` connector because the brain needs `ListObjects` (roster/inbox/memory index) +
-  presigned URLs (artifact staging), which don't obviously map to the gateway's object GET/PUT-by-path
-  surface (unverified). Resolution options (deferred per decision): (1) migrate the brain to the s3
-  connector after confirming LIST/presign support and reworking artifact staging; (2) hand workers a
-  Tigris key scoped to `fleet/` (blast-radius mitigation, DESIGN §6.3). Tracked here; left as-is for now.
+- **Brain access — RESOLVED: token-free via the s3 connector.** Workers no longer get Tigris keys.
+  The brain is reached through the Sprite API Gateway `s3_object_store` connector (`internal/fleet`
+  `connectorBrain`), authenticated by the sprite's own Fly identity — verified the connector proxies
+  `GET/PUT/DELETE` and `ListObjectsV2` against the brain bucket, so roster/inbox/memory/status all work
+  with no key. `BootstrapEnv` now passes the (non-secret) connector URL instead of `S3_*` keys; the
+  worker binary is uploaded/downloaded through the connector too, so **presigning is gone** (it was the
+  only S3-key-only op). A sprite with no keys auto-discovers the connector via `GET /v1/gateway/list`,
+  which is also the recovery path (stand up a sprite in the org → it finds the brain → rehydrates).
+  Direct S3 keys remain only as a fallback when no connector exists. **Verified:** home + a spawned
+  worker both ran with zero S3 credentials (registration, roster, memory write/read, worker boot all
+  via the connector).
 
 ## Phase 2 — how to use
 ```
