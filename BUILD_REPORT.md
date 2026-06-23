@@ -102,9 +102,14 @@ Spawned workers clean themselves up so the fleet doesn't accumulate zombies (DES
   via the sprites API, then removes their brain entries (sprite first, brain second; a failed destroy
   leaves the brain entry for retry). Workers never destroy themselves — the privileged token stays on
   the reaper.
-- **Triggers:** idle (`SPRITE_AGENT_IDLE_REAP_MINUTES`; the spawner bakes
-  `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES`, default 30, into workers), explicit done
-  (`POST /api/fleet/done`, e.g. after a PR merges), or dead heartbeat.
+- **Triggers:** explicit done (`POST /api/fleet/done`, e.g. **after a PR merges**), a dead heartbeat,
+  or — **only if opted in** — idle. Idle reaping defaults **off** (`SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES=0`)
+  because the reaper is not PR-aware: a worker awaiting human review of an open PR is "idle" and must
+  not be auto-destroyed (DESIGN §10: reap *after the PR merges*, a human event). PR/branch survive on
+  GitHub regardless of reaping.
+- **Memory safety:** `RemoveAgent` deletes only the two coordination keys (status + heartbeat), never
+  a blanket `fleet/<id>/*` prefix, so future durable shared memory (Phase 2, under a separate
+  `fleet/memory/…` prefix per DESIGN §4.1) can never be wiped by reaping a worker.
 - **Verified end-to-end:** spawned `wk-c4fd419b` (1-min idle-reap, 20s reaper); it registered, sat
   idle, and at **+152s** the reaper logged `reaped wk-c4fd419b (destroyed sprite + removed brain
   entry)` — `GET /v1/sprites` then showed no `wk-` sprites. Tests cover the policy, the idle→reapable

@@ -58,7 +58,11 @@ type Config struct {
 	DeadReapAfter time.Duration
 
 	// WorkerIdleReapAfter is the idle-reap threshold the spawner bakes into the
-	// workers it creates (so spawned workers clean themselves up). 0 = never.
+	// workers it creates. Default 0 (off): a worker is NOT destroyed just for
+	// being idle, because the reaper is not PR-aware — an idle worker may be
+	// waiting on human review of an open PR. Workers are reaped on explicit done
+	// (POST /api/fleet/done, e.g. after a merge) or a dead heartbeat. Enable idle
+	// reaping only for fire-and-forget workers that won't await review.
 	WorkerIdleReapAfter time.Duration
 }
 
@@ -91,7 +95,7 @@ func FromEnv() Config {
 		IdleReapAfter:  minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
 		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
 		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),
-		WorkerIdleReapAfter: minutesEnv("SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES", 30),
+		WorkerIdleReapAfter: minutesEnv("SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES", 0),
 		Brain: BrainConfig{
 			Bucket:    os.Getenv("S3_BUCKET"),
 			Region:    getenv("S3_REGION", "auto"),

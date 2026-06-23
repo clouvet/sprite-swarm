@@ -137,14 +137,18 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 	return s.brain.Put(ctx, statusKey(s.id), data)
 }
 
-// RemoveAgent deletes an agent's brain entry (status + heartbeat keys). Used by
-// the reaper after destroying a worker's sprite so it stops showing in the roster.
+// RemoveAgent deletes an agent's COORDINATION entry (status + heartbeat) so it
+// drops out of the roster after its sprite is destroyed.
+//
+// It deletes only the two known Layer-1 keys, NOT a blanket fleet/<id>/* prefix.
+// Durable shared memory (DESIGN §4 Layer 2) must outlive the sprite ("what they
+// learn persists… institutional memory lives in S3, not in any one sprite",
+// §2.3) and is keyed under a separate top-level prefix (fleet/memory/…, §4.1),
+// so reaping a worker never touches it. Scoping the delete to the coordination
+// keys keeps that guarantee even if something else is later written under the
+// per-agent prefix.
 func (s *Service) RemoveAgent(ctx context.Context, id string) error {
-	keys, err := s.brain.List(ctx, "fleet/"+id+"/")
-	if err != nil {
-		return err
-	}
-	for _, k := range keys {
+	for _, k := range []string{statusKey(id), heartbeatKey(id)} {
 		if err := s.brain.Delete(ctx, k); err != nil {
 			return err
 		}

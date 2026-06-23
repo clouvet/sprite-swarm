@@ -38,7 +38,7 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL. |
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
 | `SPRITE_AGENT_IDLE_REAP_MINUTES` | `0` | This agent self-declares reapable after idle this long (0 = never). Home ignores it. |
-| `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES` | `30` | Idle-reap threshold the spawner bakes into workers it creates. |
+| `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES` | `0` (off) | Idle-reap threshold baked into spawned workers. Off by default — the reaper is not PR-aware, so an idle worker may be awaiting review of an open PR. Enable only for fire-and-forget workers. |
 | `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans (token-bearing agents only). |
 | `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Reap a worker whose heartbeat has been stale beyond this (crashed sprite cleanup). |
 
@@ -78,8 +78,16 @@ Set `SPRITE_AGENT_SPAWN_PROVISION=0` for a bare create (no agent installed).
 ## Auto-reap (workers come and go)
 Token-bearing agents run a **reaper** that destroys reapable/dead workers and
 cleans their brain entries; **home is never reaped**. A worker becomes reapable
-when it (a) sits idle past its idle-reap threshold, (b) is told it's done —
-`POST /api/fleet/done` (e.g. after its PR merges), or (c) its heartbeat goes
-stale past `SPRITE_AGENT_DEAD_REAP_MINUTES` (crashed sprite). The reaping decision
-lives in `fleet.ReapTargets`; the worker never destroys itself (the privileged
-sprites token stays on the reaper, not on workers).
+when it (a) is told it's done — `POST /api/fleet/done` (e.g. **after its PR
+merges**), (b) its heartbeat goes stale past `SPRITE_AGENT_DEAD_REAP_MINUTES`
+(crashed sprite), or (c) it sits idle past its idle-reap threshold **if** idle
+reaping is enabled (off by default). The reaping decision lives in
+`fleet.ReapTargets`; the worker never destroys itself (the privileged sprites
+token stays on the reaper, not on workers).
+
+**A worker with an open, unmerged PR is _not_ auto-reaped** under the defaults: it
+either stays idle (idle-reap off → never reaped for idling) or, if you enable idle
+reaping, note the reaper is **not PR-aware** — so leave idle-reap off for workers
+that await review, and reap them via `POST /api/fleet/done` once you've merged
+(or closed) the PR. Reaping the worker never deletes the PR/branch (those live on
+GitHub) and never touches durable shared memory (a separate brain prefix).

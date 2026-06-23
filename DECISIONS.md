@@ -95,6 +95,18 @@ The build brief instructs taking the documented default and recording it here ra
   protected** (`fleet.ReapTargets` skips role=home). Dead workers (stale heartbeat) are also cleaned
   up. Sprite is destroyed before its brain entry; a failed destroy keeps the entry for retry. PR-merge
   auto-detection isn't built — `POST /api/fleet/done` is the hook an orchestrator calls post-merge.
+- **Idle-reap defaults OFF; reaping is not PR-aware.** DESIGN §10 says workers are "destroyed after
+  their PR merges" — a merge-triggered (human) event, not an idle timer. So a worker that opens a PR
+  and waits for review must not be auto-destroyed for being idle. Default `WorkerIdleReapAfter=0`:
+  workers are reaped only on explicit done (your post-merge `POST /api/fleet/done`) or a dead
+  heartbeat. Idle reaping stays as an opt-in for fire-and-forget workers, with the documented caveat
+  that the reaper can't tell an idle worker from one guarding an open PR. PR-aware idle reaping
+  (guard while a PR is open/unmerged) is the Phase 2 refinement.
+- **`RemoveAgent` deletes only the two coordination keys, not `fleet/<id>/*`.** Durable shared memory
+  (§4 Layer 2) must outlive the sprite (§2.3); it lives under a separate `fleet/memory/…` prefix
+  (§4.1) the reaper never touches. Scoping the delete to status+heartbeat keeps that guarantee even
+  if something else later lands under the per-agent prefix. (Memory itself is Phase 2; this protects
+  the seam now.)
 - **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
   reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
   over the same API a human uses) honest.
