@@ -281,6 +281,43 @@ func (h *Hub) handleInterrupt(client *Client) {
 	}
 }
 
+// InjectMessage delivers a message into a local session as if a user sent it —
+// the path a dispatched task takes (P2.1): a worker pulls a task from the brain
+// and injects it here, so it materializes in the session's transcript and drives
+// Claude exactly like a human message would (seam #2). Creates/spawns as needed.
+func (h *Hub) InjectMessage(sessionID, content string) error {
+	h.mu.Lock()
+	sess := h.sessions[sessionID]
+	if sess == nil {
+		sess = session.NewSession(sessionID, h.cfg.workDir)
+		h.sessions[sessionID] = sess
+	}
+	h.mu.Unlock()
+
+	if sess.GetState() == session.StateIdle {
+		h.spawnClaudeForSession(sessionID, sess)
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Show the injected turn to any attached clients.
+	userMsg, _ := json.Marshal(map[string]interface{}{
+		"type":    "user_message",
+		"message": map[string]interface{}{"role": "user", "content": content},
+	})
+	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: userMsg}
+
+	if err := h.processMgr.SendMessage(sessionID, content); err != nil {
+		h.spawnClaudeForSession(sessionID, sess)
+		time.Sleep(500 * time.Millisecond)
+		if err := h.processMgr.SendMessage(sessionID, content); err != nil {
+			return err
+		}
+	}
+	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
+	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: processingMsg}
+	return nil
+}
+
 // GetSession returns a session by id.
 func (h *Hub) GetSession(sessionID string) *session.Session {
 	h.mu.RLock()
