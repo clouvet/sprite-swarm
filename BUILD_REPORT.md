@@ -143,6 +143,84 @@ go build -o sprite-agent ./cmd/sprite-agent
 ```
 Full env-var reference and terminal co-presence steps: `docs/RUNBOOK.md`.
 
-## Out of scope (Phase 2/3, not started)
-Task dispatch/assignment, durable shared memory, presence-routing, the fleet UI
-(attach-to-worker), the capability/policy control plane, chat bridges, take-the-wheel / needs-human.
+## Out of scope for Phase 1 (Phase 2 now built — see below; Phase 3 not started)
+Phase 3 (insertion): take-the-wheel handoff, needs-human signals. Chat bridges (Slack/Telegram).
+
+---
+
+# Phase 2 — Coordination (built after Phase 1 merged)
+
+Turns spawned instances into a *coordinated* fleet. All five pieces built, tested, and
+(where live infra allows) verified end-to-end. Branch `phase-2-build`.
+
+## Key platform finding that shaped the transport
+A private sprite's public URL is gated by **Fly OAuth** (a cross-sprite HTTP call returns the
+"Authentication Required" login wall, not the app). So agent→agent delivery can't go directly over a
+worker's session URL without making workers public (which would expose the chat UI). Decisions that
+follow from this are noted per-feature.
+
+## P2.1 — Dispatch (assign work to a peer)  ✅ verified
+- The brain is the authenticated delivery channel (given the OAuth wall): `Dispatch` writes
+  `fleet/tasks/<to>/<ts>-<uuid>.json` (append-only **visible fleet state**, which DESIGN §10 wants);
+  every agent polls its own inbox and **injects** unseen tasks into a local session via
+  `hub.InjectMessage`, so the task materializes in the worker's real transcript (**seam #2 holds**).
+  Dedup via a per-agent `seen-tasks.json`. `POST /api/fleet/dispatch {target, task}`.
+- **Deviation recorded:** DESIGN §10 specifies the session API as the delivery *transport*; the OAuth
+  gate forces brain-as-transport. The seam (task lands in the worker's session) is preserved.
+- **Verified:** dispatch-to-self → poller "accepted task → session" → Claude replied in the transcript.
+  And cross-sprite (below) once workers could run Claude.
+
+## P2.2 — Durable shared memory  ✅ verified
+- Append-only per-author entries `fleet/memory/<id>/<ts>-<uuid>.json`; always-loaded **index** +
+  on-demand **body** retrieval (the §4 scaling rule). REST: `POST/GET /api/memory`,
+  `GET /api/memory/{author}/{id}`, `GET /api/memory/context`. Lives under a separate prefix so it
+  **survives reaping** (RemoveAgent touches only status+heartbeat).
+- **Verified:** write → index (no bodies) → get body; unit test asserts memory outlives a reaped worker.
+
+## P2.3 — Presence-routing + live fleet-state injection  ✅ verified (unit)
+- Each agent advertises whether a human is attached + to which session (`Status.Present/Session` via a
+  hub attendance probe, §2.4). `GET /api/fleet/context` renders live roster + presence + memory index;
+  a `UserPromptSubmit` hook injects it **each turn** (DESIGN §5) so the agent knows who exists, what
+  they're doing, where the human is — with an explicit **DEFER** instruction for attended workers.
+- **Verified:** unit test asserts the context flags an attended worker DEFER and lists titles (no bodies).
+
+## P2.4 — Fleet UI + attach-to-worker  ✅ built
+- Sidebar shows alive dot, role, presence (👤) / reapable (⌛) badges, phase; a **+ worker** button
+  spawns. Clicking an agent **attaches**: opens its session URL in a new tab — the human is an org
+  member so their browser passes the OAuth gate (the clean answer to cross-sprite reachability for the
+  human). Agents advertise their URL in the roster; the spawner hands each worker its own URL.
+
+## P2.5 — Capability/policy control plane  ✅ verified
+- Layered policy (defaults → role → per-agent override, most-specific wins) in
+  `fleet/config/policy.json`; built-in baseline so partial docs inherit. Real enforcement:
+  `tools.permission_mode` drives the agent's Claude `--permission-mode`; `spawn.max_total` gates
+  `POST /api/fleet/spawn` (403 when over). Visibility: `GET /api/policy` + a UI policy line.
+- **Guardrail (can-modify-policy human-held):** agents only READ `fleet/config/*`; no agent code
+  writes it. `docs/fleet-policy.example.json` is the operator write path.
+- **Verified:** control-plane doc in brain → `/api/policy` reflects it; `permission_mode=plan` applied;
+  spawn cap 0 → **403, no sprite created**.
+
+## Phase 2 — built behind a tradeoff / remaining hardening
+- **Worker Claude credentials:** a fresh sprite has no Anthropic creds, so dispatched workers could
+  register but not *run* Claude. The spawner now **propagates the Claude OAuth credential** to workers
+  during provisioning (`SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=0` to disable). TRADEOFF: copies a
+  credential into the brain bucket + onto the worker fs. The production-preferred path is the sprites
+  **API Gateway** (`ANTHROPIC_BASE_URL` → gateway, no creds copied, DESIGN §3.2) — used here because no
+  gateway is configured. **Verified:** with propagation, a spawned worker processed a dispatched task
+  (ran the instructed command) and flipped reapable in ~20s — the full loop dispatch→pull→inject→act.
+- **Storage-level policy/identity scoping (DESIGN §6.2/§6.3):** the guardrail and per-agent brain
+  integrity are enforced at the *app layer* (no write code path) but not yet at the *storage* layer
+  (Phase 1/2 use one bucket-scoped key). Per-prefix-scoped creds (`fleet/<id>/*` write,
+  `fleet/config/*` read-only) are the remaining hardening to make it physically enforced.
+- **Dispatch delivery** is brain-pull, not session-API-push (the OAuth-wall deviation above).
+
+## Phase 2 — how to use
+```
+POST /api/fleet/spawn   {name_prefix, role}      # create + provision a worker
+POST /api/fleet/dispatch {target, task}          # assign work (lands in the worker's session)
+POST /api/fleet/done                             # mark self done (reap after PR merges)
+GET  /api/fleet         | /api/fleet/context     # roster (json) | live context (text, hook-injected)
+GET/POST /api/memory    | GET /api/memory/{a}/{id}  # shared memory index/write | body
+GET  /api/policy                                 # effective capability policy
+```
+Control-plane policy: write `docs/fleet-policy.example.json` to brain key `fleet/config/policy.json`.
