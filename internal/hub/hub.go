@@ -582,6 +582,22 @@ func (h *Hub) sendJSON(client *Client, v interface{}) {
 	}
 }
 
+// IsIdle reports whether the agent has no connected clients and nothing
+// generating — used by the fleet to decide a worker is reapable after a while.
+func (h *Hub) IsIdle() bool {
+	if h.processMgr.GetActiveGeneratingCount() > 0 {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, clients := range h.clients {
+		if len(clients) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // HealthStatus reports liveness + whether the sprite should stay awake.
 func (h *Hub) HealthStatus() []byte {
 	h.mu.RLock()

@@ -17,6 +17,7 @@ import (
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/fleet"
 	"github.com/clouvet/sprite-agent/internal/hub"
+	"github.com/clouvet/sprite-agent/internal/reaper"
 	"github.com/clouvet/sprite-agent/internal/server"
 	"github.com/clouvet/sprite-agent/internal/spawn"
 )
@@ -84,14 +85,21 @@ func main() {
 			log.Printf("fleet: disabled (init failed: %v)", err)
 		} else {
 			roster = fleetSvc
+			// Idle-based self-reaping: a worker that sits idle long enough marks
+			// itself reapable (DESIGN §2.3). Disabled by default (0).
+			fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			if err := fleetSvc.Register(ctx); err != nil {
 				log.Printf("fleet: registration failed: %v", err)
 			} else {
-				log.Printf("fleet: registered %s into brain s3://%s", cfg.AgentID, cfg.Brain.Bucket)
+				log.Printf("fleet: registered %s into brain s3://%s (idle-reap=%s)", cfg.AgentID, cfg.Brain.Bucket, cfg.IdleReapAfter)
 			}
 			cancel()
 			fleetSvc.StartHeartbeat(context.Background())
+
+			// Reaper: on token-bearing agents, destroy reapable/dead workers and
+			// clean their brain entries. Home is never reaped (fleet.ReapTargets).
+			go reaper.New(fleetSvc, spawner, cfg.ReapInterval, cfg.DeadReapAfter).Run(context.Background())
 		}
 	} else {
 		log.Printf("fleet: disabled (no brain configured)")

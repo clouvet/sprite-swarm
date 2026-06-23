@@ -24,6 +24,7 @@ import (
 // passes a *fleet.Service when a brain is configured, or nil otherwise.
 type RosterProvider interface {
 	Roster(ctx context.Context) (interface{}, error)
+	MarkReapable(ctx context.Context) error
 }
 
 // Server wires the hub, session metadata, fleet brain, and HTTP routes.
@@ -65,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
+	mux.HandleFunc("/api/fleet/done", s.serveDone)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -176,6 +178,25 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveDone marks this agent reapable (e.g. its task is finished / PR merged) so
+// the fleet reaper destroys it. The agent does not destroy itself — a
+// token-bearing reaper does, keeping the privileged token off workers.
+func (s *Server) serveDone(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.fleet.MarkReapable(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

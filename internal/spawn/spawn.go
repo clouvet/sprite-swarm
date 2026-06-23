@@ -33,10 +33,12 @@ type Result struct {
 	URL  string `json:"url"`
 }
 
-// Spawner creates sprites. Available reports whether live spawning is wired.
+// Spawner creates and destroys sprites. Available reports whether live spawning
+// is wired (a sprites API token is present).
 type Spawner interface {
 	Available() bool
 	Spawn(ctx context.Context, req Request) (Result, error)
+	Destroy(ctx context.Context, name string) error
 }
 
 // New returns a live spawner when SPRITE_API_TOKEN is set, otherwise a stub that

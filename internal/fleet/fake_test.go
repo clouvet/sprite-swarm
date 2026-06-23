@@ -34,6 +34,13 @@ func (f *fakeBrain) Get(_ context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+func (f *fakeBrain) Delete(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, key)
+	return nil
+}
+
 func (f *fakeBrain) List(_ context.Context, prefix string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

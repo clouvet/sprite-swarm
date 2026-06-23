@@ -8,7 +8,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the resolved runtime configuration for one sprite-agent instance.
@@ -46,6 +48,18 @@ type Config struct {
 	// run this same artifact (e.g. a git ref or image). Informational in
 	// Phase 1; recorded into spawn requests.
 	ArtifactRef string
+
+	// Auto-reap (DESIGN §2.3: workers come and go). A worker self-declares
+	// reapable after being idle this long (0 = never self-reap on idle). The
+	// reaper (on token-bearing agents) scans every ReapInterval and also cleans
+	// up workers whose heartbeat has been stale beyond DeadReapAfter.
+	IdleReapAfter time.Duration
+	ReapInterval  time.Duration
+	DeadReapAfter time.Duration
+
+	// WorkerIdleReapAfter is the idle-reap threshold the spawner bakes into the
+	// workers it creates (so spawned workers clean themselves up). 0 = never.
+	WorkerIdleReapAfter time.Duration
 }
 
 // BrainConfig points at the shared fleet brain (S3-compatible, e.g. Tigris).
@@ -74,6 +88,10 @@ func FromEnv() Config {
 		MCPConfigPath:  os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
 		SpriteAPIToken: os.Getenv("SPRITE_API_TOKEN"),
 		ArtifactRef:    getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
+		IdleReapAfter:  minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
+		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
+		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),
+		WorkerIdleReapAfter: minutesEnv("SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES", 30),
 		Brain: BrainConfig{
 			Bucket:    os.Getenv("S3_BUCKET"),
 			Region:    getenv("S3_REGION", "auto"),
@@ -107,6 +125,25 @@ func deriveProjectsDir(workDir string) string {
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// minutesEnv reads an integer-minutes env var, defaulting to def minutes.
+func minutesEnv(key string, def int) time.Duration {
+	return time.Duration(intEnv(key, def)) * time.Minute
+}
+
+// secondsEnv reads an integer-seconds env var, defaulting to def seconds.
+func secondsEnv(key string, def int) time.Duration {
+	return time.Duration(intEnv(key, def)) * time.Second
+}
+
+func intEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

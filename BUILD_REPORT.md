@@ -93,6 +93,23 @@ spawned worker now boots this artifact and self-registers.
 - **Tested:** token parse, `New` stub-vs-live, `BootstrapEnv`, create-request + name synthesis, and an
   `httptest` fake of the sprites API locking the warm→PUT→confirm flow (cold-sprite behavior included).
 
+### Auto-reap — workers come and go, verified
+Spawned workers clean themselves up so the fleet doesn't accumulate zombies (DESIGN §2.3).
+- **Policy** (`fleet.ReapTargets`, pure + unit-tested): reap a worker that self-declared `Reapable`
+  (idle past its threshold, or told done) or whose heartbeat is stale beyond `DeadReapAfter`
+  (crashed sprite). **Home is never reaped** (DESIGN §4.2 — home is pinned).
+- **Reaper** (`internal/reaper`): runs only on token-bearing agents; each scan destroys reap targets
+  via the sprites API, then removes their brain entries (sprite first, brain second; a failed destroy
+  leaves the brain entry for retry). Workers never destroy themselves — the privileged token stays on
+  the reaper.
+- **Triggers:** idle (`SPRITE_AGENT_IDLE_REAP_MINUTES`; the spawner bakes
+  `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES`, default 30, into workers), explicit done
+  (`POST /api/fleet/done`, e.g. after a PR merges), or dead heartbeat.
+- **Verified end-to-end:** spawned `wk-c4fd419b` (1-min idle-reap, 20s reaper); it registered, sat
+  idle, and at **+152s** the reaper logged `reaped wk-c4fd419b (destroyed sprite + removed brain
+  entry)` — `GET /v1/sprites` then showed no `wk-` sprites. Tests cover the policy, the idle→reapable
+  transition (home exempt), and the reaper loop (destroy-then-remove; keep-on-failure).
+
 ### Per-prefix brain credential scoping (DESIGN §6.3) — Phase 2
 Phase 1 uses one bucket-scoped key (per the brief). Phase 2: per-agent prefix-scoped creds
 (`fleet/<id>/*` write) + `fleet/config/*` write-protection.

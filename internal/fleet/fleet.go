@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clouvet/sprite-agent/internal/config"
 )
 
-// heartbeatInterval is how often a running agent refreshes its heartbeat.
+// heartbeatInterval is how often a running agent refreshes its heartbeat + status.
 const heartbeatInterval = 30 * time.Second
 
 // Service is the per-agent fleet brain client: it registers this agent and
@@ -24,6 +25,13 @@ type Service struct {
 	artifact string
 	started  int64
 	now      func() time.Time
+
+	mu             sync.Mutex
+	phase          string        // current free-text phase, refreshed into status
+	idleProbe      func() bool   // reports whether the agent is currently idle (no clients, not generating)
+	idleReapAfter  time.Duration // a worker self-declares reapable after idle this long (0 = disabled)
+	idleSince      time.Time     // when the current idle stretch began (zero = not idle)
+	manualReapable bool          // set via MarkReapable (e.g. work done / PR merged)
 }
 
 // New builds a Service backed by the configured S3/Tigris brain.
@@ -47,7 +55,48 @@ func newService(brain Brain, cfg config.Config) *Service {
 		role:     role,
 		artifact: cfg.ArtifactRef,
 		now:      time.Now,
+		phase:    "idle",
 	}
+}
+
+// SetIdleReaping wires an idle probe + threshold so a worker self-declares
+// reapable after being idle (no clients, not generating) for `after`. after<=0
+// disables idle self-reaping. Home agents never self-declare reapable.
+func (s *Service) SetIdleReaping(probe func() bool, after time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.idleProbe = probe
+	s.idleReapAfter = after
+}
+
+// MarkReapable flags this agent as done so a reaper can destroy it (e.g. after
+// its PR merged). A no-op effect on home (ReapTargets protects home).
+func (s *Service) MarkReapable(ctx context.Context) error {
+	s.mu.Lock()
+	s.manualReapable = true
+	s.mu.Unlock()
+	return s.writeStatus(ctx, "done")
+}
+
+// computeReapable decides whether this agent should advertise Reapable now.
+func (s *Service) computeReapable(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.manualReapable {
+		return true
+	}
+	if s.role == "home" || s.idleReapAfter <= 0 || s.idleProbe == nil {
+		s.idleSince = time.Time{}
+		return false
+	}
+	if s.idleProbe() {
+		if s.idleSince.IsZero() {
+			s.idleSince = now
+		}
+		return now.Sub(s.idleSince) >= s.idleReapAfter
+	}
+	s.idleSince = time.Time{}
+	return false
 }
 
 // Register writes this agent's status + initial heartbeat (boot self-registration).
@@ -65,17 +114,51 @@ func (s *Service) UpdatePhase(ctx context.Context, phase string) error {
 }
 
 func (s *Service) writeStatus(ctx context.Context, phase string) error {
+	if phase != "" {
+		s.mu.Lock()
+		s.phase = phase
+		s.mu.Unlock()
+	}
+	now := s.now()
+	s.mu.Lock()
+	curPhase := s.phase
+	s.mu.Unlock()
 	st := Status{
 		ID:        s.id,
 		Role:      s.role,
-		Phase:     phase,
+		Phase:     curPhase,
 		URL:       s.url,
 		Artifact:  s.artifact,
+		Reapable:  s.computeReapable(now),
 		StartedAt: s.started,
-		UpdatedAt: s.now().Unix(),
+		UpdatedAt: now.Unix(),
 	}
 	data, _ := json.Marshal(st)
 	return s.brain.Put(ctx, statusKey(s.id), data)
+}
+
+// RemoveAgent deletes an agent's brain entry (status + heartbeat keys). Used by
+// the reaper after destroying a worker's sprite so it stops showing in the roster.
+func (s *Service) RemoveAgent(ctx context.Context, id string) error {
+	keys, err := s.brain.List(ctx, "fleet/"+id+"/")
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if err := s.brain.Delete(ctx, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReapTargets returns the ids the reaper should destroy now (pure policy).
+func (s *Service) ReapTargets(ctx context.Context, deadReapAfter time.Duration) ([]string, error) {
+	roster, err := s.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ReapTargets(roster, s.now(), deadReapAfter), nil
 }
 
 func (s *Service) writeHeartbeat(ctx context.Context) error {
@@ -97,6 +180,10 @@ func (s *Service) StartHeartbeat(ctx context.Context) {
 				hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				if err := s.writeHeartbeat(hbCtx); err != nil {
 					log.Printf("fleet: heartbeat failed: %v", err)
+				}
+				// Refresh status too, so idle→reapable propagates to the roster.
+				if err := s.writeStatus(hbCtx, ""); err != nil {
+					log.Printf("fleet: status refresh failed: %v", err)
 				}
 				cancel()
 			}

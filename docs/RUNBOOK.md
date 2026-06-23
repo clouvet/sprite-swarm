@@ -37,6 +37,10 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. Spawn is stubbed if unset. |
 | `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL. |
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
+| `SPRITE_AGENT_IDLE_REAP_MINUTES` | `0` | This agent self-declares reapable after idle this long (0 = never). Home ignores it. |
+| `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES` | `30` | Idle-reap threshold the spawner bakes into workers it creates. |
+| `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans (token-bearing agents only). |
+| `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Reap a worker whose heartbeat has been stale beyond this (crashed sprite cleanup). |
 
 ## Smoke test (M2 acceptance)
 ```sh
@@ -70,3 +74,12 @@ download URL, warms the new (cold) sprite, then installs a service that fetches 
 runs the binary with the bootstrap env. The worker boots `sprite-agent` and
 self-registers — it appears in `GET /api/fleet` (`alive:true`) within ~1–2 min.
 Set `SPRITE_AGENT_SPAWN_PROVISION=0` for a bare create (no agent installed).
+
+## Auto-reap (workers come and go)
+Token-bearing agents run a **reaper** that destroys reapable/dead workers and
+cleans their brain entries; **home is never reaped**. A worker becomes reapable
+when it (a) sits idle past its idle-reap threshold, (b) is told it's done —
+`POST /api/fleet/done` (e.g. after its PR merges), or (c) its heartbeat goes
+stale past `SPRITE_AGENT_DEAD_REAP_MINUTES` (crashed sprite). The reaping decision
+lives in `fleet.ReapTargets`; the worker never destroys itself (the privileged
+sprites token stays on the reaper, not on workers).

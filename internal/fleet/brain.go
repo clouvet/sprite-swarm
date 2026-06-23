@@ -16,4 +16,5 @@ type Brain interface {
 	Put(ctx context.Context, key string, data []byte) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	List(ctx context.Context, prefix string) ([]string, error)
+	Delete(ctx context.Context, key string) error
 }

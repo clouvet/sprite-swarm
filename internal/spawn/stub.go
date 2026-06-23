@@ -12,3 +12,7 @@ func (notConfigured) Available() bool { return false }
 func (notConfigured) Spawn(_ context.Context, _ Request) (Result, error) {
 	return Result{}, ErrNotConfigured
 }
+
+func (notConfigured) Destroy(_ context.Context, _ string) error {
+	return ErrNotConfigured
+}

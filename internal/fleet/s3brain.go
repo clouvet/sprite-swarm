@@ -81,6 +81,17 @@ func (b *s3Brain) Get(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(out.Body)
 }
 
+func (b *s3Brain) Delete(ctx context.Context, key string) error {
+	_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", key, err)
+	}
+	return nil
+}
+
 func (b *s3Brain) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	paginator := s3.NewListObjectsV2Paginator(b.client, &s3.ListObjectsV2Input{

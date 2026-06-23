@@ -26,6 +26,7 @@ type Status struct {
 	Phase     string `json:"phase"`    // free-text current activity
 	URL       string `json:"url"`      // session-service URL, if known
 	Artifact  string `json:"artifact"` // bootstrap pointer it's running
+	Reapable  bool   `json:"reapable"` // worker self-declares it can be reaped (idle/done)
 	StartedAt int64  `json:"started_at"`
 	UpdatedAt int64  `json:"updated_at"`
 }
@@ -40,6 +41,26 @@ type RosterEntry struct {
 	Status
 	Alive    bool  `json:"alive"`
 	LastSeen int64 `json:"last_seen"` // unix seconds of latest heartbeat (or status)
+}
+
+// ReapTargets is the pure reaping policy: which agents should be destroyed now.
+//
+// Reapable = a worker (never role "home") that either self-declared Reapable
+// (idle/done) or has been dead far longer than the liveness TTL (its sprite
+// crashed/was destroyed and isn't coming back — clean up its brain entry).
+// Home is always protected (DESIGN §4.2: home is pinned, never auto-reaped).
+func ReapTargets(roster []RosterEntry, now time.Time, deadReapAfter time.Duration) []string {
+	var ids []string
+	for _, e := range roster {
+		if e.Role == "home" {
+			continue
+		}
+		dead := e.LastSeen > 0 && now.Sub(time.Unix(e.LastSeen, 0)) > deadReapAfter
+		if e.Reapable || dead {
+			ids = append(ids, e.ID)
+		}
+	}
+	return ids
 }
 
 // statusKey / heartbeatKey are the per-agent keys an agent owns.

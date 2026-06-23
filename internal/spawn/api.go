@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -195,6 +196,10 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 		return err
 	}
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
+	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
+	if a.cfg.WorkerIdleReapAfter > 0 {
+		env["SPRITE_AGENT_IDLE_REAP_MINUTES"] = strconv.Itoa(int(a.cfg.WorkerIdleReapAfter.Minutes()))
+	}
 	for k, v := range bootEnv {
 		env[k] = v
 	}
@@ -292,6 +297,21 @@ func (a *apiSpawner) serviceExists(ctx context.Context, name string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode/100 == 2
+}
+
+// Destroy deletes a sprite by name (used by the reaper).
+func (a *apiSpawner) Destroy(ctx context.Context, name string) error {
+	resp, err := a.do(ctx, http.MethodDelete, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), nil)
+	if err != nil {
+		return fmt.Errorf("spawn: destroy %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	// 404 = already gone; treat as success (idempotent reap).
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("spawn: destroy %s: %d: %s", name, resp.StatusCode, string(data))
+	}
+	return nil
 }
 
 func (a *apiSpawner) do(ctx context.Context, method, url string, body []byte) (*http.Response, error) {

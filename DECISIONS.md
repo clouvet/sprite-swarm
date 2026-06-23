@@ -88,6 +88,13 @@ The build brief instructs taking the documented default and recording it here ra
     the spawner warms via `POST …/exec`, polls status until non-cold, PUTs, then confirms + retries
     once. This was the difference between a worker that registers and one that never boots.
   - **`SPRITE_AGENT_SPAWN_PROVISION=0`** opts back into a bare create; provisioning requires a brain.
+- **Auto-reap — reaper-on-home, not self-destruct (user-requested).** Workers are reaped by a
+  token-bearing agent's reaper, not by destroying themselves, so the privileged sprites token never
+  has to be handed to workers (least privilege). A worker only *advertises* `Reapable` in its status
+  (idle past threshold, or `POST /api/fleet/done`); the reaper decides and destroys. **Home is always
+  protected** (`fleet.ReapTargets` skips role=home). Dead workers (stale heartbeat) are also cleaned
+  up. Sprite is destroyed before its brain entry; a failed destroy keeps the entry for retry. PR-merge
+  auto-detection isn't built — `POST /api/fleet/done` is the hook an orchestrator calls post-merge.
 - **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
   reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
   over the same API a human uses) honest.
