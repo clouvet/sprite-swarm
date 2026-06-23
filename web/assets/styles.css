@@ -40,6 +40,7 @@ body {
 .fleet-badge { font-size: 11px; } .fleet-badge.present { filter: saturate(1.4); }
 .fleet-phase { color: var(--muted); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .fleet-empty { font-size: 12px; color: var(--muted); padding: 4px 8px; }
+#policy-line { font-size: 11px; color: var(--muted); padding: 2px 8px 6px; font-family: ui-monospace, monospace; }
 
 #overlay { display: none; }
 #overlay.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 5; }

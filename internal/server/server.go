@@ -31,6 +31,8 @@ type Fleet interface {
 	GetMemoryValue(ctx context.Context, author, id string) (interface{}, error)
 	MemoryContext(ctx context.Context, limit int) (string, error)
 	FleetContext(ctx context.Context, memLimit int) (string, error)
+	EffectivePolicyValue(ctx context.Context) (interface{}, error)
+	SpawnAllowed(ctx context.Context) (bool, string)
 }
 
 // Server wires the hub, session metadata, fleet brain, and HTTP routes.
@@ -77,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
+	mux.HandleFunc("/api/policy", s.servePolicy)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -190,6 +193,13 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 	if !s.spawner.Available() {
 		http.Error(w, spawn.ErrNotConfigured.Error(), http.StatusNotImplemented)
 		return
+	}
+	// Enforce the capability policy's spawn cap (P2.5) before creating a sprite.
+	if s.fleet != nil {
+		if ok, reason := s.fleet.SpawnAllowed(r.Context()); !ok {
+			http.Error(w, "policy: "+reason, http.StatusForbidden)
+			return
+		}
 	}
 	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
 		Name: body.Name, NamePrefix: body.NamePrefix, Role: body.Role, Labels: body.Labels,
@@ -312,6 +322,21 @@ func (s *Server) serveMemoryByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, entry)
+}
+
+// servePolicy returns this agent's effective capability policy (P2.5 visibility).
+// Read-only: agents never write fleet/config/* — that's human/control-plane held.
+func (s *Server) servePolicy(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	eff, err := s.fleet.EffectivePolicyValue(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, eff)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
