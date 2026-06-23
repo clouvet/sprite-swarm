@@ -54,6 +54,7 @@ func newService(brain Brain, cfg config.Config) *Service {
 		brain:    brain,
 		id:       cfg.AgentID,
 		role:     role,
+		url:      cfg.PublicURL,
 		artifact: cfg.ArtifactRef,
 		now:      time.Now,
 		phase:    "idle",
