@@ -59,8 +59,13 @@ func BootstrapEnv(cfg config.Config, newID, role string) map[string]string {
 		"SPRITE_AGENT_ROLE":     role,
 		"SPRITE_AGENT_ARTIFACT": cfg.ArtifactRef,
 	}
-	// Brain pointer: where shared fleet state lives + how to auth.
-	if cfg.Brain.Enabled() {
+	// Brain pointer. Prefer the gateway connector — the worker reaches the brain
+	// by its own sprite identity, so NO S3 keys are copied onto it (token-free,
+	// symmetric). Only fall back to copying keys if there's no connector.
+	switch {
+	case cfg.Brain.UsesGateway():
+		env["SPRITE_AGENT_BRAIN_GATEWAY"] = cfg.Brain.GatewayURL
+	case cfg.Brain.Enabled():
 		env["S3_BUCKET"] = cfg.Brain.Bucket
 		env["S3_REGION"] = cfg.Brain.Region
 		env["S3_ENDPOINT"] = cfg.Brain.Endpoint
