@@ -25,6 +25,7 @@ import (
 type RosterProvider interface {
 	Roster(ctx context.Context) (interface{}, error)
 	MarkReapable(ctx context.Context) error
+	Dispatch(ctx context.Context, target, task string) (interface{}, error)
 }
 
 // Server wires the hub, session metadata, fleet brain, and HTTP routes.
@@ -67,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
+	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -197,6 +199,34 @@ func (s *Server) serveDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveDispatch assigns a task to another agent (P2.1). The task is recorded in
+// the brain as visible fleet state; the target polls its inbox and injects it
+// into its own session. Returns the task record (incl. the session id to attach).
+func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+		Task   string `json:"task"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" || body.Task == "" {
+		http.Error(w, "target and task are required", http.StatusBadRequest)
+		return
+	}
+	res, err := s.fleet.Dispatch(r.Context(), body.Target, body.Task)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

@@ -36,12 +36,15 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 	}
 	if spawnAvailable {
 		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
-			"sprite boots this same artifact and registers into the shared brain automatically. ")
+			"sprite boots this same artifact and registers into the shared brain automatically. " +
+			"To assign work to a peer, POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"} — " +
+			"it lands in that worker's own session (attach to watch). ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
 	}
-	b.WriteString("Coordination beyond the basic roster (task dispatch, shared memory) is not built yet.")
+	b.WriteString("Shared fleet memory is available — record durable learnings so peers and future " +
+		"sprites inherit them.")
 	return b.String()
 }
 
@@ -96,6 +99,10 @@ func main() {
 			}
 			cancel()
 			fleetSvc.StartHeartbeat(context.Background())
+
+			// Dispatch (P2.1): poll this agent's task inbox and inject each task
+			// into a local session so it materializes in the transcript (seam #2).
+			fleetSvc.StartTaskPolling(context.Background(), h.InjectMessage)
 
 			// Reaper: on token-bearing agents, destroy reapable/dead workers and
 			// clean their brain entries. Home is never reaped (fleet.ReapTargets).
