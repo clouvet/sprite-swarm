@@ -49,6 +49,11 @@ type Config struct {
 	// Phase 1; recorded into spawn requests.
 	ArtifactRef string
 
+	// PublicURL is this agent's externally reachable session-service URL,
+	// advertised in the roster so a human can attach to it (P2.4). The spawner
+	// passes it to workers (from the create response); home sets it via env.
+	PublicURL string
+
 	// Auto-reap (DESIGN §2.3: workers come and go). A worker self-declares
 	// reapable after being idle this long (0 = never self-reap on idle). The
 	// reaper (on token-bearing agents) scans every ReapInterval and also cleans
@@ -92,6 +97,7 @@ func FromEnv() Config {
 		MCPConfigPath:  os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
 		SpriteAPIToken: os.Getenv("SPRITE_API_TOKEN"),
 		ArtifactRef:    getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
+		PublicURL:      os.Getenv("SPRITE_AGENT_URL"),
 		IdleReapAfter:  minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
 		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
 		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),

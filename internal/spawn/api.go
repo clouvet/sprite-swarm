@@ -153,7 +153,13 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	if a.provision {
-		if err := a.provisionAgent(ctx, res.Name, cr.Env); err != nil {
+		// Hand the worker its own public URL so it advertises it in the roster
+		// (the human attaches to it, P2.4).
+		env := cr.Env
+		if res.URL != "" {
+			env["SPRITE_AGENT_URL"] = res.URL
+		}
+		if err := a.provisionAgent(ctx, res.Name, env); err != nil {
 			// Sprite exists but isn't running the agent yet; surface both.
 			return res, fmt.Errorf("spawn: created %s but provisioning failed: %w", res.Name, err)
 		}

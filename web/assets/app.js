@@ -108,20 +108,54 @@
     closeSidebar();
   }
 
-  // ---- fleet (M4): glance view, read straight from the roster ----
+  // ---- fleet (P2.4): glance view + attach-to-worker, read from the roster ----
+  let fleetRoster = [];
   async function loadFleet() {
     try {
       const res = await fetch('/api/fleet');
       if (!res.ok) { fleetList.innerHTML = '<div class="fleet-empty">no brain</div>'; return; }
-      const roster = await res.json() || [];
-      fleetList.innerHTML = roster.map(a => `
-        <div class="fleet-item">
+      fleetRoster = await res.json() || [];
+      fleetList.innerHTML = fleetRoster.map(a => {
+        const badges =
+          (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '') +
+          (a.reapable ? '<span class="fleet-badge reap" title="reapable">⌛</span>' : '');
+        const attachable = a.url ? ' attachable' : '';
+        return `<div class="fleet-item${attachable}" data-id="${escapeHtml(a.id)}" title="${a.url ? 'Attach (open this agent\\'s session)' : 'no URL'}">
           <span class="dot ${a.alive ? 'on' : 'off'}"></span>
           <span class="fleet-id">${escapeHtml(a.id)}</span>
           <span class="fleet-role">${escapeHtml(a.role || '')}</span>
+          ${badges}
           <span class="fleet-phase">${escapeHtml(a.phase || '')}</span>
-        </div>`).join('') || '<div class="fleet-empty">empty</div>';
+        </div>`;
+      }).join('') || '<div class="fleet-empty">empty</div>';
+      fleetList.querySelectorAll('.fleet-item.attachable').forEach(el => {
+        el.addEventListener('click', () => attachToAgent(el.dataset.id));
+      });
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
+  }
+
+  // Attach-to-worker: open the agent's session service in a new tab. Its URL is
+  // org-gated (Fly OAuth); the human is a member, so the browser authenticates.
+  function attachToAgent(id) {
+    const a = fleetRoster.find(x => x.id === id);
+    if (!a || !a.url) return;
+    window.open(a.url, '_blank', 'noopener');
+  }
+
+  // Spawn a worker from the UI (home/token-bearing agents). Best-effort.
+  async function spawnWorker() {
+    const btn = $('spawn-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const res = await fetch('/api/fleet/spawn', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name_prefix: 'wk-', role: 'worker' }),
+      });
+      if (!res.ok) { addSystem('Spawn failed: ' + (await res.text())); }
+      else { const w = await res.json(); addSystem('Spawned ' + (w.name || w.id) + ' — booting + registering…'); }
+      loadFleet();
+    } catch (e) { addSystem('Spawn error: ' + e.message); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '+ worker'; } }
   }
 
   // ---- websocket ----
@@ -308,6 +342,7 @@
   // ---- wire up ----
   $('new-chat-btn').addEventListener('click', createSession);
   $('start-chat-btn').addEventListener('click', createSession);
+  { const sb = $('spawn-btn'); if (sb) sb.addEventListener('click', spawnWorker); }
   $('menu-btn').addEventListener('click', openSidebar);
   overlay.addEventListener('click', closeSidebar);
   sendBtn.addEventListener('click', send);
