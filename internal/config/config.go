@@ -30,9 +30,11 @@ type Config struct {
 	// derived from WorkDir (Claude slugifies the cwd path).
 	ClaudeProjectsDir string
 
-	// Claude CLI driving options (DESIGN §3.1): scoped permissions, not a
-	// blanket skip. PermissionMode maps to --permission-mode; SettingsPath and
-	// MCPConfigPath map to --settings / --mcp-config when set.
+	// Claude CLI driving options. The fleet runs with --dangerously-skip-permissions
+	// by default (DangerousSkip): every sprite is an identical isolated microVM
+	// doing autonomous work and shouldn't stall on permission prompts. Set
+	// SPRITE_AGENT_DANGEROUS_SKIP=0 to opt into the scoped PermissionMode instead.
+	DangerousSkip  bool
 	PermissionMode string
 	SettingsPath   string
 	MCPConfigPath  string
@@ -102,6 +104,7 @@ func FromEnv() Config {
 		Addr:                getenv("SPRITE_AGENT_ADDR", ":8080"),
 		AgentID:             getenv("SPRITE_AGENT_ID", hostname()),
 		WorkDir:             workDir,
+		DangerousSkip:       boolEnv("SPRITE_AGENT_DANGEROUS_SKIP", true),
 		PermissionMode:      getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
 		SettingsPath:        os.Getenv("SPRITE_AGENT_SETTINGS"),
 		MCPConfigPath:       os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
@@ -158,6 +161,19 @@ func minutesEnv(key string, def int) time.Duration {
 // secondsEnv reads an integer-seconds env var, defaulting to def seconds.
 func secondsEnv(key string, def int) time.Duration {
 	return time.Duration(intEnv(key, def)) * time.Second
+}
+
+// boolEnv reads a boolean env var (1/true/yes = true, 0/false/no = false),
+// defaulting to def when unset/unrecognized.
+func boolEnv(key string, def bool) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func intEnv(key string, def int) int {

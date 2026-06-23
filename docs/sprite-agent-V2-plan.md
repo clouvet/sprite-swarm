@@ -1,10 +1,14 @@
 # Sprite Fleet (`sprite-agent`) — v2 Design Plan
 
-> **Status:** Design / pre-build. App name: **`sprite-agent`** (confirmed) — repo
-> `https://github.com/clouvet/sprite-agent` (brand new/empty). Build brief: `sprite-agent-BUILD.md`.
-> **Date:** 2026-06-22
-> **Relationship to v1:** current `sprite-mobile` is **v1**. This is **v2**, likely a new repo
-> that reuses v1's web UI components. v1 stays as-is for reference/fallback.
+> **Status:** **Phases 1 and 2 built and verified** (Phase 3 not started). App name: **`sprite-agent`**
+> — repo `https://github.com/clouvet/sprite-agent`. Build brief: `sprite-agent-BUILD.md`.
+> **Date:** 2026-06-22 (design); reconciled with the as-built implementation 2026-06-23.
+> **Relationship to v1:** current `sprite-mobile` is **v1**. This is **v2**, reusing v1's web UI
+> components. v1 stays as-is for reference/fallback.
+>
+> **Reading this doc:** the sections below are the original design intent. Where the implementation
+> diverged from or realized that intent, see **§0.5 As-built status** (next) — it is authoritative for
+> current reality, and load-bearing sections carry inline **(As built: …)** notes.
 
 ---
 
@@ -36,6 +40,64 @@ Three load-bearing opinions:
 trade portability for real isolation + persistence + the platform doing the heavy lifting (URLs,
 services, gateway, checkpoints). If portability ever became a goal, opinion #1 is what you'd give
 up, and most of the rest would need rethinking.
+
+---
+
+## 0.5 As-built status (reality — authoritative)
+
+Phases 1 and 2 are implemented and verified end-to-end on the `cl-sprites` org. This section records
+what was actually built and where it diverged from the design intent below (and why). Phase 3
+(insertion: take-the-wheel / needs-human) is **not** started.
+
+**Every sprite is identical — "home" is only a hat.** No capability or config is gated to a role. Any
+sprite can chat, spawn, reap, dispatch, and read/write memory; if home disappears any worker can take
+the hat; if everything disappears, one new sprite booted against the brain reconstitutes the fleet.
+
+**Secrets & credentials — connectors + the brain, not per-sprite copies.**
+- **Anthropic (Claude):** via the Sprite **API Gateway connector** — the agent points Claude at the
+  connector's `ANTHROPIC_BASE_URL`; the gateway authenticates by the sprite's Fly identity. No key on
+  the sprite. (Matches §3.2 intent.)
+- **Brain (Tigris/S3):** reached **token-free via the `s3_object_store` connector** (GET/PUT/DELETE +
+  ListObjectsV2, identity-authed). No S3 keys on workers. A sprite **discovers** the connector via
+  `GET /v1/gateway/list`, so the only thing it needs to reach the brain is to be in the org. (Supersedes
+  §6.3's per-agent prefix-scoped S3 keys, which are now *future* hardening.)
+- **GitHub & the Sprites API token:** stored **in the brain** under `fleet/config/secrets/` and
+  rehydrated by every sprite on boot — `github` (for git/gh) and `sprites-api-token` (so any sprite can
+  spawn/reap). This is a deliberate **deviation** from §3.2's "secrets never copied onto sprites": the
+  GitHub connector proxies only the REST API, not `git` smart-HTTP transport, and won't mint a token, so
+  real `git` needs a token in hand. Per the symmetry model the brain *is* the fleet's root of trust, so
+  the token lives there and is loaded into process env only (git via a `GIT_CONFIG_*` credential helper;
+  never written to disk). Trade-off: brain access == fleet-wide capability by design.
+
+**Permissions.** The fleet runs Claude with **`--dangerously-skip-permissions` by default**, fleet-wide
+(an autonomous fleet shouldn't stall on prompts). This **reverses** the design's "scoped
+`--permission-mode`/`--settings`, not a blanket skip" (§3.1/§6.2); the scoped path is now opt-in
+(`SPRITE_AGENT_DANGEROUS_SKIP=0`). `--settings` is still passed for the per-turn fleet-context hook.
+
+**Coordination (Phase 2), as built.**
+- **Dispatch:** delivered **via the brain** (`fleet/tasks/<to>/…`, append-only visible state); each
+  sprite polls its own inbox and injects the task into its own local session, so it still materializes
+  in that sprite's transcript (seam #2 holds). This **deviates** from §10's "session API is the delivery
+  transport (no S3-inbox)" because private sprite URLs are **Fly-OAuth-gated**, so direct cross-sprite
+  session calls aren't possible.
+- **Durable memory:** `fleet/memory/<author>/…`, append-only; always-loaded index + on-demand bodies;
+  survives reaping. Injected into context each turn via a `UserPromptSubmit` hook (with the roster +
+  presence) — realizing §5's "inject live fleet state each turn."
+- **Presence-routing:** each agent advertises whether a human is attached; the per-turn fleet context
+  flags attended workers as "defer."
+- **Fleet UI + attach:** sidebar with status/presence; **attach** opens a worker's URL in the browser
+  (the human is an org member, so their browser passes the OAuth gate that blocks sprite-to-sprite HTTP).
+- **Control plane:** `fleet/config/policy.json` (defaults → role → per-agent), enforced via the spawn cap
+  and (when not skipping) permission mode; agents only **read** `fleet/config/*` (the human-held
+  guardrail is app-layer; storage-level per-prefix enforcement is future).
+- **Spawn + provisioning:** create via `POST /v1/sprites`; the worker boots this same artifact (binary
+  staged in the brain, fetched via the connector) and self-registers. Cold sprites are warmed before the
+  service is installed. **Auto-reap:** idle/done/dead workers are destroyed + their coordination keys
+  removed; idle-reap defaults **off** (not PR-aware); home is never reaped.
+
+**Recovery.** Because the brain is reached by identity (connector) and all capabilities + secrets
+rehydrate from it, standing up a new sprite in the org brings the fleet back within minutes — no
+out-of-brain bootstrap secret to hand over.
 
 ---
 
@@ -156,6 +218,8 @@ A single supervised service (installed via the sprites **services** subsystem, c
   for token streaming, scoped `--permission-mode`/`--settings` instead of blanket
   `--dangerously-skip-permissions`, `--mcp-config` (file) to wire in the sprite's `/mcp` + the
   sprites remote MCP. Hooks via `settings.json`.
+  **(As built: reversed — the fleet runs `--dangerously-skip-permissions` by default for autonomy;
+  `--settings` is still passed for the per-turn fleet-context hook. See §0.5.)**
 - Supervise that process (singleton, grace period, crash handling) — **lifted from claude-hub.**
 - Watch `~/.claude/projects/*.jsonl` for terminal co-presence (shared transcript = source of truth).
 - Light metadata store (embedded SQLite) for sessions/titles/memories.
@@ -174,8 +238,15 @@ A single supervised service (installed via the sprites **services** subsystem, c
   sharpens seam #1.
 - **Access control:** native sprite URL with `private_access: members` — drops the v1
   Tailscale tower (tailscaled + tailnet-gate).
+  **(As built: spawned workers default to `private_access: admins`; a human attaches from the browser,
+  which passes the Fly-OAuth gate. That same gate blocks sprite-to-sprite HTTP, which is why dispatch
+  goes via the brain — §0.5/§10.)**
 - **Secrets:** GitHub + Anthropic via the sprites **API Gateway** connectors — credentials are
   injected by the platform and **never copied onto sprites** (`ANTHROPIC_BASE_URL` → gateway).
+  **(As built: true for Anthropic + the brain/Tigris, both via connectors. NOT achievable for GitHub —
+  the connector proxies only the REST API, not `git` transport — so the GitHub token (and the Sprites
+  API token) are stored in the brain and rehydrated by every sprite; loaded into process env only,
+  never written to disk. See §0.5.)**
 - **Discovery:** sprites-api **labels** (authoritative membership) + Tigris/S3 (live coordination).
 
 ---
@@ -418,17 +489,16 @@ agent* (§2.1). "Leader" is only ever a hat (wherever the human is). The dividin
 is **not "can it spawn"** (spawning is one sprites-API/MCP call, available day one) but **"do
 spawned agents coordinate."**
 
-- **Phase 1 — The sprite-agent.** The full symmetric artifact: Go session service (claude-hub
-  kernel, CLI-driven Claude) + embedded web UI + GitHub + **spawn capability** + a **minimal brain**
-  (bootstrap pointer, self-registration, roster). Result: an agent you talk to, that uses GitHub,
-  *and* can spin up another instance of itself that registers into the same roster — solo-capable
-  but already fleet-aware at the basic level. Establishes the two seams. Not a "leader."
-- **Phase 2 — Coordination.** Turn spawned instances into a *coordinated* fleet: dispatch (assign
-  work to a spawned agent), durable shared memory, presence-routing, the fleet UI (sidebar,
-  attach-to-worker), and the capability/policy control plane. (What's added here is coordination —
-  not the ability to spawn.)
-- **Phase 3 — Insertion.** Promote the worker view from observer to participant: take-the-wheel
-  handoff + needs-human signals.
+- **Phase 1 — The sprite-agent. ✅ BUILT.** The full symmetric artifact: Go session service (claude-hub
+  kernel, CLI-driven Claude) + embedded web UI + GitHub + **spawn capability** (create + provision a
+  worker that boots this artifact) + a **minimal brain** (self-registration, roster). Establishes the
+  two seams. Not a "leader."
+- **Phase 2 — Coordination. ✅ BUILT.** dispatch (via the brain — §0.5), durable shared memory,
+  presence-routing, the fleet UI (sidebar, attach-to-worker), and the capability/policy control plane.
+  Plus, beyond the original line: auto-reap, token-free brain via the s3 connector, and operational
+  secrets in the brain (full symmetry).
+- **Phase 3 — Insertion. ⛔ NOT STARTED.** Promote the worker view from observer to participant:
+  take-the-wheel handoff + needs-human signals.
 
 Each phase is independently useful; nothing in Phase 1 has to be undone to reach Phase 3.
 
@@ -460,6 +530,10 @@ watcher, WS hub) as the **foundation of the Go backend** — not dropped.
 - **Task dispatch:** deliver via the **target agent's session API** (same path a human/bridge uses
   — seam #2); the session service *is* the durable queue (no separate S3-inbox transport). Mirror
   the assignment into S3 as **visible fleet state**, not as delivery. Materializes in the transcript.
+  **(As built: delivery is via the brain — `fleet/tasks/<to>/…`, append-only — because private sprite
+  URLs are Fly-OAuth-gated, so a direct cross-sprite session call isn't possible. The target polls its
+  inbox and injects the task into its own local session, so it still materializes in that transcript
+  (seam #2 preserved); only the delivery hop differs from the "no S3-inbox" intent. §0.5.)**
 - **Home base:** one **durable home agent per workspace** — symmetric code, but pinned + stable URL
   + default landing. Changeable via human promotion (§4.2). Not a privileged coordinator.
 - **GitHub:** **one worker = one branch/PR**, repo cloned per worker; coordinate via PRs, never a
