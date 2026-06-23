@@ -43,6 +43,15 @@ func setupGitHubAuth(token string) {
 	os.Setenv("GIT_CONFIG_VALUE_0", helper)
 }
 
+// taskSnippet makes a short single-line label from a dispatched task.
+func taskSnippet(task string) string {
+	s := strings.TrimSpace(strings.ReplaceAll(task, "\n", " "))
+	if len(s) > 50 {
+		s = s[:50] + "…"
+	}
+	return s
+}
+
 // fleetAffordance is the baked-in "you are a fleet peer" system prompt (DESIGN
 // §5): a sprite won't spawn workers if nothing tells it that's an option. It is
 // appended to Claude's system prompt so the agent knows it can spin up isolated
@@ -167,6 +176,10 @@ func main() {
 	var roster server.Fleet
 	if fleetSvc != nil {
 		roster = fleetSvc
+	}
+	srv := server.New(cfg, h, roster, spawner)
+
+	if fleetSvc != nil {
 		// Idle-based self-reaping (DESIGN §2.3, disabled by default).
 		fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
 		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
@@ -180,16 +193,20 @@ func main() {
 		cancel()
 		fleetSvc.StartHeartbeat(context.Background())
 
-		// Dispatch (P2.1): poll this agent's task inbox and inject each task
-		// into a local session so it materializes in the transcript (seam #2).
-		fleetSvc.StartTaskPolling(context.Background(), h.InjectMessage)
+		// Dispatch (P2.1): poll this agent's task inbox and inject each task into a
+		// local session so it materializes in the transcript (seam #2). Label the
+		// session so the dispatched work shows up in the UI list (visible + attachable).
+		inject := func(sessionID, task string) error {
+			srv.RegisterSession(sessionID, "task: "+taskSnippet(task))
+			return h.InjectMessage(sessionID, task)
+		}
+		fleetSvc.StartTaskPolling(context.Background(), inject)
 
 		// Reaper: on token-bearing agents, destroy reapable/dead workers and
 		// clean their brain entries. Home is never reaped (fleet.ReapTargets).
 		go reaper.New(fleetSvc, spawner, cfg.ReapInterval, cfg.DeadReapAfter).Run(context.Background())
 	}
 
-	srv := server.New(cfg, h, roster, spawner)
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
 
 	go func() {
