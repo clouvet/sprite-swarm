@@ -7,38 +7,34 @@ import (
 	"time"
 )
 
-// Manager owns Claude processes, one per session, enforcing a singleton: only
-// one process runs at a time (per-sprite isolation handles parallelism across
-// sprites, not within one). Lifted from claude-hub.
+// Manager owns Claude processes, one per session. v2 allows MULTIPLE concurrent
+// sessions on a sprite (was a singleton in claude-hub): a worker can run a
+// dispatched task while a human attaches a separate chat, without one killing the
+// other. Per-sprite isolation handles cross-sprite parallelism; within a sprite,
+// each session gets its own process.
 type Manager struct {
-	processes      map[string]*HeadlessProcess
-	mu             sync.RWMutex
-	graceTimer     *time.Timer
-	graceSessionID string
+	processes   map[string]*HeadlessProcess
+	graceTimers map[string]*time.Timer // per-session grace timers
+	mu          sync.RWMutex
 }
 
 func NewManager() *Manager {
-	return &Manager{processes: make(map[string]*HeadlessProcess)}
+	return &Manager{
+		processes:   make(map[string]*HeadlessProcess),
+		graceTimers: make(map[string]*time.Timer),
+	}
 }
 
-// Spawn starts (or returns the existing) process for a session, killing any
-// process for a different session first.
+// Spawn starts (or returns the existing) process for a session. It does NOT kill
+// other sessions' processes — concurrent sessions coexist.
 func (m *Manager) Spawn(opts Options) (*HeadlessProcess, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.cancelGracePeriodLocked()
+	m.cancelGraceLocked(opts.SessionID)
 
 	if existing, ok := m.processes[opts.SessionID]; ok {
 		return existing, nil
-	}
-
-	for existingID, existingHP := range m.processes {
-		log.Printf("[%s] killing existing process %s to enforce singleton", opts.SessionID, existingID)
-		if err := existingHP.Kill(); err != nil {
-			log.Printf("[%s] error killing existing process: %v", existingID, err)
-		}
-		delete(m.processes, existingID)
 	}
 
 	hp, err := NewHeadlessProcess(opts)
@@ -92,39 +88,39 @@ func (m *Manager) SendMessage(sessionID string, content interface{}) error {
 }
 
 // StartGracePeriod kills the session's process if no client reconnects in 10s.
+// Per-session, so grace on one session never affects another.
 func (m *Manager) StartGracePeriod(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.cancelGracePeriodLocked()
+	m.cancelGraceLocked(sessionID)
 
 	log.Printf("[%s] starting 10s grace period", sessionID)
-	m.graceSessionID = sessionID
-	m.graceTimer = time.AfterFunc(10*time.Second, func() {
+	m.graceTimers[sessionID] = time.AfterFunc(10*time.Second, func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.graceSessionID == sessionID {
-			if hp, ok := m.processes[sessionID]; ok {
-				log.Printf("[%s] grace period expired, killing process", sessionID)
-				_ = hp.Kill()
-				delete(m.processes, sessionID)
-			}
-			m.graceSessionID = ""
-			m.graceTimer = nil
+		if _, pending := m.graceTimers[sessionID]; !pending {
+			return // cancelled
 		}
+		if hp, ok := m.processes[sessionID]; ok {
+			log.Printf("[%s] grace period expired, killing process", sessionID)
+			_ = hp.Kill()
+			delete(m.processes, sessionID)
+		}
+		delete(m.graceTimers, sessionID)
 	})
 }
 
-func (m *Manager) CancelGracePeriod() {
+// CancelGracePeriod cancels a pending grace timer for a session.
+func (m *Manager) CancelGracePeriod(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.cancelGracePeriodLocked()
+	m.cancelGraceLocked(sessionID)
 }
 
-func (m *Manager) cancelGracePeriodLocked() {
-	if m.graceTimer != nil {
-		m.graceTimer.Stop()
-		m.graceTimer = nil
-		m.graceSessionID = ""
+func (m *Manager) cancelGraceLocked(sessionID string) {
+	if t, ok := m.graceTimers[sessionID]; ok {
+		t.Stop()
+		delete(m.graceTimers, sessionID)
 	}
 }
 

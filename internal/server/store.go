@@ -99,6 +99,32 @@ func (s *metaStore) Delete(id string) {
 	s.saveLocked()
 }
 
+// EnsureNamed creates the session entry if missing and sets its name (used to
+// give dispatched sessions a readable title). Idempotent; won't clobber an
+// existing non-empty name with the same value.
+func (s *metaStore) EnsureNamed(id, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	m := s.byID[id]
+	if m == nil {
+		m = &SessionMeta{ID: id, CreatedAt: now, LastMessageAt: now}
+		s.byID[id] = m
+	}
+	if name != "" {
+		m.Name = name
+	}
+	s.saveLocked()
+}
+
+// Has reports whether the store already tracks this session id.
+func (s *metaStore) Has(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.byID[id]
+	return ok
+}
+
 // Touch updates last-message preview/time, creating the entry if missing.
 func (s *metaStore) Touch(id, preview string) {
 	s.mu.Lock()
