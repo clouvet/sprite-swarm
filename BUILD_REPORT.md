@@ -222,6 +222,16 @@ follow from this are noted per-feature.
   (Phase 1/2 use one bucket-scoped key). Per-prefix-scoped creds (`fleet/<id>/*` write,
   `fleet/config/*` read-only) are the remaining hardening to make it physically enforced.
 - **Dispatch delivery** is brain-pull, not session-API-push (the OAuth-wall deviation above).
+- **Brain access uses copied S3 credentials (KNOWN — tracked, not yet addressed).** `BootstrapEnv`
+  copies the Tigris `S3_ACCESS_KEY`/`S3_SECRET_KEY` (+ bucket/region/endpoint) into each worker's spawn
+  env; the worker's `s3Brain` signs SigV4 directly against Tigris. So the Tigris secret sits in every
+  worker's service env (readable via the sprites service API and on the worker) — the same
+  credential-copy pattern the gateway removed for Anthropic, still present for the brain. Not moved to
+  the `s3_object_store` connector because the brain needs `ListObjects` (roster/inbox/memory index) +
+  presigned URLs (artifact staging), which don't obviously map to the gateway's object GET/PUT-by-path
+  surface (unverified). Resolution options (deferred per decision): (1) migrate the brain to the s3
+  connector after confirming LIST/presign support and reworking artifact staging; (2) hand workers a
+  Tigris key scoped to `fleet/` (blast-radius mitigation, DESIGN §6.3). Tracked here; left as-is for now.
 
 ## Phase 2 — how to use
 ```
