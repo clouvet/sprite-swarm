@@ -26,12 +26,13 @@ type Service struct {
 	started  int64
 	now      func() time.Time
 
-	mu             sync.Mutex
-	phase          string        // current free-text phase, refreshed into status
-	idleProbe      func() bool   // reports whether the agent is currently idle (no clients, not generating)
-	idleReapAfter  time.Duration // a worker self-declares reapable after idle this long (0 = disabled)
-	idleSince      time.Time     // when the current idle stretch began (zero = not idle)
-	manualReapable bool          // set via MarkReapable (e.g. work done / PR merged)
+	mu              sync.Mutex
+	phase           string                // current free-text phase, refreshed into status
+	idleProbe       func() bool           // reports whether the agent is currently idle (no clients, not generating)
+	idleReapAfter   time.Duration         // a worker self-declares reapable after idle this long (0 = disabled)
+	idleSince       time.Time             // when the current idle stretch began (zero = not idle)
+	manualReapable  bool                  // set via MarkReapable (e.g. work done / PR merged)
+	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
 }
 
 // New builds a Service backed by the configured S3/Tigris brain.
@@ -67,6 +68,14 @@ func (s *Service) SetIdleReaping(probe func() bool, after time.Duration) {
 	defer s.mu.Unlock()
 	s.idleProbe = probe
 	s.idleReapAfter = after
+}
+
+// SetAttendanceProbe wires a probe reporting whether a human is attached to this
+// agent and to which session (presence signal, §2.4), written into status.
+func (s *Service) SetAttendanceProbe(probe func() (bool, string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attendanceProbe = probe
 }
 
 // MarkReapable flags this agent as done so a reaper can destroy it (e.g. after
@@ -122,7 +131,12 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 	now := s.now()
 	s.mu.Lock()
 	curPhase := s.phase
+	probe := s.attendanceProbe
 	s.mu.Unlock()
+	present, presentSession := false, ""
+	if probe != nil {
+		present, presentSession = probe()
+	}
 	st := Status{
 		ID:        s.id,
 		Role:      s.role,
@@ -130,6 +144,8 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 		URL:       s.url,
 		Artifact:  s.artifact,
 		Reapable:  s.computeReapable(now),
+		Present:   present,
+		Session:   presentSession,
 		StartedAt: s.started,
 		UpdatedAt: now.Unix(),
 	}

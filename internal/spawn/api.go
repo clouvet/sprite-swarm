@@ -195,6 +195,20 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 	if err != nil {
 		return err
 	}
+	// Propagate the Claude credential so the worker's `claude` can authenticate.
+	// A fresh sprite has no Anthropic creds, so without this a worker can register
+	// and receive dispatched tasks but can't actually run Claude on them. TRADEOFF:
+	// this copies an OAuth credential into the brain bucket + onto the worker fs.
+	// The production-preferred path is the sprites API Gateway (ANTHROPIC_BASE_URL
+	// → gateway, no creds copied, DESIGN §3.2); used here because no gateway is
+	// configured. Disable with SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=0.
+	credURL := ""
+	if os.Getenv("SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS") != "0" {
+		if u, err := stageClaudeCredential(ctx, a.cfg.Brain, artifactTTL); err == nil {
+			credURL = u
+		}
+	}
+
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
 	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
 	if a.cfg.WorkerIdleReapAfter > 0 {
@@ -203,7 +217,13 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 	for k, v := range bootEnv {
 		env[k] = v
 	}
-	boot := "set -e; curl -fsSL '" + url + "' -o /home/sprite/sprite-agent; " +
+	boot := "set -e; "
+	if credURL != "" {
+		boot += "mkdir -p /home/sprite/.claude; " +
+			"curl -fsSL '" + credURL + "' -o /home/sprite/.claude/.credentials.json; " +
+			"chmod 600 /home/sprite/.claude/.credentials.json; "
+	}
+	boot += "curl -fsSL '" + url + "' -o /home/sprite/sprite-agent; " +
 		"chmod +x /home/sprite/sprite-agent; cd /home/sprite; exec ./sprite-agent"
 	body, err := json.Marshal(serviceSpec{
 		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", Env: env, HTTPPort: 8080,

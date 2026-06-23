@@ -79,9 +79,9 @@ func main() {
 	go h.Run()
 
 	// Fleet brain (M4): register this agent and expose the roster. When no
-	// brain is configured the agent runs solo; pass a nil RosterProvider so the
+	// brain is configured the agent runs solo; pass a nil Fleet so the
 	// /api/fleet endpoint reports unavailable (avoids a typed-nil interface).
-	var roster server.RosterProvider
+	var roster server.Fleet
 	if cfg.Brain.Enabled() {
 		fleetSvc, err := fleet.New(cfg)
 		if err != nil {
@@ -91,6 +91,9 @@ func main() {
 			// Idle-based self-reaping: a worker that sits idle long enough marks
 			// itself reapable (DESIGN §2.3). Disabled by default (0).
 			fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
+			// Presence (P2.3): advertise whether a human is attached + where, so
+			// other surfaces defer (§2.4).
+			fleetSvc.SetAttendanceProbe(h.Attendance)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			if err := fleetSvc.Register(ctx); err != nil {
 				log.Printf("fleet: registration failed: %v", err)
