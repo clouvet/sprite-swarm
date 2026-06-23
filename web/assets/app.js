@@ -134,6 +134,19 @@
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
   }
 
+  // Surface the effective capability policy (control plane, §6.2).
+  async function loadPolicy() {
+    const el = $('policy-line');
+    if (!el) return;
+    try {
+      const res = await fetch('/api/policy');
+      if (!res.ok) { el.textContent = ''; return; }
+      const p = await res.json();
+      const spawn = p.spawn_allowed ? ('spawn≤' + p.spawn_max_total) : 'no-spawn';
+      el.textContent = `policy · merge:${p.merge} · ${spawn} · ${p.permission_mode}`;
+    } catch (e) { el.textContent = ''; }
+  }
+
   // Attach-to-worker: open the agent's session service in a new tab. Its URL is
   // org-gated (Fly OAuth); the human is a member, so the browser authenticates.
   function attachToAgent(id) {
@@ -357,6 +370,7 @@
   async function boot() {
     await loadSessions();
     loadFleet();
+    loadPolicy();
     setInterval(loadFleet, 5000);
     const hash = location.hash.match(/session=([\w-]+)/);
     if (hash) {

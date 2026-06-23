@@ -68,51 +68,67 @@ func main() {
 	spawner := spawn.New(cfg)
 	log.Printf("spawn: available=%v", spawner.Available())
 
+	// Fleet brain (M4): create it first so its capability policy (P2.5) can drive
+	// this agent's permission mode. nil when no brain (the agent runs solo).
+	var fleetSvc *fleet.Service
+	if cfg.Brain.Enabled() {
+		fs, err := fleet.New(cfg)
+		if err != nil {
+			log.Printf("fleet: disabled (init failed: %v)", err)
+		} else {
+			fleetSvc = fs
+		}
+	} else {
+		log.Printf("fleet: disabled (no brain configured)")
+	}
+
+	// Effective capability policy (P2.5): tools.permission_mode enforces which
+	// permission mode the agent's Claude runs in. Fall back to config otherwise.
+	permissionMode := cfg.PermissionMode
+	if fleetSvc != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if eff := fleetSvc.EffectivePolicy(ctx); eff.PermissionMode != "" {
+			permissionMode = eff.PermissionMode
+			log.Printf("policy: permission_mode=%s merge=%s spawn_max=%d", eff.PermissionMode, eff.Merge, eff.SpawnMaxTotal)
+		}
+		cancel()
+	}
+
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
-		PermissionMode: cfg.PermissionMode,
+		PermissionMode: permissionMode,
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
 		AppendSystem:   fleetAffordance(cfg, spawner.Available()),
 	})
 	go h.Run()
 
-	// Fleet brain (M4): register this agent and expose the roster. When no
-	// brain is configured the agent runs solo; pass a nil Fleet so the
-	// /api/fleet endpoint reports unavailable (avoids a typed-nil interface).
+	// Pass a nil Fleet when there's no brain so /api/fleet reports unavailable
+	// (avoids a typed-nil interface).
 	var roster server.Fleet
-	if cfg.Brain.Enabled() {
-		fleetSvc, err := fleet.New(cfg)
-		if err != nil {
-			log.Printf("fleet: disabled (init failed: %v)", err)
+	if fleetSvc != nil {
+		roster = fleetSvc
+		// Idle-based self-reaping (DESIGN §2.3, disabled by default).
+		fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
+		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
+		fleetSvc.SetAttendanceProbe(h.Attendance)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := fleetSvc.Register(ctx); err != nil {
+			log.Printf("fleet: registration failed: %v", err)
 		} else {
-			roster = fleetSvc
-			// Idle-based self-reaping: a worker that sits idle long enough marks
-			// itself reapable (DESIGN §2.3). Disabled by default (0).
-			fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
-			// Presence (P2.3): advertise whether a human is attached + where, so
-			// other surfaces defer (§2.4).
-			fleetSvc.SetAttendanceProbe(h.Attendance)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if err := fleetSvc.Register(ctx); err != nil {
-				log.Printf("fleet: registration failed: %v", err)
-			} else {
-				log.Printf("fleet: registered %s into brain s3://%s (idle-reap=%s)", cfg.AgentID, cfg.Brain.Bucket, cfg.IdleReapAfter)
-			}
-			cancel()
-			fleetSvc.StartHeartbeat(context.Background())
-
-			// Dispatch (P2.1): poll this agent's task inbox and inject each task
-			// into a local session so it materializes in the transcript (seam #2).
-			fleetSvc.StartTaskPolling(context.Background(), h.InjectMessage)
-
-			// Reaper: on token-bearing agents, destroy reapable/dead workers and
-			// clean their brain entries. Home is never reaped (fleet.ReapTargets).
-			go reaper.New(fleetSvc, spawner, cfg.ReapInterval, cfg.DeadReapAfter).Run(context.Background())
+			log.Printf("fleet: registered %s into brain s3://%s (idle-reap=%s)", cfg.AgentID, cfg.Brain.Bucket, cfg.IdleReapAfter)
 		}
-	} else {
-		log.Printf("fleet: disabled (no brain configured)")
+		cancel()
+		fleetSvc.StartHeartbeat(context.Background())
+
+		// Dispatch (P2.1): poll this agent's task inbox and inject each task
+		// into a local session so it materializes in the transcript (seam #2).
+		fleetSvc.StartTaskPolling(context.Background(), h.InjectMessage)
+
+		// Reaper: on token-bearing agents, destroy reapable/dead workers and
+		// clean their brain entries. Home is never reaped (fleet.ReapTargets).
+		go reaper.New(fleetSvc, spawner, cfg.ReapInterval, cfg.DeadReapAfter).Run(context.Background())
 	}
 
 	srv := server.New(cfg, h, roster, spawner)
