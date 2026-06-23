@@ -144,7 +144,7 @@ func (h *Hub) registerClient(client *Client) {
 		h.clients[client.sessionID] = make(map[*Client]bool)
 	}
 	h.clients[client.sessionID][client] = true
-	h.processMgr.CancelGracePeriod()
+	h.processMgr.CancelGracePeriod(client.sessionID)
 
 	sess := h.sessions[client.sessionID]
 	if sess == nil {
@@ -621,6 +621,29 @@ func (h *Hub) sendJSON(client *Client, v interface{}) {
 	case client.send <- data:
 	default:
 	}
+}
+
+// SessionInfo is a hub session for the session-list UI.
+type SessionInfo struct {
+	ID         string
+	Generating bool
+}
+
+// ListSessions returns every session the hub knows (active or with a transcript),
+// so dispatched sessions — created by InjectMessage, not by POST /api/sessions —
+// are visible and attachable in the UI rather than hidden.
+func (h *Hub) ListSessions() []SessionInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]SessionInfo, 0, len(h.sessions))
+	for id := range h.sessions {
+		gen := false
+		if hp, err := h.processMgr.Get(id); err == nil {
+			gen = hp.IsGenerating
+		}
+		out = append(out, SessionInfo{ID: id, Generating: gen})
+	}
+	return out
 }
 
 // IsIdle reports whether the agent has no connected clients and nothing
