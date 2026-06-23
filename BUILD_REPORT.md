@@ -210,13 +210,28 @@ follow from this are noted per-feature.
   credential processed a dispatched Claude task in ~20s (dispatch→pull→inject→act). The earlier
   credential-copy is retained only as an explicit fallback (`SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=1`)
   for orgs without an Anthropic connector. See `internal/gateway`.
-- **GitHub on workers — REST via gateway works; git transport does not.** The GitHub connector gateway
-  proxies the GitHub **REST API** (`/user`, `/repos/...`, PR/issue creation) authenticated by sprite
-  identity — verified (`GET …/gateway/github/<id>/user` → 200). But `git` clone/push uses smart-HTTP
-  against github.com, which the REST gateway does not proxy, so a worker that must clone/commit/**push
-  code** still needs a git credential (which the gateway model deliberately avoids). Options: do PR/file
-  ops via the gateway REST; or hand workers a scoped git credential; or use a GitHub App installation
-  token. Not yet wired — surfaced for a decision.
+- **GitHub on workers — RESOLVED via a brain-stored token (git transport can't ride the connector).**
+  The GitHub connector gateway proxies only the GitHub **REST API** (verified `…/gateway/github/<id>/user`
+  → 200) — but `git` clone/push uses smart-HTTP against github.com, which it does not proxy (verified
+  `…/info/refs?service=git-upload-pack` → 404), and the connector won't mint a token (`…/installation/token`
+  → 404). Since real feature work wants local `git`, the chosen path (per the symmetric design) stores the
+  GitHub token **in the brain** (`fleet/config/secrets/github`); every agent reads it on boot and
+  configures `gh` (GH_TOKEN) + a github.com git credential helper **via `GIT_CONFIG_*` env** (never
+  written to disk, never copied per worker). Provided once to the brain, inherited by the whole fleet.
+  **Verified end-to-end:** a worker (no secrets in its env) read the token from the brain and
+  autonomously cloned a repo, pushed a branch, and opened a PR.
+
+## Secrets in the brain (symmetry, DESIGN §2.1/§4.2)
+Operational secrets live in the brain under `fleet/config/secrets/` so **every sprite rehydrates the
+same capabilities** — no capability is home-only, any worker can become home, and a fresh sprite is
+fully operational within minutes:
+- `sprites-api-token` → any agent can spawn/reap (previously env-only on home — that asymmetry is gone).
+- `github` → any agent gets git/gh (above).
+Reached token-free via the s3 connector, so all a sprite needs is to be in the org (its Fly identity).
+**Verified:** home booted with a *completely clean env* (no S3 keys, no Sprites token, no GH token),
+discovered the connector, rehydrated both secrets, and was fully capable (spawned a worker that
+cloned/PR'd/wrote memory). Trust note: brain access == fleet-wide capability by design; guarding the
+brain + scoping the stored tokens bounds blast radius (storage-level per-prefix scoping = future work).
 - **Storage-level policy/identity scoping (DESIGN §6.2/§6.3):** the guardrail and per-agent brain
   integrity are enforced at the *app layer* (no write code path) but not yet at the *storage* layer
   (Phase 1/2 use one bucket-scoped key). Per-prefix-scoped creds (`fleet/<id>/*` write,
