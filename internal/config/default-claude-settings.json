@@ -4,6 +4,7 @@
       "Bash(git:*)",
       "Bash(gh:*)",
       "Bash(go:*)",
+      "Bash(curl:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(echo:*)",
@@ -31,6 +32,18 @@
       "Bash(:(){ :|:& };:)",
       "Bash(mkfs:*)",
       "Bash(dd:*)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s --max-time 3 http://localhost:8080/api/fleet/context 2>/dev/null || true"
+          }
+        ]
+      }
     ]
   }
 }

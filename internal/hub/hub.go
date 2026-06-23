@@ -635,6 +635,20 @@ func (h *Hub) IsIdle() bool {
 	return true
 }
 
+// Attendance reports whether a human is attached (a client is connected) and to
+// which session — the presence signal (DESIGN §2.4). Used to advertise "a human
+// is here" to the fleet so other surfaces defer.
+func (h *Hub) Attendance() (bool, string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for sid, clients := range h.clients {
+		if len(clients) > 0 {
+			return true, sid
+		}
+	}
+	return false, ""
+}
+
 // HealthStatus reports liveness + whether the sprite should stay awake.
 func (h *Hub) HealthStatus() []byte {
 	h.mu.RLock()
