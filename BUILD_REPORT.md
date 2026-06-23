@@ -201,13 +201,22 @@ follow from this are noted per-feature.
   spawn cap 0 → **403, no sprite created**.
 
 ## Phase 2 — built behind a tradeoff / remaining hardening
-- **Worker Claude credentials:** a fresh sprite has no Anthropic creds, so dispatched workers could
-  register but not *run* Claude. The spawner now **propagates the Claude OAuth credential** to workers
-  during provisioning (`SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=0` to disable). TRADEOFF: copies a
-  credential into the brain bucket + onto the worker fs. The production-preferred path is the sprites
-  **API Gateway** (`ANTHROPIC_BASE_URL` → gateway, no creds copied, DESIGN §3.2) — used here because no
-  gateway is configured. **Verified:** with propagation, a spawned worker processed a dispatched task
-  (ran the instructed command) and flipped reapable in ~20s — the full loop dispatch→pull→inject→act.
+- **Worker Claude auth = API Gateway connector (no creds copied).** A fresh sprite has no Anthropic
+  creds, so dispatched workers could register but not *run* Claude. The spawner now discovers the
+  org's **Anthropic connector** (`GET /v1/gateway/list`) and hands the worker
+  `ANTHROPIC_BASE_URL=<gateway base>` + a placeholder key, so the worker's Claude authenticates by the
+  sprite's own Fly identity through the gateway — **no token on the box** (DESIGN §3.2). Connectors are
+  `allow_all` for this org, so any worker qualifies. **Verified:** a worker spawned with *no* copied
+  credential processed a dispatched Claude task in ~20s (dispatch→pull→inject→act). The earlier
+  credential-copy is retained only as an explicit fallback (`SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=1`)
+  for orgs without an Anthropic connector. See `internal/gateway`.
+- **GitHub on workers — REST via gateway works; git transport does not.** The GitHub connector gateway
+  proxies the GitHub **REST API** (`/user`, `/repos/...`, PR/issue creation) authenticated by sprite
+  identity — verified (`GET …/gateway/github/<id>/user` → 200). But `git` clone/push uses smart-HTTP
+  against github.com, which the REST gateway does not proxy, so a worker that must clone/commit/**push
+  code** still needs a git credential (which the gateway model deliberately avoids). Options: do PR/file
+  ops via the gateway REST; or hand workers a scoped git credential; or use a GitHub App installation
+  token. Not yet wired — surfaced for a decision.
 - **Storage-level policy/identity scoping (DESIGN §6.2/§6.3):** the guardrail and per-agent brain
   integrity are enforced at the *app layer* (no write code path) but not yet at the *storage* layer
   (Phase 1/2 use one bucket-scoped key). Per-prefix-scoped creds (`fleet/<id>/*` write,

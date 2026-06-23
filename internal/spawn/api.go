@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-agent/internal/gateway"
 )
 
 // apiSpawner creates sprites via the sprites REST API (POST /v1/sprites, Bearer
@@ -27,10 +28,10 @@ import (
 // register into the brain needs a follow-up provisioning step (push/build the
 // binary + run it as a service) — see BUILD_REPORT.
 type apiSpawner struct {
-	cfg       config.Config
-	token     tokenParts
-	base      string
-	client    *http.Client
+	cfg          config.Config
+	token        tokenParts
+	base         string
+	client       *http.Client
 	newID        func() string // short unique suffix for synthesized sprite names
 	provision    bool          // provision sprite-agent onto the new sprite after create
 	pollInterval time.Duration // warm-poll interval (overridable in tests)
@@ -68,10 +69,10 @@ func newAPISpawner(cfg config.Config) Spawner {
 		return notConfigured{}
 	}
 	return &apiSpawner{
-		cfg:       cfg,
-		token:     tp,
-		base:      strings.TrimRight(base, "/"),
-		client:    &http.Client{Timeout: 90 * time.Second},
+		cfg:          cfg,
+		token:        tp,
+		base:         strings.TrimRight(base, "/"),
+		client:       &http.Client{Timeout: 90 * time.Second},
 		newID:        randomSuffix,
 		pollInterval: 2 * time.Second,
 		// Provision by default; SPRITE_AGENT_SPAWN_PROVISION=0 yields a bare create.
@@ -201,25 +202,33 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 	if err != nil {
 		return err
 	}
-	// Propagate the Claude credential so the worker's `claude` can authenticate.
-	// A fresh sprite has no Anthropic creds, so without this a worker can register
-	// and receive dispatched tasks but can't actually run Claude on them. TRADEOFF:
-	// this copies an OAuth credential into the brain bucket + onto the worker fs.
-	// The production-preferred path is the sprites API Gateway (ANTHROPIC_BASE_URL
-	// → gateway, no creds copied, DESIGN §3.2); used here because no gateway is
-	// configured. Disable with SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=0.
-	credURL := ""
-	if os.Getenv("SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS") != "0" {
-		if u, err := stageClaudeCredential(ctx, a.cfg.Brain, artifactTTL); err == nil {
-			credURL = u
-		}
-	}
-
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
 	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
 	if a.cfg.WorkerIdleReapAfter > 0 {
 		env["SPRITE_AGENT_IDLE_REAP_MINUTES"] = strconv.Itoa(int(a.cfg.WorkerIdleReapAfter.Minutes()))
 	}
+
+	// Anthropic auth via the API Gateway connector (DESIGN §3.2): point the
+	// worker's Claude at the gateway base URL so it authenticates by the sprite's
+	// own Fly identity — NO credential is copied onto the worker. The placeholder
+	// key just satisfies Claude Code's "a key is set" check; the gateway injects
+	// the real one. A fresh worker has no stored cred, so this is what lets it run
+	// Claude on dispatched tasks.
+	if base := gateway.AnthropicBaseURL(ctx); base != "" {
+		env["ANTHROPIC_BASE_URL"] = base
+		env["ANTHROPIC_API_KEY"] = "sprite-gateway"
+	}
+
+	// Optional fallback: copy the spawner's Claude credential to the worker. OFF
+	// by default — the gateway above is preferred (no secret copied). Enable with
+	// SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS=1 only if no Anthropic connector exists.
+	credURL := ""
+	if os.Getenv("SPRITE_AGENT_PROPAGATE_CLAUDE_CREDS") == "1" {
+		if u, err := stageClaudeCredential(ctx, a.cfg.Brain, artifactTTL); err == nil {
+			credURL = u
+		}
+	}
+
 	for k, v := range bootEnv {
 		env[k] = v
 	}
