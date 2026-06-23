@@ -35,8 +35,12 @@ type Service struct {
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
 }
 
-// New builds a Service backed by the configured S3/Tigris brain.
+// New builds a Service backed by the brain. Prefers the gateway connector
+// (token-free, sprite-identity authed); falls back to direct S3 credentials.
 func New(cfg config.Config) (*Service, error) {
+	if cfg.Brain.UsesGateway() {
+		return newService(newConnectorBrain(cfg.Brain.GatewayURL), cfg), nil
+	}
 	brain, err := newS3Brain(context.Background(), cfg.Brain)
 	if err != nil {
 		return nil, err
