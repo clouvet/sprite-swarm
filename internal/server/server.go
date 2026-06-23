@@ -19,12 +19,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// RosterProvider is the brain capability the HTTP layer needs (M4). Kept as an
-// interface so the server doesn't depend on the concrete fleet package; main
-// passes a *fleet.Service when a brain is configured, or nil otherwise.
-type RosterProvider interface {
+// Fleet is the brain capability the HTTP layer needs. Kept as an interface so the
+// server doesn't depend on the concrete fleet package; main passes a
+// *fleet.Service when a brain is configured, or nil otherwise.
+type Fleet interface {
 	Roster(ctx context.Context) (interface{}, error)
 	MarkReapable(ctx context.Context) error
+	Dispatch(ctx context.Context, target, task string) (interface{}, error)
+	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
+	MemoryIndexValue(ctx context.Context) (interface{}, error)
+	GetMemoryValue(ctx context.Context, author, id string) (interface{}, error)
+	MemoryContext(ctx context.Context, limit int) (string, error)
+	FleetContext(ctx context.Context, memLimit int) (string, error)
+	EffectivePolicyValue(ctx context.Context) (interface{}, error)
+	SpawnAllowed(ctx context.Context) (bool, string)
 }
 
 // Server wires the hub, session metadata, fleet brain, and HTTP routes.
@@ -32,14 +40,14 @@ type Server struct {
 	cfg      config.Config
 	hub      *hub.Hub
 	store    *metaStore
-	fleet    RosterProvider
+	fleet    Fleet
 	spawner  spawn.Spawner
 	upgrader websocket.Upgrader
 }
 
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
 // spawner is always non-nil (a stub when no sprites token is available).
-func New(cfg config.Config, h *hub.Hub, fleetSvc RosterProvider, spawner spawn.Spawner) *Server {
+func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner) *Server {
 	return &Server{
 		cfg:     cfg,
 		hub:     h,
@@ -65,8 +73,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions", s.serveSessions)
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
+	mux.HandleFunc("/api/fleet/context", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
+	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
+	mux.HandleFunc("/api/memory", s.serveMemory)
+	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
+	mux.HandleFunc("/api/policy", s.servePolicy)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -137,10 +150,21 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
-// serveFleet returns the roster (M4). 503 when no brain is configured.
+// serveFleet returns the roster (M4), or the live text context at
+// /api/fleet/context (for per-turn prompt injection, P2.3). 503 with no brain.
 func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 	if s.fleet == nil {
 		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/context") {
+		text, err := s.fleet.FleetContext(r.Context(), 50)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(text))
 		return
 	}
 	roster, err := s.fleet.Roster(r.Context())
@@ -170,6 +194,13 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, spawn.ErrNotConfigured.Error(), http.StatusNotImplemented)
 		return
 	}
+	// Enforce the capability policy's spawn cap (P2.5) before creating a sprite.
+	if s.fleet != nil {
+		if ok, reason := s.fleet.SpawnAllowed(r.Context()); !ok {
+			http.Error(w, "policy: "+reason, http.StatusForbidden)
+			return
+		}
+	}
 	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
 		Name: body.Name, NamePrefix: body.NamePrefix, Role: body.Role, Labels: body.Labels,
 	})
@@ -197,6 +228,115 @@ func (s *Server) serveDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveDispatch assigns a task to another agent (P2.1). The task is recorded in
+// the brain as visible fleet state; the target polls its inbox and injects it
+// into its own session. Returns the task record (incl. the session id to attach).
+func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+		Task   string `json:"task"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" || body.Task == "" {
+		http.Error(w, "target and task are required", http.StatusBadRequest)
+		return
+	}
+	res, err := s.fleet.Dispatch(r.Context(), body.Target, body.Task)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
+// serveMemory: GET = the always-loaded index; POST = append a memory (P2.2).
+func (s *Server) serveMemory(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		idx, err := s.fleet.MemoryIndexValue(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, idx)
+	case http.MethodPost:
+		var body struct {
+			Title string   `json:"title"`
+			Text  string   `json:"text"`
+			Tags  []string `json:"tags"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
+			http.Error(w, "text is required", http.StatusBadRequest)
+			return
+		}
+		entry, err := s.fleet.WriteMemoryValue(r.Context(), body.Title, body.Text, body.Tags)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, entry)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// serveMemoryByPath: GET /api/memory/context (text index for prompt injection)
+// or GET /api/memory/{author}/{id} (full entry, on-demand retrieval).
+func (s *Server) serveMemoryByPath(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/memory/")
+	if rest == "context" {
+		text, err := s.fleet.MemoryContext(r.Context(), 50)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(text))
+		return
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "want /api/memory/<author>/<id>", http.StatusBadRequest)
+		return
+	}
+	entry, err := s.fleet.GetMemoryValue(r.Context(), parts[0], parts[1])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, entry)
+}
+
+// servePolicy returns this agent's effective capability policy (P2.5 visibility).
+// Read-only: agents never write fleet/config/* — that's human/control-plane held.
+func (s *Server) servePolicy(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	eff, err := s.fleet.EffectivePolicyValue(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, eff)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

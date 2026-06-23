@@ -1,0 +1,17 @@
+{
+  "_comment": "Capability/policy control plane (DESIGN §6.2). HUMAN-WRITABLE ONLY: this document is the control plane. Agents READ it (GET /api/policy shows the effective result) but never write fleet/config/* — that is the can-modify-policy guardrail. Install it by writing this JSON to the brain at key fleet/config/policy.json (e.g. via the S3/Tigris API as the control-plane operator). effective = merge(defaults, roles[role], fleet/<id>/policy.json), most-specific non-nil wins.",
+  "version": 1,
+  "defaults": {
+    "spawn":  { "allowed": true, "max_total": 10, "name_prefix": "wk-" },
+    "merge":  "human",
+    "push_main": false,
+    "spend":  { "daily_usd_cap": 50 },
+    "secrets": ["github", "anthropic"],
+    "tools":  { "permission_mode": "acceptEdits", "deny": ["Bash(rm -rf /*)"] },
+    "modify_policy": false
+  },
+  "roles": {
+    "home":   { "spawn": { "max_total": 50 } },
+    "worker": {}
+  }
+}

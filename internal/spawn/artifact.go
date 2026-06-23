@@ -19,6 +19,10 @@ import (
 // match the target (same platform as the spawner in practice).
 const artifactKey = "fleet/artifacts/sprite-agent-linux-amd64"
 
+// credentialKey stages the Claude OAuth credential so a worker's `claude` can
+// authenticate (a fresh sprite has none). See provisionAgent for the tradeoff.
+const credentialKey = "fleet/artifacts/claude-credentials.json"
+
 // stageArtifact uploads the spawner's own binary to the brain bucket and returns
 // a presigned GET URL the new sprite can curl without needing S3 credentials to
 // download (it still gets S3 creds via the bootstrap env, for the brain).
@@ -34,9 +38,28 @@ func stageArtifact(ctx context.Context, bc config.BrainConfig, expires time.Dura
 	if err != nil {
 		return "", fmt.Errorf("spawn: locate own binary: %w", err)
 	}
-	f, err := os.Open(self)
+	return stageFile(ctx, bc, self, artifactKey, expires)
+}
+
+// stageClaudeCredential stages the local Claude credential (if present) and
+// returns a presigned URL, or "" if there's no credential to propagate.
+func stageClaudeCredential(ctx context.Context, bc config.BrainConfig, expires time.Duration) (string, error) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sprite"
+	}
+	path := home + "/.claude/.credentials.json"
+	if _, err := os.Stat(path); err != nil {
+		return "", nil // nothing to propagate
+	}
+	return stageFile(ctx, bc, path, credentialKey, expires)
+}
+
+// stageFile uploads localPath to key in the brain bucket and presigns a GET URL.
+func stageFile(ctx context.Context, bc config.BrainConfig, localPath, key string, expires time.Duration) (string, error) {
+	f, err := os.Open(localPath)
 	if err != nil {
-		return "", fmt.Errorf("spawn: open own binary: %w", err)
+		return "", fmt.Errorf("spawn: open %s: %w", localPath, err)
 	}
 	defer f.Close()
 
@@ -46,19 +69,19 @@ func stageArtifact(ctx context.Context, bc config.BrainConfig, expires time.Dura
 	}
 	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bc.Bucket),
-		Key:    aws.String(artifactKey),
+		Key:    aws.String(key),
 		Body:   f,
 	}); err != nil {
-		return "", fmt.Errorf("spawn: stage artifact: %w", err)
+		return "", fmt.Errorf("spawn: stage %s: %w", key, err)
 	}
 
 	ps := s3.NewPresignClient(client)
 	req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bc.Bucket),
-		Key:    aws.String(artifactKey),
+		Key:    aws.String(key),
 	}, s3.WithPresignExpires(expires))
 	if err != nil {
-		return "", fmt.Errorf("spawn: presign artifact: %w", err)
+		return "", fmt.Errorf("spawn: presign %s: %w", key, err)
 	}
 	return req.URL, nil
 }
