@@ -16,6 +16,7 @@ import (
 
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/fleet"
+	"github.com/clouvet/sprite-agent/internal/gateway"
 	"github.com/clouvet/sprite-agent/internal/hub"
 	"github.com/clouvet/sprite-agent/internal/reaper"
 	"github.com/clouvet/sprite-agent/internal/server"
@@ -62,6 +63,22 @@ func main() {
 	} else {
 		cfg.SettingsPath = path
 		log.Printf("settings: using %s", path)
+	}
+
+	// Prefer the token-free brain: if no explicit brain gateway is set, discover
+	// the org's s3_object_store connector and route the brain through it (authed by
+	// this sprite's identity — no S3 keys needed). This is what lets a fresh sprite
+	// reach the brain with nothing but its identity, and keeps every sprite
+	// symmetric. Direct S3 keys remain a fallback when no connector is available.
+	if cfg.Brain.GatewayURL == "" {
+		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if conns, err := gateway.Discover(dctx); err == nil {
+			if c, ok := conns["s3_object_store"]; ok && c.GatewayBase != "" {
+				cfg.Brain.GatewayURL = c.GatewayBase
+				log.Printf("brain: using s3 connector (token-free): %s", c.GatewayBase)
+			}
+		}
+		dcancel()
 	}
 
 	// Spawn capability (M4): live when SPRITE_API_TOKEN is set, otherwise a stub.

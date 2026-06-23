@@ -78,10 +78,20 @@ type BrainConfig struct {
 	Endpoint  string
 	AccessKey string
 	SecretKey string
+
+	// GatewayURL, when set, reaches the brain through the Sprite API Gateway
+	// s3_object_store connector (authed by sprite identity — no S3 keys). This is
+	// the token-free path; it takes precedence over direct keys. May be discovered
+	// at runtime, so it isn't always known at config time.
+	GatewayURL string
 }
 
-// Enabled reports whether a brain is configured.
-func (b BrainConfig) Enabled() bool { return b.Bucket != "" }
+// Enabled reports whether a brain is reachable — either via the gateway connector
+// (no keys) or direct S3 credentials.
+func (b BrainConfig) Enabled() bool { return b.GatewayURL != "" || b.Bucket != "" }
+
+// UsesGateway reports whether the connector path is configured (preferred).
+func (b BrainConfig) UsesGateway() bool { return b.GatewayURL != "" }
 
 // FromEnv builds a Config from environment variables, applying documented
 // defaults (DECISIONS.md) for anything unset.
@@ -89,25 +99,26 @@ func FromEnv() Config {
 	workDir := getenv("SPRITE_AGENT_WORKDIR", "/home/sprite")
 
 	c := Config{
-		Addr:           getenv("SPRITE_AGENT_ADDR", ":8080"),
-		AgentID:        getenv("SPRITE_AGENT_ID", hostname()),
-		WorkDir:        workDir,
-		PermissionMode: getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
-		SettingsPath:   os.Getenv("SPRITE_AGENT_SETTINGS"),
-		MCPConfigPath:  os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
-		SpriteAPIToken: os.Getenv("SPRITE_API_TOKEN"),
-		ArtifactRef:    getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
-		PublicURL:      os.Getenv("SPRITE_AGENT_URL"),
-		IdleReapAfter:  minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
+		Addr:                getenv("SPRITE_AGENT_ADDR", ":8080"),
+		AgentID:             getenv("SPRITE_AGENT_ID", hostname()),
+		WorkDir:             workDir,
+		PermissionMode:      getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
+		SettingsPath:        os.Getenv("SPRITE_AGENT_SETTINGS"),
+		MCPConfigPath:       os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
+		SpriteAPIToken:      os.Getenv("SPRITE_API_TOKEN"),
+		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
+		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
+		IdleReapAfter:       minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
 		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
 		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),
 		WorkerIdleReapAfter: minutesEnv("SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES", 0),
 		Brain: BrainConfig{
-			Bucket:    os.Getenv("S3_BUCKET"),
-			Region:    getenv("S3_REGION", "auto"),
-			Endpoint:  os.Getenv("S3_ENDPOINT"),
-			AccessKey: os.Getenv("S3_ACCESS_KEY"),
-			SecretKey: os.Getenv("S3_SECRET_KEY"),
+			Bucket:     os.Getenv("S3_BUCKET"),
+			Region:     getenv("S3_REGION", "auto"),
+			Endpoint:   os.Getenv("S3_ENDPOINT"),
+			AccessKey:  os.Getenv("S3_ACCESS_KEY"),
+			SecretKey:  os.Getenv("S3_SECRET_KEY"),
+			GatewayURL: os.Getenv("SPRITE_AGENT_BRAIN_GATEWAY"),
 		},
 	}
 	c.ClaudeProjectsDir = deriveProjectsDir(workDir)

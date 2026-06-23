@@ -198,9 +198,20 @@ func (a *apiSpawner) createSprite(ctx context.Context, cr createSpriteRequest) (
 // NOT persist. So we warm it first and confirm the service stuck (retrying once),
 // which is the difference between a worker that registers and one that never boots.
 func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv map[string]string) error {
-	url, err := stageArtifact(ctx, a.cfg.Brain, artifactTTL)
-	if err != nil {
-		return err
+	// Stage the binary and get a URL the worker can fetch it from on boot. On the
+	// token-free path the worker downloads via the s3 connector (its own identity,
+	// no presign, no keys); otherwise fall back to a presigned direct-S3 URL.
+	var url string
+	if a.cfg.Brain.UsesGateway() {
+		var uerr error
+		if url, uerr = uploadViaConnector(ctx, a.cfg.Brain.GatewayURL); uerr != nil {
+			return uerr
+		}
+	} else {
+		var serr error
+		if url, serr = stageArtifact(ctx, a.cfg.Brain, artifactTTL); serr != nil {
+			return serr
+		}
 	}
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
 	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
