@@ -16,14 +16,14 @@ import (
 	"github.com/clouvet/sprite-agent/pkg/claude"
 )
 
-// Options configures how a headless Claude process is launched (DESIGN §3.1):
-// scoped permissions instead of a blanket skip, deterministic session id, and
-// token-level streaming.
+// Options configures how a headless Claude process is launched: deterministic
+// session id, token-level streaming, and the fleet's permission posture.
 type Options struct {
 	SessionID      string // deterministic; also the transcript filename
 	CWD            string
 	ProjectsDir    string // used to decide --resume vs --session-id
-	PermissionMode string // --permission-mode (e.g. acceptEdits, plan)
+	DangerousSkip  bool   // --dangerously-skip-permissions (fleet default); else --permission-mode
+	PermissionMode string // --permission-mode when not skipping (e.g. acceptEdits, plan)
 	SettingsPath   string // --settings <file> when non-empty
 	MCPConfigPath  string // --mcp-config <file> when non-empty
 	AppendSystem   string // --append-system-prompt when non-empty (fleet affordance, DESIGN §5)
@@ -58,11 +58,21 @@ func buildArgs(opts Options) []string {
 		"--input-format", "stream-json",
 		"--include-partial-messages",
 	}
-	mode := opts.PermissionMode
-	if mode == "" {
-		mode = "acceptEdits"
+	// The fleet runs with --dangerously-skip-permissions by default: every sprite
+	// is an identical, isolated microVM doing autonomous work, and a capable fleet
+	// shouldn't stall on permission prompts. This is fleet-wide (no home/worker
+	// distinction — every sprite is the same). Set the scoped path explicitly to
+	// opt back into --permission-mode. --settings is kept either way (it carries
+	// the per-turn fleet-context hook); under skip its allow/deny are moot.
+	if opts.DangerousSkip {
+		args = append(args, "--dangerously-skip-permissions")
+	} else {
+		mode := opts.PermissionMode
+		if mode == "" {
+			mode = "acceptEdits"
+		}
+		args = append(args, "--permission-mode", mode)
 	}
-	args = append(args, "--permission-mode", mode)
 	if opts.SettingsPath != "" {
 		args = append(args, "--settings", opts.SettingsPath)
 	}
