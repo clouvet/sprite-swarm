@@ -116,7 +116,25 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, s.store.List())
+		// Merge stored sessions with live hub sessions, so dispatched sessions
+		// (created by InjectMessage, not POST) are visible + attachable.
+		list := s.store.List()
+		seen := make(map[string]bool, len(list))
+		for _, m := range list {
+			seen[m.ID] = true
+		}
+		for _, hs := range s.hub.ListSessions() {
+			if seen[hs.ID] {
+				continue
+			}
+			name := "session " + shortID(hs.ID)
+			preview := ""
+			if hs.Generating {
+				preview = "working…"
+			}
+			list = append(list, &SessionMeta{ID: hs.ID, Name: name, LastMessage: preview})
+		}
+		writeJSON(w, list)
 	case http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
@@ -190,6 +208,11 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		Labels     map[string]string `json:"labels"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	// Default the worker name prefix so spawned sprites are clearly "wk-…" rather
+	// than a bare random id.
+	if body.Name == "" && body.NamePrefix == "" {
+		body.NamePrefix = "wk-"
+	}
 	if !s.spawner.Available() {
 		http.Error(w, spawn.ErrNotConfigured.Error(), http.StatusNotImplemented)
 		return
@@ -337,6 +360,19 @@ func (s *Server) servePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, eff)
+}
+
+// RegisterSession gives a session a readable name in the list (used when a task
+// is dispatched into a worker, so the work shows up labeled + attachable).
+func (s *Server) RegisterSession(id, name string) {
+	s.store.EnsureNamed(id, name)
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
