@@ -23,6 +23,26 @@ import (
 	"github.com/clouvet/sprite-agent/internal/spawn"
 )
 
+// setupGitHubAuth wires git + gh to use the brain-sourced GitHub token. It does
+// NOT touch ~/.gitconfig (an earlier version did, and clobbered the host's own
+// gh credential helper). Everything goes in the process env, inherited by the
+// claude subprocess → git/gh:
+//   - GH_TOKEN / GITHUB_TOKEN for `gh`.
+//   - a github.com-scoped git credential helper injected via GIT_CONFIG_* (layers
+//     on top of existing config, doesn't overwrite it). The helper is conditional
+//     — it emits nothing when GH_TOKEN is unset, so git falls through to any other
+//     helper instead of failing with an empty password.
+//
+// The token lives only in process env (sourced from the brain), never on disk.
+func setupGitHubAuth(token string) {
+	os.Setenv("GH_TOKEN", token)
+	os.Setenv("GITHUB_TOKEN", token)
+	helper := `!f() { test -n "$GH_TOKEN" && printf 'username=x-access-token\npassword=%s\n' "$GH_TOKEN"; }; f`
+	os.Setenv("GIT_CONFIG_COUNT", "1")
+	os.Setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
+	os.Setenv("GIT_CONFIG_VALUE_0", helper)
+}
+
 // fleetAffordance is the baked-in "you are a fleet peer" system prompt (DESIGN
 // §5): a sprite won't spawn workers if nothing tells it that's an option. It is
 // appended to Claude's system prompt so the agent knows it can spin up isolated
@@ -44,8 +64,9 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
 	}
-	b.WriteString("Shared fleet memory is available — record durable learnings so peers and future " +
-		"sprites inherit them.")
+	b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
+		"and open PRs directly. Shared fleet memory is available — record durable learnings (what you " +
+		"did, what you learned about a repo) via POST /api/memory so peers and future sprites inherit them.")
 	return b.String()
 }
 
@@ -81,12 +102,8 @@ func main() {
 		dcancel()
 	}
 
-	// Spawn capability (M4): live when SPRITE_API_TOKEN is set, otherwise a stub.
-	spawner := spawn.New(cfg)
-	log.Printf("spawn: available=%v", spawner.Available())
-
-	// Fleet brain (M4): create it first so its capability policy (P2.5) can drive
-	// this agent's permission mode. nil when no brain (the agent runs solo).
+	// Fleet brain: create it first so operational secrets + policy rehydrate from
+	// it before anything that depends on them. nil when no brain (agent runs solo).
 	var fleetSvc *fleet.Service
 	if cfg.Brain.Enabled() {
 		fs, err := fleet.New(cfg)
@@ -98,6 +115,28 @@ func main() {
 	} else {
 		log.Printf("fleet: disabled (no brain configured)")
 	}
+
+	// Rehydrate operational secrets from the brain (symmetry, DESIGN §2.1/§4.2):
+	// every sprite reads the same capabilities, so any worker is as capable as
+	// home. Env values still win if explicitly set.
+	if fleetSvc != nil {
+		sctx, scancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if cfg.SpriteAPIToken == "" {
+			if tok := fleetSvc.GetSecret(sctx, fleet.SecretSpritesAPIToken); tok != "" {
+				cfg.SpriteAPIToken = tok
+				log.Printf("secrets: loaded sprites-api-token from brain (spawn/reap enabled)")
+			}
+		}
+		if gh := fleetSvc.GetSecret(sctx, fleet.SecretGitHubToken); gh != "" {
+			setupGitHubAuth(gh) // GH_TOKEN for gh + a git credential helper (no token on disk)
+			log.Printf("secrets: loaded github token from brain (git/gh enabled)")
+		}
+		scancel()
+	}
+
+	// Spawn capability (M4): live when a sprites token is available (env or brain).
+	spawner := spawn.New(cfg)
+	log.Printf("spawn: available=%v", spawner.Available())
 
 	// Effective capability policy (P2.5): tools.permission_mode enforces which
 	// permission mode the agent's Claude runs in. Fall back to config otherwise.
