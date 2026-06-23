@@ -18,6 +18,7 @@ import (
 	"github.com/clouvet/sprite-agent/internal/fleet"
 	"github.com/clouvet/sprite-agent/internal/gateway"
 	"github.com/clouvet/sprite-agent/internal/hub"
+	"github.com/clouvet/sprite-agent/internal/keepalive"
 	"github.com/clouvet/sprite-agent/internal/reaper"
 	"github.com/clouvet/sprite-agent/internal/server"
 	"github.com/clouvet/sprite-agent/internal/spawn"
@@ -170,6 +171,11 @@ func main() {
 		AppendSystem:   fleetAffordance(cfg, spawner.Available()),
 	})
 	go h.Run()
+
+	// Keep the sprite awake while it has active work (Claude generating or a client
+	// attached), so autonomous tasks don't get suspended mid-run. Releases when idle
+	// so an idle sprite still pauses. Local Tasks API — every sprite holds itself.
+	go keepalive.Run(context.Background(), func() bool { return !h.IsIdle() })
 
 	// Pass a nil Fleet when there's no brain so /api/fleet reports unavailable
 	// (avoids a typed-nil interface).
