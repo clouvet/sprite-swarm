@@ -1,0 +1,71 @@
+// Package spawn is the sprite-management capability: an agent can create another
+// sprite running this same artifact, handing it the bootstrap pointer so the new
+// agent registers into the same fleet brain (DESIGN §4.2, §8 Phase 1).
+//
+// Spawning is one sprites-API call; it does not require coordination (that's
+// Phase 2). When SPRITE_API_TOKEN is absent the capability is built behind this
+// interface but the live call is stubbed (NotConfigured), per the build brief —
+// the request/bootstrap assembly below stays exercised by unit tests.
+package spawn
+
+import (
+	"context"
+	"errors"
+
+	"github.com/clouvet/sprite-agent/internal/config"
+)
+
+// ErrNotConfigured means no sprites API token is available to spawn with.
+var ErrNotConfigured = errors.New("spawn: sprites API token not configured (set SPRITE_API_TOKEN)")
+
+// Request describes a sprite to create.
+type Request struct {
+	Name       string            // explicit name; if empty the API assigns one under NamePrefix
+	NamePrefix string            // restricted-token prefix (e.g. "wk-")
+	Role       string            // role the new agent advertises ("worker" | "home")
+	Labels     map[string]string // sprites-api labels (authoritative membership)
+}
+
+// Result identifies a spawned sprite.
+type Result struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// Spawner creates and destroys sprites. Available reports whether live spawning
+// is wired (a sprites API token is present).
+type Spawner interface {
+	Available() bool
+	Spawn(ctx context.Context, req Request) (Result, error)
+	Destroy(ctx context.Context, name string) error
+}
+
+// New returns a live spawner when SPRITE_API_TOKEN is set, otherwise a stub that
+// returns ErrNotConfigured (the capability is present, the live call is not).
+func New(cfg config.Config) Spawner {
+	if cfg.SpriteAPIToken == "" {
+		return notConfigured{}
+	}
+	return newAPISpawner(cfg)
+}
+
+// BootstrapEnv is the environment a spawned sprite is handed so it can rehydrate
+// itself from the brain on boot (DESIGN §4.2: the brain pointer is the only
+// out-of-brain input; everything else rehydrates). Pure and unit-tested.
+func BootstrapEnv(cfg config.Config, newID, role string) map[string]string {
+	env := map[string]string{
+		"SPRITE_AGENT_ID":       newID,
+		"SPRITE_AGENT_ROLE":     role,
+		"SPRITE_AGENT_ARTIFACT": cfg.ArtifactRef,
+	}
+	// Brain pointer: where shared fleet state lives + how to auth.
+	if cfg.Brain.Enabled() {
+		env["S3_BUCKET"] = cfg.Brain.Bucket
+		env["S3_REGION"] = cfg.Brain.Region
+		env["S3_ENDPOINT"] = cfg.Brain.Endpoint
+		env["S3_ACCESS_KEY"] = cfg.Brain.AccessKey
+		env["S3_SECRET_KEY"] = cfg.Brain.SecretKey
+	}
+	return env
+}

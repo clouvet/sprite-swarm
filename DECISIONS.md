@@ -39,6 +39,22 @@ The build brief instructs taking the documented default and recording it here ra
   `gh` CLI is already authenticated on the sprite (`gh auth status` → clouvet), and git is
   configured to use it as a credential helper, so the agent's Claude inherits GitHub access with no
   secret copied into the repo. Gateway-injected connectors are a Phase 2 hardening.
+- **Scope tools with a `--settings` allow-list, not a blanket skip** — empirically, in headless
+  `--print` mode `--permission-mode acceptEdits` gates network/mutating Bash (`git`, `gh`) and, with
+  no interactive approver, auto-declines them — so the first PR attempt did nothing. Fix per DESIGN
+  §6.2 ("which tools/shell → Claude Code `--settings`/`--allowedTools`"): ship a scoped settings file
+  (`internal/config/default-claude-settings.json`) that allows `git`/`gh`/`go`/file tools and denies
+  catastrophic commands (`rm -rf /*`, `sudo`, `dd`, `mkfs`, fork-bomb). This is least-privilege, not
+  `--dangerously-skip-permissions`.
+- **Embed + materialize the settings file** — so the capability is on by default and
+  deploy-layout-independent, the settings JSON is embedded in the binary and written to
+  `<workdir>/.sprite-agent/claude-settings.json` on boot; `SPRITE_AGENT_SETTINGS` overrides.
+- **Note on host settings** — this sprite's host `~/.claude/settings.json` sets
+  `defaultMode: bypassPermissions`; the agent nonetheless passes its own scoped `--permission-mode`
+  + `--settings`, which is what a least-privilege deploy (without a permissive host default) relies
+  on. The scoping is the agent's contribution regardless of host config.
+- **Scratch repo `clouvet/sprite-agent-scratch`** — created for the acceptance test; the agent
+  opened PR #1 there, left open as evidence.
 
 ## M4 — Spawn + minimal brain
 - **Spawn is stubbed (no `SPRITE_API_TOKEN`)** — the token was absent from the environment at build
@@ -51,3 +67,66 @@ The build brief instructs taking the documented default and recording it here ra
 - **Brain key scoping deferred** — DESIGN §6.3 wants per-agent prefix-scoped S3 creds; the brief
   says that per-prefix scoping is a Phase 2 refinement and Phase 1 uses a single bucket-scoped key.
   Used the provided single key.
+- **`apiSpawner` API — verified once a token was provided.** Initially the live call could not be
+  exercised (no token), so the endpoint was a documented guess. A token (`cl-sprites`) was supplied
+  afterward and the call was corrected + verified against the live API: create is `POST /v1/sprites`
+  (the `/v1/orgs/<org>/sprites` guess 404'd); auth is `Bearer <full-token>`; body `{name, env,
+  labels}` with `name` required. Verified live via `POST /api/fleet/spawn` (HTTP 200, real sprite
+  created, then destroyed). Base URL defaults to `https://api.sprites.dev`, overridable via
+  `SPRITE_API_BASE`.
+- **Spawn provisioning — built (Phase 1.5, user-requested).** A bare create yields a base sprite that
+  doesn't run sprite-agent; full "spawn → boot → register" was then built and verified. Decisions:
+  - **Provision over the services API + a presigned URL, not exec/fs.** exec and fs are multiplexed
+    over a control WebSocket (`sprite-capabilities: control-ws`) that plain HTTP can't drive; the
+    services API is plain REST. So the spawner stages its own binary to the brain bucket, presigns a
+    GET URL, and installs a service that curls+runs it. Avoids an SDK dependency and a build/clone on
+    the worker; only S3 creds (carried in the bootstrap env) are needed.
+  - **Stage the binary in the brain bucket** (`fleet/artifacts/sprite-agent-linux-amd64`) rather than
+    cloning+building on the worker — self-contained binary (go:embed UI), no GitHub auth needed on the
+    worker for registration. Re-staged per spawn (simple; dedup is a later optimization).
+  - **Warm before provisioning.** A cold sprite accepts a service PUT (200) but doesn't persist it;
+    the spawner warms via `POST …/exec`, polls status until non-cold, PUTs, then confirms + retries
+    once. This was the difference between a worker that registers and one that never boots.
+  - **`SPRITE_AGENT_SPAWN_PROVISION=0`** opts back into a bare create; provisioning requires a brain.
+- **Auto-reap — reaper-on-home, not self-destruct (user-requested).** Workers are reaped by a
+  token-bearing agent's reaper, not by destroying themselves, so the privileged sprites token never
+  has to be handed to workers (least privilege). A worker only *advertises* `Reapable` in its status
+  (idle past threshold, or `POST /api/fleet/done`); the reaper decides and destroys. **Home is always
+  protected** (`fleet.ReapTargets` skips role=home). Dead workers (stale heartbeat) are also cleaned
+  up. Sprite is destroyed before its brain entry; a failed destroy keeps the entry for retry. PR-merge
+  auto-detection isn't built — `POST /api/fleet/done` is the hook an orchestrator calls post-merge.
+- **Idle-reap defaults OFF; reaping is not PR-aware.** DESIGN §10 says workers are "destroyed after
+  their PR merges" — a merge-triggered (human) event, not an idle timer. So a worker that opens a PR
+  and waits for review must not be auto-destroyed for being idle. Default `WorkerIdleReapAfter=0`:
+  workers are reaped only on explicit done (your post-merge `POST /api/fleet/done`) or a dead
+  heartbeat. Idle reaping stays as an opt-in for fire-and-forget workers, with the documented caveat
+  that the reaper can't tell an idle worker from one guarding an open PR. PR-aware idle reaping
+  (guard while a PR is open/unmerged) is the Phase 2 refinement.
+- **`RemoveAgent` deletes only the two coordination keys, not `fleet/<id>/*`.** Durable shared memory
+  (§4 Layer 2) must outlive the sprite (§2.3); it lives under a separate `fleet/memory/…` prefix
+  (§4.1) the reaper never touches. Scoping the delete to status+heartbeat keeps that guarantee even
+  if something else later lands under the per-agent prefix. (Memory itself is Phase 2; this protects
+  the seam now.)
+- **Spawn addressable over the same API** — `POST /api/fleet/spawn` returns `501` with a clear
+  reason when stubbed (capability present, live call not), keeping seam #2 (agent talks to the fleet
+  over the same API a human uses) honest.
+- **Fleet affordance via `--append-system-prompt`** — DESIGN §5 ("nothing tells it that's an
+  option"): a static blurb at spawn tells the agent it's a fleet peer, where the roster is
+  (`/api/fleet`), and how/whether it can spawn. Per-turn live-state injection is Phase 2.
+- **Multi-agent roster demonstrated by two registrations** — spawn is stubbed, so the M4
+  "A spawns B, both in roster" shape was proven by running two real agents (home + worker) that
+  register into live Tigris; the roster logic is also unit-tested with a fake brain. Test entries
+  were cleaned from the bucket afterward.
+
+## Cross-cutting
+- **Session metadata: in-memory + JSON file** (`<workdir>/.sprite-agent/sessions.json`) rather than
+  the embedded SQLite mentioned in DESIGN §3.1 — Phase 1 needs only titles/timestamps for the UI
+  list; the transcript `.jsonl` is the source of truth. SQLite can come when metadata grows.
+- **UUIDs without a dependency** — `crypto/rand` v4 UUIDs (Claude's `--session-id` needs a valid
+  UUID); avoids adding a uuid module.
+- **Markdown via CDN with graceful fallback** — the embedded UI loads `marked` from a CDN for rich
+  rendering but degrades to escaped plaintext if offline, keeping the binary self-contained while
+  avoiding bundling a markdown parser.
+- **Commit attribution** — used the Co-Authored-By trailer required by this environment's
+  conventions (sprite-mobile v1's "no co-author" rule is a different repo's policy and does not
+  apply here).
