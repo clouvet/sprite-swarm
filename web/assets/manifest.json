@@ -1,0 +1,10 @@
+{
+  "name": "sprite-agent",
+  "short_name": "sprite-agent",
+  "description": "Chat with a sprite's Claude Code",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#15151f",
+  "theme_color": "#1a1a2e",
+  "icons": []
+}

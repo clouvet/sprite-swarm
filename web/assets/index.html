@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <title>sprite-agent</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h2>Chats</h2>
+        <button id="new-chat-btn" title="New chat">+</button>
+      </div>
+      <div id="sessions-list"></div>
+      <div id="fleet-section">
+        <div id="fleet-header">Fleet</div>
+        <div id="fleet-list"></div>
+      </div>
+    </aside>
+    <div id="overlay"></div>
+
+    <main id="main">
+      <header>
+        <button id="menu-btn">☰</button>
+        <h1 id="chat-title">sprite-agent</h1>
+        <div id="status" class="error">Disconnected</div>
+      </header>
+
+      <div id="empty-state">
+        <h2>👾 sprite-agent</h2>
+        <p>Start a new chat to talk to this sprite's Claude.</p>
+        <button id="start-chat-btn">New Chat</button>
+      </div>
+
+      <div id="messages"></div>
+
+      <div id="input-area">
+        <div id="input-wrapper">
+          <textarea id="input" placeholder="Message Claude…" rows="1" enterkeyhint="send"
+                    autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>
+          <button id="send" disabled title="Send">▶</button>
+          <button id="stop-btn" disabled title="Stop (Esc)">■</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Markdown rendering: progressive enhancement. If the CDN is unreachable
+       (offline sprite), app.js falls back to escaped plaintext. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js" onerror="window.__noMarked=true"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
