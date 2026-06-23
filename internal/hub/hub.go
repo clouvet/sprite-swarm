@@ -27,6 +27,7 @@ import (
 type Config struct {
 	WorkDir        string
 	ProjectsDir    string
+	DangerousSkip  bool
 	PermissionMode string
 	SettingsPath   string
 	MCPConfigPath  string
@@ -55,6 +56,7 @@ type Hub struct {
 type providers struct {
 	workDir        string
 	projectsDir    string
+	dangerousSkip  bool
 	permissionMode string
 	settingsPath   string
 	mcpConfigPath  string
@@ -74,6 +76,7 @@ func NewHub(cfg Config) *Hub {
 		cfg: providers{
 			workDir:        cfg.WorkDir,
 			projectsDir:    cfg.ProjectsDir,
+			dangerousSkip:  cfg.DangerousSkip,
 			permissionMode: cfg.PermissionMode,
 			settingsPath:   cfg.SettingsPath,
 			mcpConfigPath:  cfg.MCPConfigPath,
@@ -125,6 +128,7 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 		SessionID:      sessionID,
 		CWD:            h.cfg.workDir,
 		ProjectsDir:    h.cfg.projectsDir,
+		DangerousSkip:  h.cfg.dangerousSkip,
 		PermissionMode: h.cfg.permissionMode,
 		SettingsPath:   h.cfg.settingsPath,
 		MCPConfigPath:  h.cfg.mcpConfigPath,

@@ -150,9 +150,11 @@ func main() {
 		cancel()
 	}
 
+	log.Printf("permissions: dangerous-skip=%v (fleet-wide; scoped mode=%s when off)", cfg.DangerousSkip, permissionMode)
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
+		DangerousSkip:  cfg.DangerousSkip,
 		PermissionMode: permissionMode,
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
