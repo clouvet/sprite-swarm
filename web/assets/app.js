@@ -120,7 +120,7 @@
           (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '') +
           (a.reapable ? '<span class="fleet-badge reap" title="reapable">⌛</span>' : '');
         const attachable = a.url ? ' attachable' : '';
-        return `<div class="fleet-item${attachable}" data-id="${escapeHtml(a.id)}" title="${a.url ? 'Attach (open this agent\\'s session)' : 'no URL'}">
+        return `<div class="fleet-item${attachable}" data-id="${escapeHtml(a.id)}" title="${a.url ? 'Attach (open session)' : 'no URL'}">
           <span class="dot ${a.alive ? 'on' : 'off'}"></span>
           <span class="fleet-id">${escapeHtml(a.id)}</span>
           <span class="fleet-role">${escapeHtml(a.role || '')}</span>
