@@ -86,6 +86,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
    collapsed doesn't flash the sidebar open. */
 @media (min-width: 769px) {
   html[data-sidebar="collapsed"] #main { margin-left: 0; }
+  #status::before { font-size: 42px; } /* larger sprite indicator on desktop */
 }
 
 /* connection status — 👾 tinted via filter, like sprite-mobile */
