@@ -173,13 +173,28 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	id := rest
-	if r.Method == http.MethodDelete {
-		s.store.Delete(id)
-		w.WriteHeader(http.StatusNoContent)
+	if strings.HasSuffix(rest, "/retitle") {
+		s.retitle(w, r, strings.TrimSuffix(rest, "/retitle"))
 		return
 	}
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	id := rest
+	switch r.Method {
+	case http.MethodDelete:
+		s.store.Delete(id)
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPatch, http.MethodPut:
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		s.store.Rename(id, body.Name)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // serveFleet returns the roster (M4), or the live text context at

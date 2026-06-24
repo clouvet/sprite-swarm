@@ -163,6 +163,7 @@
     assistantText = '';
     clearPendingImage();
     restoreDraft();
+    assistantTurns = 0;
     renderSessions();
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
@@ -194,18 +195,6 @@
         el.addEventListener('click', () => attachToAgent(el.dataset.id));
       });
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
-  }
-
-  async function loadPolicy() {
-    const el = $('policy-line');
-    if (!el) return;
-    try {
-      const res = await fetch('/api/policy');
-      if (!res.ok) { el.textContent = ''; return; }
-      const p = await res.json();
-      const spawn = p.spawn_allowed ? ('spawn≤' + p.spawn_max_total) : 'no-spawn';
-      el.textContent = `policy · merge:${p.merge} · ${spawn} · ${p.permission_mode}`;
-    } catch (e) { el.textContent = ''; }
   }
 
   function attachToAgent(id) {
@@ -309,6 +298,7 @@
         break;
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
+        onAssistantTurnComplete();
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -349,10 +339,14 @@
     el.textContent = text;
     messagesEl.appendChild(el); scrollDown();
   }
+  // Copy button shown on each assistant message; copies the raw text (el._raw).
+  const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  const assistantHeader = `<div class="message-header">Claude<button class="copy-btn" title="Copy" aria-label="Copy">${COPY_SVG}</button></div>`;
   function addStoredAssistant(text) {
     const el = document.createElement('div');
     el.className = 'message assistant';
-    el.innerHTML = `<div class="message-header">Claude</div><div class="message-content">${renderMarkdown(text)}</div>`;
+    el.innerHTML = `${assistantHeader}<div class="message-content">${renderMarkdown(text)}</div>`;
+    el._raw = text;
     messagesEl.appendChild(el);
     highlightWithin(el.querySelector('.message-content'));
   }
@@ -361,7 +355,7 @@
     removeThinking(); removeActivity();
     currentAssistantEl = document.createElement('div');
     currentAssistantEl.className = 'message assistant';
-    currentAssistantEl.innerHTML = `<div class="message-header">Claude</div><div class="message-content streaming"></div>`;
+    currentAssistantEl.innerHTML = `${assistantHeader}<div class="message-content streaming"></div>`;
     messagesEl.appendChild(currentAssistantEl);
     assistantText = '';
     setGenerating(true);
@@ -369,6 +363,7 @@
   function appendAssistant(text) {
     if (!currentAssistantEl) startAssistant();
     assistantText += text;
+    currentAssistantEl._raw = assistantText;
     currentAssistantEl.querySelector('.message-content').innerHTML = renderMarkdown(assistantText);
     scrollDown();
   }
@@ -510,6 +505,7 @@
     if ((!text && !hasImage) || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
 
+    maybeAutoTitle(text);
     addUser(text, hasImage ? [uploadUrl(pendingImage.filename)] : null);
     showThinking();
     const payload = { type: 'user', content: text };
@@ -612,6 +608,53 @@
   }
   function clearDraft() { const k = draftKey(); if (k) { try { localStorage.removeItem(k); } catch (e) {} } }
 
+  // ---- auto chat titles ----
+  function isDefaultName(n) { return !n || n === 'New chat' || n === 'Chat'; }
+  async function renameSession(id, name) {
+    try {
+      await fetch('/api/sessions/' + id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      });
+    } catch (e) {}
+  }
+  function applyTitle(id, name) {
+    if (currentSession && currentSession.id === id) {
+      currentSession.name = name;
+      chatTitle.textContent = name;
+    }
+    const s = sessions.find(x => x.id === id);
+    if (s) s.name = name;
+    renderSessions();
+  }
+  // On a chat's first message, derive an instant title from it (and persist) so
+  // chats never sit on "New chat" while the LLM title is generated.
+  function maybeAutoTitle(text) {
+    if (!currentSession || !text || !isDefaultName(currentSession.name)) return;
+    let title = text.replace(/\s+/g, ' ').trim();
+    if (title.length > 48) title = title.slice(0, 48) + '…';
+    if (!title) return;
+    applyTitle(currentSession.id, title);
+    renameSession(currentSession.id, title);
+  }
+  // Continuously-evolving title: after assistant turns, ask the server to
+  // regenerate the title from the conversation (cheap one-shot model).
+  let assistantTurns = 0;
+  async function retitle() {
+    const id = currentSession && currentSession.id;
+    if (!id) return;
+    try {
+      const res = await fetch('/api/sessions/' + id + '/retitle', { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.name) applyTitle(id, data.name);
+    } catch (e) {}
+  }
+  function onAssistantTurnComplete() {
+    assistantTurns++;
+    // Evolve quickly at first, then periodically.
+    if (assistantTurns <= 2 || assistantTurns % 3 === 0) retitle();
+  }
+
   // sidebar swipe-to-close (item #9)
   let sbStartX = 0, sbSwiping = false;
   sidebar.addEventListener('touchstart', e => {
@@ -668,6 +711,25 @@
     }
   });
 
+  // Copy an assistant message's raw text (delegated; works on hover-click + touch).
+  function fallbackCopy(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  messagesEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.copy-btn');
+    if (!btn) return;
+    const msg = btn.closest('.message');
+    if (!msg || !msg._raw) return;
+    const done = () => { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(msg._raw).then(done).catch(() => fallbackCopy(msg._raw, done));
+    } else { fallbackCopy(msg._raw, done); }
+  });
+
   // ---- wire up ----
   $('new-chat-btn').addEventListener('click', createSession);
   $('start-chat-btn').addEventListener('click', createSession);
@@ -700,7 +762,6 @@
     showBaselineTitle();
     await loadSessions();
     loadFleet();
-    loadPolicy();
     setInterval(loadFleet, 5000);
 
     // Restore the session on refresh (item #17): URL hash first, then localStorage.
