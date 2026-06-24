@@ -142,7 +142,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 
 /* ---- input area: a single bordered "card" with the buttons inside, as the
    bottom toolbar row. Uniform across mobile/desktop and new-chat/active. ---- */
-#input-area { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--safe-bottom)); background: var(--bg-secondary); border-top: 1px solid var(--border); position: relative; }
+#input-area { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--safe-bottom)); background: transparent; position: relative; }
 #input-wrapper { display: flex; flex-direction: column; gap: 6px; max-width: 792px; margin: 0 auto;
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 20px; padding: 8px 10px; }
 #input-wrapper:focus-within { border-color: var(--accent); }
