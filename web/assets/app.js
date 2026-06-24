@@ -55,7 +55,6 @@
   const imagePreviewName = $('image-preview-name');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
-  const emptyState = $('empty-state');
   const mainEl = $('main');
   const sidebar = $('sidebar');
   const overlay = $('overlay');
@@ -92,8 +91,6 @@
   }
   function showBaselineTitle() {
     chatTitle.innerHTML = '👾 ' + escapeHtml(spriteName);
-    const h2 = emptyState.querySelector('h2');
-    if (h2) h2.innerHTML = '👾 ' + escapeHtml(spriteName);
   }
 
   // ---- sessions REST ----
@@ -109,7 +106,6 @@
   // messages the composer docks to the bottom. Driven purely by message presence.
   function setComposing(on) {
     mainEl.classList.toggle('composing', on);
-    emptyState.style.display = on ? 'flex' : 'none';
   }
   function updateComposing() {
     setComposing(!messagesEl.querySelector('.message'));
