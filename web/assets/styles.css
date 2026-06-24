@@ -155,8 +155,8 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 #attach-btn, #mic-btn, #send, #stop-btn { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; border: none; transition: transform .1s; }
 #attach-btn:active, #mic-btn:active, #send:active, #stop-btn:active { transform: scale(0.92); }
-#attach-btn, #mic-btn { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
-#send, #stop-btn { background: var(--accent); color: #fff; margin-left: auto; }
+#attach-btn, #mic-btn, #send, #stop-btn { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+#send, #stop-btn { margin-left: auto; color: var(--accent); }
 #stop-btn { display: none; }
 #input-area.generating #send { display: none; }
 #input-area.generating #stop-btn { display: flex; margin-left: auto; }
