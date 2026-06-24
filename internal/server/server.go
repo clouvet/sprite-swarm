@@ -48,10 +48,18 @@ type Server struct {
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
 // spawner is always non-nil (a stub when no sprites token is available).
 func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner) *Server {
+	store := newMetaStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "sessions.json"))
+	// Keep the session list's preview/timestamp fresh as turns happen.
+	h.SetActivityHook(func(sessionID, preview string) {
+		if len(preview) > 80 {
+			preview = preview[:80]
+		}
+		store.Touch(sessionID, preview)
+	})
 	return &Server{
 		cfg:     cfg,
 		hub:     h,
-		store:   newMetaStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "sessions.json")),
+		store:   store,
 		fleet:   fleetSvc,
 		spawner: spawner,
 		upgrader: websocket.Upgrader{

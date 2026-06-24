@@ -51,8 +51,16 @@ type Hub struct {
 	unregister chan *Client
 	broadcast  chan *BroadcastMessage
 
+	// onActivity, when set, is called with a session id + short preview whenever a
+	// turn happens, so the session list (lastMessage/lastMessageAt) stays current.
+	onActivity func(sessionID, preview string)
+
 	mu sync.RWMutex
 }
+
+// SetActivityHook registers a callback invoked on each user turn so the session
+// store can update its preview/timestamp (wired by the server to metaStore.Touch).
+func (h *Hub) SetActivityHook(fn func(sessionID, preview string)) { h.onActivity = fn }
 
 // providers is the resolved hub configuration.
 type providers struct {
@@ -257,6 +265,15 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	}
 	data, _ := json.Marshal(map[string]interface{}{"type": "user_message", "message": echo})
 	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: data, Exclude: client}
+
+	// Keep the session list's preview/timestamp current.
+	if h.onActivity != nil {
+		preview := msg.Content
+		if preview == "" && msg.ImageFilename != "" {
+			preview = "📷 image"
+		}
+		h.onActivity(client.sessionID, preview)
+	}
 
 	sess := h.GetSession(client.sessionID)
 	if sess != nil && sess.GetState() == session.StateIdle {
