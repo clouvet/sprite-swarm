@@ -177,6 +177,8 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 #input-wrapper { display: flex; flex-direction: column; gap: 6px; max-width: 792px; margin: 0 auto;
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 20px; padding: 8px 10px; }
 #input-wrapper:focus-within { border-color: var(--accent); }
+/* desktop: a little breathing room below the composer */
+@media (min-width: 769px) { #input-wrapper { margin-bottom: 12px; } }
 #input { width: 100%; min-height: 26px; max-height: 200px; padding: 6px 6px 0; background: transparent; border: none;
   color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
 
