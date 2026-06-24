@@ -9,6 +9,9 @@
   <meta name="theme-color" content="#1a1a2e">
   <link rel="manifest" href="/manifest.json">
   <title>sprite-agent</title>
+  <!-- Apply the persisted desktop "sidebar collapsed" state before first paint so a
+       refresh while collapsed doesn't flash the sidebar open. -->
+  <script>try{if(localStorage.getItem('sidebarCollapsed')==='1')document.documentElement.setAttribute('data-sidebar','collapsed')}catch(e){}</script>
   <link rel="stylesheet" href="/styles.css">
   <!-- syntax highlighting theme (progressive enhancement; offline-safe) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
