@@ -25,6 +25,7 @@ type ParsedMessage struct {
 	Type      string
 	Role      string // "user" or "assistant"
 	Content   string
+	Images    []string // data URLs for attached images, so history replays them
 	Timestamp time.Time
 	Raw       json.RawMessage
 }
@@ -61,9 +62,25 @@ func ExtractContent(msg *ClaudeMessage) (*ParsedMessage, error) {
 				parsed.Content = v
 			case []interface{}:
 				for _, block := range v {
-					if blockMap, ok := block.(map[string]interface{}); ok && blockMap["type"] == "text" {
+					blockMap, ok := block.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					switch blockMap["type"] {
+					case "text":
 						if text, ok := blockMap["text"].(string); ok {
 							parsed.Content += text
+						}
+					case "image":
+						if src, ok := blockMap["source"].(map[string]interface{}); ok {
+							data, _ := src["data"].(string)
+							mt, _ := src["media_type"].(string)
+							if data != "" {
+								if mt == "" {
+									mt = "image/png"
+								}
+								parsed.Images = append(parsed.Images, "data:"+mt+";base64,"+data)
+							}
 						}
 					}
 				}
@@ -88,7 +105,7 @@ func ExtractContent(msg *ClaudeMessage) (*ParsedMessage, error) {
 		}
 	}
 
-	if parsed.Content != "" && !shouldSkipMessage(parsed.Content) {
+	if len(parsed.Images) > 0 || (parsed.Content != "" && !shouldSkipMessage(parsed.Content)) {
 		return parsed, nil
 	}
 	return nil, nil

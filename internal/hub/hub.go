@@ -644,6 +644,7 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 		messages = append(messages, map[string]interface{}{
 			"role":      parsed.Role,
 			"content":   parsed.Content,
+			"images":    parsed.Images,
 			"timestamp": parsed.Timestamp.Unix() * 1000,
 		})
 	}
