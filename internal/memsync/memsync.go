@@ -12,9 +12,11 @@ package memsync
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -124,12 +126,12 @@ func Run(ctx context.Context, store Store, dir, author string) {
 	}
 }
 
-// writeIndex regenerates MEMORY.md: a flat list of every memory file so a sprite
-// can see at a glance what the fleet knows. Not synced (it's derived).
+// writeIndex regenerates MEMORY.md: every memory file grouped by TOPIC category
+// (the path segment after the author), across all sprites — so working on repo X
+// means scanning the "repos" group, regardless of who wrote each note. Derived
+// (not synced). Storage stays author-namespaced; the index gives the topic view.
 func writeIndex(dir string) {
-	var b strings.Builder
-	b.WriteString("# Fleet memory index\n\n")
-	b.WriteString("Shared learnings across the fleet. Read the relevant files; add your own.\n\n")
+	groups := map[string][]string{}
 	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -139,8 +141,30 @@ func writeIndex(dir string) {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, p)
-		b.WriteString("- " + filepath.ToSlash(rel) + "\n")
+		parts := strings.Split(filepath.ToSlash(rel), "/") // <author>/<category>/<file> or <author>/<file>
+		cat := "general"
+		if len(parts) >= 3 {
+			cat = parts[1]
+		}
+		groups[cat] = append(groups[cat], filepath.ToSlash(rel))
 		return nil
 	})
+
+	cats := make([]string, 0, len(groups))
+	for c := range groups {
+		cats = append(cats, c)
+	}
+	sort.Strings(cats)
+
+	var b strings.Builder
+	b.WriteString("# Fleet memory index\n\n")
+	b.WriteString("Shared learnings across the fleet, grouped by topic. Read the relevant files before working; add your own.\n")
+	for _, c := range cats {
+		fmt.Fprintf(&b, "\n## %s\n", c)
+		sort.Strings(groups[c])
+		for _, f := range groups[c] {
+			b.WriteString("- " + f + "\n")
+		}
+	}
 	_ = os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte(b.String()), 0o644)
 }
