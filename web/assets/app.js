@@ -85,6 +85,7 @@
       if (c.agentID) {
         spriteName = c.agentID;
         document.title = spriteName;
+        try { localStorage.setItem('spriteName', spriteName); } catch (e) {}
         if (!currentSession) showBaselineTitle();
       }
     } catch (e) { /* keep default */ }
@@ -105,7 +106,7 @@
   // Composing state: a new chat shows a centered, large composer; once it has
   // messages the composer docks to the bottom. Driven purely by message presence.
   function setComposing(on) {
-    mainEl.classList.toggle('composing', on);
+    document.documentElement.setAttribute('data-view', on ? 'new' : 'chat');
     inputEl.placeholder = on ? 'How can I help you?' : 'Write a message';
   }
   function updateComposing() {
