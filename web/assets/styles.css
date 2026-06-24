@@ -218,4 +218,5 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
      covers it); opening slides the main page RIGHT to reveal the sidebar. */
   #main { margin-left: 0; }
   #app.sidebar-open #main { transform: translateX(var(--sidebar-width)); }
+  #menu-btn { transform: translateY(-4px); } /* optical nudge up on mobile */
 }
