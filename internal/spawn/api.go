@@ -170,7 +170,12 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 		go func() {
 			bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
-			if err := a.provisionAgent(bg, name, env); err != nil {
+			url, err := a.stageSelf(bg)
+			if err != nil {
+				log.Printf("spawn: staging artifact for %s failed: %v", name, err)
+				return
+			}
+			if err := a.provisionAgent(bg, name, env, url); err != nil {
 				log.Printf("spawn: background provisioning of %s failed: %v", name, err)
 			} else {
 				log.Printf("spawn: %s provisioned (registering into the brain)", name)
@@ -209,22 +214,21 @@ func (a *apiSpawner) createSprite(ctx context.Context, cr createSpriteRequest) (
 // A freshly-created sprite is "cold": a service PUT to it returns 200 but does
 // NOT persist. So we warm it first and confirm the service stuck (retrying once),
 // which is the difference between a worker that registers and one that never boots.
-func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv map[string]string) error {
-	// Stage the binary and get a URL the worker can fetch it from on boot. On the
-	// token-free path the worker downloads via the s3 connector (its own identity,
-	// no presign, no keys); otherwise fall back to a presigned direct-S3 URL.
-	var url string
+// stageSelf uploads this running binary to the brain and returns a URL the new
+// sprite fetches it from on boot — via the s3 connector (token-free) when available,
+// else a presigned direct-S3 URL. Used by the worker-spawn path.
+func (a *apiSpawner) stageSelf(ctx context.Context) (string, error) {
 	if a.cfg.Brain.UsesGateway() {
-		var uerr error
-		if url, uerr = uploadViaConnector(ctx, a.cfg.Brain.GatewayURL); uerr != nil {
-			return uerr
-		}
-	} else {
-		var serr error
-		if url, serr = stageArtifact(ctx, a.cfg.Brain, artifactTTL); serr != nil {
-			return serr
-		}
+		return uploadViaConnector(ctx, a.cfg.Brain.GatewayURL)
 	}
+	return stageArtifact(ctx, a.cfg.Brain, artifactTTL)
+}
+
+// provisionAgent installs the sprite-agent service on a created sprite: its boot
+// command fetches the binary from artifactURL and runs it with bootEnv. The caller
+// stages the artifact first (workers stage self; init stages a cross-compiled binary).
+func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv map[string]string, artifactURL string) error {
+	url := artifactURL
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
 	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
 	if a.cfg.WorkerIdleReapAfter > 0 {
