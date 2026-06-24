@@ -28,12 +28,13 @@ type Client struct {
 type ClientMessage struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
-	// Image attachment: the client uploads the bytes to /api/upload first and
-	// sends only these references; the hub reads the file + base64-encodes it into
-	// an image content block for Claude.
-	ImageID        string `json:"imageId,omitempty"`
-	ImageFilename  string `json:"imageFilename,omitempty"`
-	ImageMediaType string `json:"imageMediaType,omitempty"`
+	// Attachment: the client uploads the bytes to /api/upload first and sends only
+	// these references; the hub reads the file and feeds it to Claude (image block,
+	// inlined text, or a saved path for binary docs).
+	AttachmentID   string `json:"attachmentId,omitempty"`
+	AttachmentFile string `json:"attachmentFile,omitempty"` // stored filename
+	AttachmentName string `json:"attachmentName,omitempty"` // original filename
+	AttachmentType string `json:"attachmentType,omitempty"` // media type
 }
 
 // ReadPump pumps client messages into the hub.
