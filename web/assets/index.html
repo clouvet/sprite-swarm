@@ -41,8 +41,8 @@
       <header>
         <button id="menu-btn">☰</button>
         <h1 id="chat-title"></h1>
-        <script>try{var n=localStorage.getItem('spriteName');if(n)document.getElementById('chat-title').innerHTML='👾 '+n}catch(e){}</script>
-        <div id="status">Disconnected</div>
+        <script>try{var n=localStorage.getItem('spriteName');if(n)document.getElementById('chat-title').textContent=n}catch(e){}</script>
+        <div id="status"></div>
       </header>
 
       <div id="stage">
