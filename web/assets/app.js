@@ -163,6 +163,7 @@
     assistantText = '';
     clearPendingImage();
     restoreDraft();
+    assistantTurns = 0;
     renderSessions();
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
@@ -297,6 +298,7 @@
         break;
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
+        onAssistantTurnComplete();
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -615,19 +617,42 @@
       });
     } catch (e) {}
   }
-  // On a chat's first message, derive a title from it (and persist) so chats stop
-  // showing "New chat". One-shot: only while the name is still the default.
+  function applyTitle(id, name) {
+    if (currentSession && currentSession.id === id) {
+      currentSession.name = name;
+      chatTitle.textContent = name;
+    }
+    const s = sessions.find(x => x.id === id);
+    if (s) s.name = name;
+    renderSessions();
+  }
+  // On a chat's first message, derive an instant title from it (and persist) so
+  // chats never sit on "New chat" while the LLM title is generated.
   function maybeAutoTitle(text) {
     if (!currentSession || !text || !isDefaultName(currentSession.name)) return;
     let title = text.replace(/\s+/g, ' ').trim();
     if (title.length > 48) title = title.slice(0, 48) + '…';
     if (!title) return;
-    currentSession.name = title;
-    chatTitle.textContent = title;
-    const s = sessions.find(x => x.id === currentSession.id);
-    if (s) s.name = title;
-    renderSessions();
+    applyTitle(currentSession.id, title);
     renameSession(currentSession.id, title);
+  }
+  // Continuously-evolving title: after assistant turns, ask the server to
+  // regenerate the title from the conversation (cheap one-shot model).
+  let assistantTurns = 0;
+  async function retitle() {
+    const id = currentSession && currentSession.id;
+    if (!id) return;
+    try {
+      const res = await fetch('/api/sessions/' + id + '/retitle', { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.name) applyTitle(id, data.name);
+    } catch (e) {}
+  }
+  function onAssistantTurnComplete() {
+    assistantTurns++;
+    // Evolve quickly at first, then periodically.
+    if (assistantTurns <= 2 || assistantTurns % 3 === 0) retitle();
   }
 
   // sidebar swipe-to-close (item #9)
