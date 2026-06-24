@@ -99,6 +99,40 @@ the hat; if everything disappears, one new sprite booted against the brain recon
 rehydrate from it, standing up a new sprite in the org brings the fleet back within minutes — no
 out-of-brain bootstrap secret to hand over.
 
+### Additions since the initial Phase 1–2 cut
+
+- **Fleet onboarding — `scripts/launch-fleet.sh` + `sprite-agent init`.** Stand up a brand-new fleet
+  from off-account: prime the brain (stage the binary + write the secrets via **direct Tigris S3
+  keys**) and ignite one home sprite (`spawn.LaunchHome`); everything else reconstitutes. The binary
+  now **self-discovers the Anthropic connector** on boot (sets `ANTHROPIC_BASE_URL`) when unset and
+  there's no OAuth login, so a freshly-ignited home can run Claude.
+- **flyctl on every sprite.** A third brain secret, `fleet/config/secrets/fly`, rehydrated on boot;
+  `flyctl` is auto-installed to `~/.fly/bin` if missing and authenticated via `FLY_API_TOKEN`.
+- **Durable workers (reaper reworked).** A stale heartbeat **no longer destroys** a worker — a
+  *suspended* worker (finished a feature, awaiting follow-up) looks identical to a crashed one over
+  the heartbeat, so we only destroy on **explicit done**, and clean a stale worker's brain entry only
+  if its sprite is **actually gone** (`spawn.Exists`). Follow-up = re-attach to the still-alive worker
+  (its disk + transcript survive suspend). Teardown is a presence-aware endpoint
+  `POST /api/fleet/destroy {target[,force]}` (409 if a human is attached) + a per-worker **Reap**
+  button in the UI. (Supersedes the older "idle/dead destroyed" line above.)
+- **Keep-awake.** `internal/keepalive` holds the sprite active via the **local Tasks API**
+  (`/.sprite/api.sock`) while Claude is generating / a client is attached, so autonomous tasks don't
+  suspend mid-run; it releases when idle so an idle sprite still pauses.
+- **Async spawn.** `/api/fleet/spawn` returns as soon as the sprite is **created**; warm/provision runs
+  in the background — so the call stays under the proxy timeout (no spurious 502).
+- **Frictionless shared memory.** Beyond the JSON memory API, `internal/memsync` syncs a local markdown
+  folder (`$HOME/.sprite-agent/memory/`, grouped `repos/` `decisions/` `how-to/`) with the brain
+  (`fleet/memory-fs/`): boot-pull (inherit), write-push (a plain file write), topic-grouped `MEMORY.md`.
+- **Per-chat working dirs.** Each chat runs in `/home/sprite/chats/<session-id>` so concurrent chats
+  don't clobber each other; knowledge is shared via the brain, not the filesystem. (The process
+  supervisor now runs **concurrent** sessions — the claude-hub singleton was removed — so attaching a
+  chat to a busy worker no longer kills its task.)
+- **Chat UI.** Substantial pass: centered new-chat composer that docks once active; all controls inside
+  one composer card; image **and** document attachments (`doc/docx/xls/xlsx/csv/txt/md`) fed to Claude
+  (images as native blocks, text inlined, binary by saved path); voice input; syntax highlighting;
+  evolving chat titles (cheap one-shot model); message + per-code-block copy buttons; recessed sidebar
+  with show/hide; chat history (incl. images) on refresh; pre-paint state to avoid load flashes.
+
 ---
 
 ## 1. What we're building

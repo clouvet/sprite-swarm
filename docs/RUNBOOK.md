@@ -60,9 +60,20 @@ Both the web UI and the terminal read/write the same
 `~/.claude/projects/<slug>/<session-id>.jsonl`.
 
 ## Fleet brain (M4)
-With `S3_*` set, the agent registers itself on boot (`fleet/<id>/status.json`,
-`fleet/<id>/heartbeat.json`) and `GET /api/fleet` returns the roster derived from
-`ListObjects("fleet/")`. See `docs/sprite-agent-V2-plan.md` §4.
+With `S3_*` set — or, on a sprite, by **auto-discovering the `s3_object_store`
+connector** (token-free, by sprite identity; no `S3_*` needed) — the agent registers
+itself on boot (`fleet/<id>/status.json`, `fleet/<id>/heartbeat.json`) and
+`GET /api/fleet` returns the roster from `ListObjects("fleet/")`. See §4.
+
+## Operational secrets (brain)
+Every sprite rehydrates the same secrets from `fleet/config/secrets/` on boot, so any
+sprite is equally capable (env values win if explicitly set):
+- `sprites-api-token` → spawn/reap/teardown (`SPRITE_API_TOKEN`).
+- `github` → git/gh (loaded into process env + a `GIT_CONFIG_*` credential helper; never on disk).
+- `fly` → flyctl (`FLY_API_TOKEN`; `flyctl` auto-installed to `~/.fly/bin` if missing).
+
+Seed them with `launch-fleet.sh` (below), or store/update one via the brain directly.
+The brain bucket holding these is the fleet's trust boundary — guard its keys + connector.
 
 ## Spawning a worker that boots + registers (M4 + provisioning)
 With `SPRITE_API_TOKEN` and `S3_*` set:
@@ -75,19 +86,44 @@ runs the binary with the bootstrap env. The worker boots `sprite-agent` and
 self-registers — it appears in `GET /api/fleet` (`alive:true`) within ~1–2 min.
 Set `SPRITE_AGENT_SPAWN_PROVISION=0` for a bare create (no agent installed).
 
-## Auto-reap (workers come and go)
-Token-bearing agents run a **reaper** that destroys reapable/dead workers and
-cleans their brain entries; **home is never reaped**. A worker becomes reapable
-when it (a) is told it's done — `POST /api/fleet/done` (e.g. **after its PR
-merges**), (b) its heartbeat goes stale past `SPRITE_AGENT_DEAD_REAP_MINUTES`
-(crashed sprite), or (c) it sits idle past its idle-reap threshold **if** idle
-reaping is enabled (off by default). The reaping decision lives in
-`fleet.ReapTargets`; the worker never destroys itself (the privileged sprites
-token stays on the reaper, not on workers).
+## Durable workers + reaping
+Workers are **durable workspaces, not one-shots.** A worker that finishes a feature
+goes idle and *suspends* (cheap; the keep-awake task releases) — its VM disk (repo +
+branch) and session transcript **survive**, so you re-attach later to iterate on its
+PR with full context. A **stale heartbeat no longer destroys** a worker (a suspended
+worker is indistinguishable from a crashed one over the heartbeat).
 
-**A worker with an open, unmerged PR is _not_ auto-reaped** under the defaults: it
-either stays idle (idle-reap off → never reaped for idling) or, if you enable idle
-reaping, note the reaper is **not PR-aware** — so leave idle-reap off for workers
-that await review, and reap them via `POST /api/fleet/done` once you've merged
-(or closed) the PR. Reaping the worker never deletes the PR/branch (those live on
-GitHub) and never touches durable shared memory (a separate brain prefix).
+Token-bearing agents run a **reaper** that:
+- **destroys** only workers that explicitly self-declared done (`POST /api/fleet/done`),
+  removing their brain entry (`fleet.ReapTargets`);
+- **cleans the brain entry** of a stale worker only if its sprite is **actually gone**
+  (verified via `spawn.Exists`) — orphan cleanup, never destroying a live/suspended one
+  (`fleet.StaleWorkers`).
+
+**Home is never reaped.** Teardown on demand is presence-aware:
+`POST /api/fleet/destroy {"target":"<id>"[, "force":true]}` (the fleet UI's per-worker
+**Reap** button) destroys the VM + cleans the brain entry, refusing with **409** if a
+human is attached unless `force`. Reaping never deletes the PR/branch (those live on
+GitHub) nor the durable shared memory (a separate brain prefix).
+
+Optional idle-reap (`SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES`) is **off by default** — the
+reaper isn't PR-aware, so leave it off for workers awaiting review.
+
+## Launching a new fleet
+`scripts/launch-fleet.sh` stands up a brand-new fleet from anywhere with Go. Pre-reqs
+(once, in the Sprites dashboard): a Tigris bucket + an `s3_object_store` connector
+pointing at it, and an `anthropic` connector.
+
+```sh
+scripts/launch-fleet.sh --name my-fleet \
+  --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
+  [--s3-endpoint https://fly.storage.tigris.dev] \
+  --sprites-token <token> [--github-token <token>] [--fly-token <token>]
+```
+
+It cross-compiles the linux artifact, then `sprite-agent init` primes the brain (stages
+the binary + writes the `sprites-api-token`/`github`/`fly` secrets via **direct S3
+keys**) and ignites the home sprite (`role=home`), printing its URL. The home boots,
+**self-discovers the s3 + Anthropic connectors**, rehydrates the secrets, and is a live
+fleet; subsequent workers reconstitute from the brain. The brain bucket then **stores
+those tokens** — guard its keys + connector (that's the fleet's trust boundary).
