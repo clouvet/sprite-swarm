@@ -22,9 +22,21 @@ func (s *Server) serveConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"agentID": s.cfg.AgentID, "url": s.cfg.PublicURL})
 }
 
-// serveUpload accepts a multipart image (POST /api/upload?session=<id>), stores it
-// under uploadsDir/<session>/<id>.<ext>, and returns {id, filename, mediaType, url}.
-// The chat message then references it by filename; the hub base64-encodes it for Claude.
+// allowedDocExt maps accepted non-image file extensions to a media type.
+var allowedDocExt = map[string]string{
+	".txt":  "text/plain",
+	".md":   "text/markdown",
+	".csv":  "text/csv",
+	".doc":  "application/msword",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xls":  "application/vnd.ms-excel",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+// serveUpload accepts a multipart file (POST /api/upload?session=<id>) — an image
+// or one of the allowed document types — stores it under uploadsDir/<session>/, and
+// returns {id, filename, name, mediaType, kind, url}. The chat message references it
+// by filename; the hub feeds it to Claude (image block, inlined text, or a path).
 func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -35,7 +47,7 @@ func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusBadRequest)
 		return
 	}
-	if err := r.ParseMultipartForm(16 << 20); err != nil { // 16MB
+	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB
 		http.Error(w, "bad multipart form", http.StatusBadRequest)
 		return
 	}
@@ -46,23 +58,35 @@ func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(io.LimitReader(file, 16<<20))
+	data, err := io.ReadAll(io.LimitReader(file, 32<<20))
 	if err != nil {
 		http.Error(w, "read failed", http.StatusInternalServerError)
 		return
 	}
+
+	origName := filepath.Base(header.Filename)
+	ext := strings.ToLower(filepath.Ext(origName))
 	media := header.Header.Get("Content-Type")
-	if !strings.HasPrefix(media, "image/") {
-		media = http.DetectContentType(data)
-	}
-	if !strings.HasPrefix(media, "image/") {
-		http.Error(w, "not an image", http.StatusBadRequest)
+
+	var kind, storedExt string
+	switch {
+	case strings.HasPrefix(media, "image/"), strings.HasPrefix(http.DetectContentType(data), "image/"):
+		kind = "image"
+		if !strings.HasPrefix(media, "image/") {
+			media = http.DetectContentType(data)
+		}
+		storedExt = extForMedia(media)
+	case allowedDocExt[ext] != "":
+		kind = "file"
+		media = allowedDocExt[ext]
+		storedExt = ext
+	default:
+		http.Error(w, "unsupported file type: "+ext, http.StatusBadRequest)
 		return
 	}
-	ext := extForMedia(media)
-	id := newUUID()
-	filename := id + ext
 
+	id := newUUID()
+	filename := id + storedExt
 	dir := filepath.Join(s.uploadsDir(), session)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		http.Error(w, "mkdir failed", http.StatusInternalServerError)
@@ -72,8 +96,11 @@ func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write failed", http.StatusInternalServerError)
 		return
 	}
+	if origName == "" || origName == "." {
+		origName = filename
+	}
 	writeJSON(w, map[string]string{
-		"id": id, "filename": filename, "mediaType": media,
+		"id": id, "filename": filename, "name": origName, "mediaType": media, "kind": kind,
 		"url": "/api/uploads/" + session + "/" + filename,
 	})
 }

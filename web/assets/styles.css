@@ -127,6 +127,10 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
 .message.system { align-self: center; font-size: 12px; color: var(--text-muted); font-style: italic; }
 .message-image { max-width: 240px; max-height: 200px; border-radius: 10px; margin-bottom: 6px; display: block; }
+.file-chip { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px; padding: 6px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none; max-width: 100%; }
+.file-chip:hover { border-color: var(--accent); }
+/* the attach preview can show an image thumb or a file chip */
+#image-preview.is-file #image-preview-name { color: var(--text); font-size: 13px; }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* code + syntax highlight */
