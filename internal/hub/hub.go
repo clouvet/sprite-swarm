@@ -568,11 +568,9 @@ func (h *Hub) handleProjectFileChange(filePath string) {
 		h.processMgr.Kill(sessionID)
 		sess.TransitionTo(session.StateTerminalOnly)
 		h.startFileWatchingLocked(sessionID, sess)
-		h.notifyLocked(sessionID, "Terminal session detected — file watching active")
 	} else if !hasHeadless && state != session.StateTerminalOnly {
 		sess.TransitionTo(session.StateTerminalOnly)
 		h.startFileWatchingLocked(sessionID, sess)
-		h.notifyLocked(sessionID, "Terminal session detected — file watching active")
 	}
 }
 
