@@ -100,16 +100,28 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 #main.composing #input { min-height: 120px; max-height: 340px; }
 
 /* ---- messages ---- */
-#messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+#messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
 .message { max-width: 760px; width: 100%; align-self: center; }
-.message.assistant { position: relative; }
-.copy-btn { position: absolute; top: 0; right: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
+/* Assistant messages reserve a little bottom room for the corner copy button. */
+.message.assistant { position: relative; padding-bottom: 22px; }
+.copy-btn { position: absolute; bottom: 0; left: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
 .message.assistant:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { color: var(--text); }
 .copy-btn.copied { color: var(--on); opacity: 1; }
 @media (hover: none) { .copy-btn { opacity: .55; } }
+/* per-code-block copy button (top-right of each <pre>) */
+.code-copy { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.4); border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 6px; display: flex; opacity: 0; transition: opacity .15s, color .15s; }
+.message-content pre:hover .code-copy { opacity: 1; }
+.code-copy:hover { color: var(--text); }
+.code-copy.copied { color: var(--on); opacity: 1; }
+@media (hover: none) { .code-copy { opacity: .6; } }
 .message-content { line-height: 1.55; word-wrap: break-word; }
-.message.user { display: flex; justify-content: flex-end; }
+/* Collapse markdown's leading/trailing block margins so the content box hugs the
+   actual text — otherwise the trailing <p> margin leaves the corner copy button
+   floating well below the text. */
+.message-content > :first-child { margin-top: 0; }
+.message-content > :last-child { margin-bottom: 0; }
+.message.user { display: flex; justify-content: flex-end; margin: 8px 0; }
 .message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
@@ -118,7 +130,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 @keyframes blink { 50% { opacity: 0; } }
 
 /* code + syntax highlight */
-.message-content pre { background: #0d0d0d; border-radius: 8px; padding: 12px; overflow-x: auto; }
+.message-content pre { position: relative; background: #0d0d0d; border-radius: 8px; padding: 12px; overflow-x: auto; }
 .message-content pre code { background: none; padding: 0; font-size: 13px; line-height: 1.4; }
 .message-content code { font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 14px; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
 

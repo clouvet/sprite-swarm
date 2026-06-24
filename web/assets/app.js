@@ -417,13 +417,27 @@
   // Copy button shown on each assistant message; copies the raw text (el._raw).
   const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
   const copyButton = `<button class="copy-btn" title="Copy" aria-label="Copy">${COPY_SVG}</button>`;
+  // Give each code block its own copy button (top-right of the <pre>).
+  function decorateCodeBlocks(contentEl) {
+    if (!contentEl) return;
+    contentEl.querySelectorAll('pre').forEach(pre => {
+      if (pre.querySelector(':scope > .code-copy')) return;
+      const btn = document.createElement('button');
+      btn.className = 'code-copy';
+      btn.title = 'Copy code';
+      btn.innerHTML = COPY_SVG;
+      pre.appendChild(btn);
+    });
+  }
   function addStoredAssistant(text) {
     const el = document.createElement('div');
     el.className = 'message assistant';
     el.innerHTML = `<div class="message-content">${renderMarkdown(text)}</div>${copyButton}`;
     el._raw = text;
     messagesEl.appendChild(el);
-    highlightWithin(el.querySelector('.message-content'));
+    const content = el.querySelector('.message-content');
+    highlightWithin(content);
+    decorateCodeBlocks(content);
   }
   function startAssistant() {
     if (currentAssistantEl) return;
@@ -448,6 +462,7 @@
       const content = currentAssistantEl.querySelector('.message-content');
       content.classList.remove('streaming');
       highlightWithin(content);
+      decorateCodeBlocks(content);
       currentAssistantEl = null; assistantText = '';
     }
   }
@@ -790,7 +805,7 @@
     }
   });
 
-  // Copy an assistant message's raw text (delegated; works on hover-click + touch).
+  // Copy helpers (delegated; work on hover-click + touch).
   function fallbackCopy(text, done) {
     const ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -798,15 +813,25 @@
     try { document.execCommand('copy'); done(); } catch (e) {}
     document.body.removeChild(ta);
   }
-  messagesEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('.copy-btn');
-    if (!btn) return;
-    const msg = btn.closest('.message');
-    if (!msg || !msg._raw) return;
+  function copyText(text, btn) {
     const done = () => { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1200); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(msg._raw).then(done).catch(() => fallbackCopy(msg._raw, done));
-    } else { fallbackCopy(msg._raw, done); }
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else { fallbackCopy(text, done); }
+  }
+  messagesEl.addEventListener('click', (e) => {
+    const codeBtn = e.target.closest('.code-copy');
+    if (codeBtn) {
+      const pre = codeBtn.closest('pre');
+      const code = pre && pre.querySelector('code');
+      copyText(code ? code.textContent : (pre ? pre.textContent : ''), codeBtn);
+      return;
+    }
+    const btn = e.target.closest('.copy-btn');
+    if (btn) {
+      const msg = btn.closest('.message');
+      if (msg && msg._raw) copyText(msg._raw, btn);
+    }
   });
 
   // Tapping anywhere outside the composer dismisses the mobile keyboard.
