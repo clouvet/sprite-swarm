@@ -162,6 +162,7 @@
     currentAssistantEl = null;
     assistantText = '';
     clearPendingImage();
+    restoreDraft();
     renderSessions();
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
@@ -519,6 +520,7 @@
     }
     ws.send(JSON.stringify(payload));
     inputEl.value = ''; autoGrow();
+    clearDraft();
     clearPendingImage();
     setGenerating(true);
   }
@@ -581,9 +583,34 @@
   });
   [attachBtn, micBtn, sendBtn, stopBtn].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
 
-  // ---- sidebar (mobile) ----
+  // ---- sidebar ----
+  const appEl = $('app');
   function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); }
   function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+  const mqMobile = window.matchMedia('(max-width: 768px)');
+  // The ☰ button: on mobile it opens the slide-in sidebar; on desktop it
+  // shows/hides the persistent sidebar (preference remembered across refresh).
+  function toggleSidebar() {
+    if (mqMobile.matches) {
+      sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+    } else {
+      const collapsed = appEl.classList.toggle('sidebar-collapsed');
+      try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch (e) {}
+    }
+  }
+
+  // ---- input draft persistence (don't lose typed text on refresh) ----
+  function draftKey() { return currentSession ? 'draft:' + currentSession.id : null; }
+  function saveDraft() {
+    const k = draftKey(); if (!k) return;
+    try { inputEl.value ? localStorage.setItem(k, inputEl.value) : localStorage.removeItem(k); } catch (e) {}
+  }
+  function restoreDraft() {
+    const k = draftKey();
+    try { inputEl.value = (k && localStorage.getItem(k)) || ''; } catch (e) { inputEl.value = ''; }
+    autoGrow();
+  }
+  function clearDraft() { const k = draftKey(); if (k) { try { localStorage.removeItem(k); } catch (e) {} } }
 
   // sidebar swipe-to-close (item #9)
   let sbStartX = 0, sbSwiping = false;
@@ -645,7 +672,7 @@
   $('new-chat-btn').addEventListener('click', createSession);
   $('start-chat-btn').addEventListener('click', createSession);
   { const sb = $('spawn-btn'); if (sb) sb.addEventListener('click', spawnWorker); }
-  $('menu-btn').addEventListener('click', openSidebar);
+  $('menu-btn').addEventListener('click', toggleSidebar);
   overlay.addEventListener('click', closeSidebar);
   sendBtn.addEventListener('click', send);
   stopBtn.addEventListener('click', interrupt);
@@ -658,7 +685,7 @@
     fileInput.value = '';
   });
   $('remove-image').addEventListener('click', clearPendingImage);
-  inputEl.addEventListener('input', autoGrow);
+  inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
@@ -667,6 +694,7 @@
 
   // ---- boot ----
   async function boot() {
+    try { if (localStorage.getItem('sidebarCollapsed') === '1') appEl.classList.add('sidebar-collapsed'); } catch (e) {}
     setupVoice();
     loadConfig();
     showBaselineTitle();
