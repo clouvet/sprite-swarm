@@ -72,7 +72,7 @@
   let assistantText = '';
   let currentToolName = null;
   let currentToolInput = '';
-  let pendingImage = null;
+  let pendingAttachment = null;
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -125,7 +125,7 @@
     currentAssistantEl = null; assistantText = ''; assistantTurns = 0;
     messagesEl.innerHTML = '';
     inputEl.value = ''; autoGrow();
-    clearPendingImage();
+    clearAttachment();
     showBaselineTitle();
     renderSessions();
     updateComposing();
@@ -206,7 +206,7 @@
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
-    clearPendingImage();
+    clearAttachment();
     restoreDraft();
     assistantTurns = 0;
     renderSessions();
@@ -339,7 +339,7 @@
         messagesEl.innerHTML = '';
         currentAssistantEl = null; assistantText = '';
         (msg.messages || []).forEach(m => {
-          if (m.role === 'user') addUser(m.content, m.images);
+          if (m.role === 'user') addUser(m.content, { images: m.images });
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
@@ -350,8 +350,14 @@
         break;
       case 'user_message':
         if (msg.message) {
-          const im = msg.message.image;
-          addUser(msg.message.content, im && im.filename ? [uploadUrl(im.filename)] : null);
+          const a = msg.message.attachment;
+          let opts = null;
+          if (a && a.file) {
+            opts = (a.type || '').startsWith('image/')
+              ? { images: [uploadUrl(a.file)] }
+              : { file: { name: a.name || a.file, url: uploadUrl(a.file) } };
+          }
+          addUser(msg.message.content, opts);
           showThinking();
         }
         break;
@@ -395,15 +401,19 @@
   function uploadUrl(filename) {
     return currentSession ? '/api/uploads/' + currentSession.id + '/' + encodeURIComponent(filename) : '';
   }
-  // addUser renders the user turn. imageSrcs is an array of ready-to-use <img src>
-  // values: upload URLs for live turns, data URLs when replayed from history.
-  function addUser(text, imageSrcs) {
+  // addUser renders the user turn. opts: { images: [<img src>...], file: {name,url} }.
+  // images use upload URLs live / data URLs in history; file renders a chip.
+  function addUser(text, opts) {
+    opts = opts || {};
     removeThinking();
-    const imgs = (imageSrcs || []).filter(Boolean)
+    const imgs = (opts.images || []).filter(Boolean)
       .map(s => `<img class="message-image" src="${s}" alt="attachment">`).join('');
+    const chip = opts.file
+      ? `<a class="file-chip" href="${opts.file.url}" target="_blank" rel="noopener">📎 ${escapeHtml(opts.file.name)}</a>`
+      : '';
     const el = document.createElement('div');
     el.className = 'message user';
-    el.innerHTML = `<div class="message-content">${imgs}${escapeHtml(text || '')}</div>`;
+    el.innerHTML = `<div class="message-content">${imgs}${chip}${escapeHtml(text || '')}</div>`;
     messagesEl.appendChild(el);
     updateComposing(); // first message → dock the composer to the bottom
     scrollDown();
@@ -542,11 +552,11 @@
 
   function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-  // ---- image attachment ----
-  function clearPendingImage() {
-    if (pendingImage && pendingImage.localUrl) URL.revokeObjectURL(pendingImage.localUrl);
-    pendingImage = null;
-    imagePreview.classList.remove('has-image');
+  // ---- attachments (images + documents) ----
+  function clearAttachment() {
+    if (pendingAttachment && pendingAttachment.localUrl) URL.revokeObjectURL(pendingAttachment.localUrl);
+    pendingAttachment = null;
+    imagePreview.classList.remove('has-image', 'is-file');
     imagePreviewImg.src = '';
     imagePreviewName.textContent = '';
   }
@@ -570,19 +580,27 @@
       img.src = url;
     });
   }
-  async function uploadImage(file) {
+  async function uploadAttachment(file) {
     if (!currentSession && !(await ensureSession())) { addSystem('Could not start a chat.'); return; }
     try {
-      const resized = await resizeImage(file);
+      const isImage = (file.type || '').startsWith('image/');
+      const toSend = isImage ? await resizeImage(file) : file;
       const form = new FormData();
-      form.append('file', resized);
+      form.append('file', toSend, file.name);
       const res = await fetch('/api/upload?session=' + currentSession.id, { method: 'POST', body: form });
       if (!res.ok) { addSystem('Upload failed: ' + (await res.text())); return; }
       const data = await res.json();
-      const localUrl = URL.createObjectURL(file);
-      pendingImage = { id: data.id, filename: data.filename, mediaType: data.mediaType, localUrl };
-      imagePreviewImg.src = localUrl;
-      imagePreviewName.textContent = data.filename;
+      const img = data.kind === 'image';
+      const localUrl = img ? URL.createObjectURL(file) : null;
+      pendingAttachment = { id: data.id, filename: data.filename, name: data.name, mediaType: data.mediaType, isImage: img, localUrl };
+      if (img) {
+        imagePreviewImg.src = localUrl; imagePreviewImg.style.display = '';
+        imagePreviewName.textContent = data.name || data.filename;
+      } else {
+        imagePreviewImg.style.display = 'none';
+        imagePreviewName.textContent = '📎 ' + (data.name || data.filename);
+        imagePreview.classList.add('is-file');
+      }
       imagePreview.classList.add('has-image');
     } catch (e) { addSystem('Upload error: ' + e.message); }
   }
@@ -590,11 +608,11 @@
   // ---- send ----
   async function send() {
     const text = inputEl.value.trim();
-    const hasImage = !!pendingImage;
-    if (!text && !hasImage) return;
+    const att = pendingAttachment;
+    if (!text && !att) return;
     if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
 
-    // Composing a brand-new chat: create + connect the session first (text/image
+    // Composing a brand-new chat: create + connect the session first (text/attachment
     // are captured above, so ensureSession won't clobber them).
     if (!currentSession) {
       if (!(await ensureSession())) { addSystem('Could not start a chat.'); return; }
@@ -605,19 +623,27 @@
     }
 
     maybeAutoTitle(text);
-    addUser(text, hasImage ? [uploadUrl(pendingImage.filename)] : null);
+    addUser(text, attachmentRender(att));
     showThinking();
     const payload = { type: 'user', content: text };
-    if (hasImage) {
-      payload.imageId = pendingImage.id;
-      payload.imageFilename = pendingImage.filename;
-      payload.imageMediaType = pendingImage.mediaType;
+    if (att) {
+      payload.attachmentId = att.id;
+      payload.attachmentFile = att.filename;
+      payload.attachmentName = att.name;
+      payload.attachmentType = att.mediaType;
     }
     ws.send(JSON.stringify(payload));
     inputEl.value = ''; autoGrow();
     clearDraft();
-    clearPendingImage();
+    clearAttachment();
     setGenerating(true);
+  }
+  // attachmentRender turns an attachment into addUser opts (image vs file chip).
+  function attachmentRender(att) {
+    if (!att) return null;
+    return att.isImage
+      ? { images: [uploadUrl(att.filename)] }
+      : { file: { name: att.name || att.filename, url: uploadUrl(att.filename) } };
   }
   function interrupt() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'interrupt' }));
@@ -851,10 +877,10 @@
     setTimeout(() => { isOpeningFilePicker = false; }, 400);
   });
   fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) uploadImage(fileInput.files[0]);
+    if (fileInput.files[0]) uploadAttachment(fileInput.files[0]);
     fileInput.value = '';
   });
-  $('remove-image').addEventListener('click', clearPendingImage);
+  $('remove-image').addEventListener('click', clearAttachment);
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
