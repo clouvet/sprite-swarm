@@ -76,6 +76,17 @@ func setupFlyAuth(token string) {
 	}
 }
 
+// hasClaudeOAuth reports whether this sprite has a Claude OAuth login, so we don't
+// override it with the Anthropic connector.
+func hasClaudeOAuth() bool {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sprite"
+	}
+	_, err := os.Stat(filepath.Join(home, ".claude", ".credentials.json"))
+	return err == nil
+}
+
 // fleetMemoryDir is the local markdown fleet-memory directory (synced to the brain).
 func fleetMemoryDir() string {
 	home := os.Getenv("HOME")
@@ -137,6 +148,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 }
 
 func main() {
+	// `sprite-agent init` stands up a brand-new fleet (prime the brain + ignite home)
+	// rather than running the agent. See launch-fleet.sh.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		runInit(os.Args[2:])
+		return
+	}
+
 	cfg := config.FromEnv()
 	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
 		cfg.AgentID, cfg.Addr, cfg.WorkDir, cfg.ClaudeProjectsDir)
@@ -164,6 +182,19 @@ func main() {
 				cfg.Brain.GatewayURL = c.GatewayBase
 				log.Printf("brain: using s3 connector (token-free): %s", c.GatewayBase)
 			}
+		}
+		dcancel()
+	}
+
+	// Claude auth: a freshly-ignited home (and any worker) has no OAuth credential,
+	// so route Claude through the Anthropic connector by self-discovering it — the
+	// same identity-authed path as the brain. Skipped when ANTHROPIC_BASE_URL is
+	// already set or this sprite has an OAuth login (don't override it).
+	if os.Getenv("ANTHROPIC_BASE_URL") == "" && !hasClaudeOAuth() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if base := gateway.AnthropicBaseURL(dctx); base != "" {
+			os.Setenv("ANTHROPIC_BASE_URL", base)
+			log.Printf("claude: using anthropic connector (token-free): %s", base)
 		}
 		dcancel()
 	}

@@ -11,6 +11,7 @@ package spawn
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/clouvet/sprite-agent/internal/config"
 )
@@ -49,6 +50,35 @@ func New(cfg config.Config) Spawner {
 		return notConfigured{}
 	}
 	return newAPISpawner(cfg)
+}
+
+// LaunchHome stands up a brand-new fleet's home sprite (used by `sprite-agent
+// init`): create the sprite, stage the given linux/amd64 artifact in the brain,
+// and provision the sprite-agent service to run as home. cfg carries the Sprites
+// token + the brain pointer (direct S3 keys when igniting from off-account). The
+// home self-discovers the Anthropic + s3 connectors at runtime. Returns the
+// created sprite (name + URL).
+func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name string) (Result, error) {
+	sp, ok := newAPISpawner(cfg).(*apiSpawner)
+	if !ok {
+		return Result{}, errors.New("spawn: a valid Sprites API token is required to launch a fleet")
+	}
+	res, err := sp.createSprite(ctx, sp.buildCreateRequest(Request{Name: name, Role: "home"}))
+	if err != nil {
+		return Result{}, err
+	}
+	url, err := stageFile(ctx, cfg.Brain, artifactPath, artifactKey, artifactTTL)
+	if err != nil {
+		return res, fmt.Errorf("spawn: stage artifact: %w", err)
+	}
+	env := map[string]string{"SPRITE_AGENT_ROLE": "home"}
+	if res.URL != "" {
+		env["SPRITE_AGENT_URL"] = res.URL
+	}
+	if err := sp.provisionAgent(ctx, res.Name, env, url); err != nil {
+		return res, fmt.Errorf("spawn: provision home: %w", err)
+	}
+	return res, nil
 }
 
 // BootstrapEnv is the environment a spawned sprite is handed so it can rehydrate
