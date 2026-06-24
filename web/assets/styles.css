@@ -25,14 +25,15 @@ body {
   background: var(--bg); color: var(--text); font-size: 16px; line-height: 1.5;
   -webkit-font-smoothing: antialiased; min-height: 100dvh;
 }
-#app { display: flex; height: 100vh; height: 100dvh; }
+#app { position: relative; height: 100vh; height: 100dvh; overflow: hidden; }
 
-/* ---- sidebar ---- */
+/* ---- sidebar: a stationary panel underneath; the main page slides over it ---- */
 #sidebar {
-  width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; flex-shrink: 0; padding-top: var(--safe-top);
+  position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+  width: var(--sidebar-width); background: var(--bg-secondary);
+  display: flex; flex-direction: column; padding-top: var(--safe-top);
 }
-#sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+#sidebar-header { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); }
 #sidebar-header h2 { margin: 0; font-size: 16px; }
 #new-chat-btn { background: var(--accent); color: #fff; border: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; cursor: pointer; }
 #sessions-list { flex: 1; overflow-y: auto; padding: 8px; }
@@ -70,14 +71,20 @@ body {
 #overlay.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; }
 
 /* ---- main ---- */
-#main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-top); }
-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+/* Main floats above the sidebar (offset by the sidebar width) with a soft shadow
+   off its left edge, so the sidebar reads as set back / coming from under. Hiding
+   the sidebar slides the main page LEFT over it (animated margin-left). */
+#main { height: 100%; margin-left: var(--sidebar-width); display: flex; flex-direction: column; min-width: 0;
+  position: relative; z-index: 1; background: var(--bg); box-shadow: -3px 0 8px rgba(0,0,0,0.2);
+  padding-top: var(--safe-top); transition: margin-left .25s ease; }
+header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
 header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sprite-emoji { font-size: 14px; }
-#menu-btn { display: block; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; }
+#menu-btn { display: block; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
 /* Desktop: ☰ shows/hides the persistent sidebar. */
 @media (min-width: 769px) {
-  #app.sidebar-collapsed #sidebar { display: none; }
+  /* Hide: the main page slides left over the stationary sidebar (covers it). */
+  #app.sidebar-collapsed #main { margin-left: 0; }
 }
 
 /* connection status — 👾 tinted via filter, like sprite-mobile */
@@ -206,6 +213,8 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 
 /* ---- mobile ---- */
 @media (max-width: 768px) {
+  /* Mobile keeps the slide-in overlay: sidebar above main, main full-width. */
   #sidebar { position: fixed; left: 0; top: 0; bottom: 0; transform: translateX(-100%); transition: transform .3s ease; z-index: 100; }
   #sidebar.open { transform: translateX(0); }
+  #main { margin-left: 0; }
 }
