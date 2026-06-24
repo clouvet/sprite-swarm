@@ -20,6 +20,7 @@ import (
 	"github.com/clouvet/sprite-agent/internal/gateway"
 	"github.com/clouvet/sprite-agent/internal/hub"
 	"github.com/clouvet/sprite-agent/internal/keepalive"
+	"github.com/clouvet/sprite-agent/internal/memsync"
 	"github.com/clouvet/sprite-agent/internal/reaper"
 	"github.com/clouvet/sprite-agent/internal/server"
 	"github.com/clouvet/sprite-agent/internal/spawn"
@@ -43,6 +44,15 @@ func setupGitHubAuth(token string) {
 	os.Setenv("GIT_CONFIG_COUNT", "1")
 	os.Setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
 	os.Setenv("GIT_CONFIG_VALUE_0", helper)
+}
+
+// fleetMemoryDir is the local markdown fleet-memory directory (synced to the brain).
+func fleetMemoryDir() string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sprite"
+	}
+	return filepath.Join(home, ".sprite-agent", "memory")
 }
 
 // taskSnippet makes a short single-line label from a dispatched task.
@@ -81,8 +91,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 			"do the work here and note when a worker sprite would have been the better tool. ")
 	}
 	b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
-		"and open PRs directly. Shared fleet memory is available — record durable learnings (what you " +
-		"did, what you learned about a repo) via POST /api/memory so peers and future sprites inherit them.")
+		"and open PRs directly. ")
+	fmt.Fprintf(b, "Shared fleet memory is a local folder, %s — treat it exactly like your own memory. "+
+		"At the START of a task, read it (start with MEMORY.md) so you inherit what other sprites have "+
+		"learned. As you work, and especially before you finish, record durable learnings (what a repo is "+
+		"like, decisions, gotchas, how a feature was built) as concise markdown files under %s/ — it syncs "+
+		"to the whole fleet automatically, so a future worker starts already knowing. Make writing memory "+
+		"as second-nature as committing code.", fleetMemoryDir(), filepath.Join(fleetMemoryDir(), cfg.AgentID))
 	return b.String()
 }
 
@@ -205,6 +220,11 @@ func main() {
 		}
 		cancel()
 		fleetSvc.StartHeartbeat(context.Background())
+
+		// Frictionless shared memory: sync a local markdown dir with the brain so
+		// recording a learning is a plain file write and every sprite boots knowing
+		// what the fleet has learned (memsync pulls on boot, pushes on local change).
+		go memsync.Run(context.Background(), fleetSvc.Brain(), fleetMemoryDir(), cfg.AgentID)
 
 		// Dispatch (P2.1): poll this agent's task inbox and inject each task into a
 		// local session so it materializes in the transcript (seam #2). Label the
