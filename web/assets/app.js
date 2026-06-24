@@ -106,6 +106,7 @@
   // messages the composer docks to the bottom. Driven purely by message presence.
   function setComposing(on) {
     mainEl.classList.toggle('composing', on);
+    inputEl.placeholder = on ? 'How can I help you?' : 'Write a message';
   }
   function updateComposing() {
     setComposing(!messagesEl.querySelector('.message'));
