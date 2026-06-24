@@ -91,6 +91,22 @@ func (s *metaStore) Create(name string) *SessionMeta {
 	return m
 }
 
+// Rename sets a session's display name (creating the entry if missing).
+func (s *metaStore) Rename(id, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.byID[id]
+	if m == nil {
+		now := time.Now().UnixMilli()
+		m = &SessionMeta{ID: id, CreatedAt: now, LastMessageAt: now}
+		s.byID[id] = m
+	}
+	if name != "" {
+		m.Name = name
+	}
+	s.saveLocked()
+}
+
 // Delete removes a session's metadata (transcript is left on disk).
 func (s *metaStore) Delete(id string) {
 	s.mu.Lock()
