@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -164,6 +165,7 @@ func main() {
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
+		UploadsDir:     filepath.Join(cfg.WorkDir, ".sprite-agent", "uploads"),
 		DangerousSkip:  cfg.DangerousSkip,
 		PermissionMode: permissionMode,
 		SettingsPath:   cfg.SettingsPath,

@@ -7,6 +7,7 @@ package hub
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"os"
@@ -27,6 +28,7 @@ import (
 type Config struct {
 	WorkDir        string
 	ProjectsDir    string
+	UploadsDir     string
 	DangerousSkip  bool
 	PermissionMode string
 	SettingsPath   string
@@ -56,6 +58,7 @@ type Hub struct {
 type providers struct {
 	workDir        string
 	projectsDir    string
+	uploadsDir     string
 	dangerousSkip  bool
 	permissionMode string
 	settingsPath   string
@@ -76,6 +79,7 @@ func NewHub(cfg Config) *Hub {
 		cfg: providers{
 			workDir:        cfg.WorkDir,
 			projectsDir:    cfg.ProjectsDir,
+			uploadsDir:     cfg.UploadsDir,
 			dangerousSkip:  cfg.DangerousSkip,
 			permissionMode: cfg.PermissionMode,
 			settingsPath:   cfg.SettingsPath,
@@ -239,15 +243,19 @@ func (h *Hub) handleClientMessage(client *Client, msg *ClientMessage) {
 }
 
 func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
-	// Echo to other clients so co-present viewers see the user's turn.
-	userMsg := map[string]interface{}{
-		"type": "user_message",
-		"message": map[string]interface{}{
-			"role":    "user",
-			"content": msg.Content,
-		},
+	// Build the content sent to Claude: a content-block array when an image is
+	// attached (image + text), otherwise the plain text string.
+	content := h.buildContent(client.sessionID, msg)
+
+	// Echo to other clients so co-present viewers see the user's turn (including
+	// the image reference, so they can render the thumbnail).
+	echo := map[string]interface{}{"role": "user", "content": msg.Content}
+	if msg.ImageFilename != "" {
+		echo["image"] = map[string]string{
+			"id": msg.ImageID, "filename": msg.ImageFilename, "mediaType": msg.ImageMediaType,
+		}
 	}
-	data, _ := json.Marshal(userMsg)
+	data, _ := json.Marshal(map[string]interface{}{"type": "user_message", "message": echo})
 	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: data, Exclude: client}
 
 	sess := h.GetSession(client.sessionID)
@@ -257,12 +265,12 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	if err := h.processMgr.SendMessage(client.sessionID, msg.Content); err != nil {
+	if err := h.processMgr.SendMessage(client.sessionID, content); err != nil {
 		log.Printf("[%s] send failed: %v; respawn+retry", client.sessionID, err)
 		if sess != nil {
 			h.spawnClaudeForSession(client.sessionID, sess)
 			time.Sleep(500 * time.Millisecond)
-			if err := h.processMgr.SendMessage(client.sessionID, msg.Content); err != nil {
+			if err := h.processMgr.SendMessage(client.sessionID, content); err != nil {
 				h.sendJSON(client, map[string]interface{}{"type": "error", "message": "Failed to send message to Claude: " + err.Error()})
 				return
 			}
@@ -271,6 +279,38 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
 	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: processingMsg}
+}
+
+// buildContent returns what to feed Claude as the user turn. With no image it's
+// the plain text string. With an image, it's an Anthropic content-block array —
+// the uploaded bytes (read from uploadsDir/<session>/<file>) base64-encoded into an
+// image block, plus a text block. Falls back to text if the file can't be read.
+func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
+	if msg.ImageFilename == "" || h.cfg.uploadsDir == "" {
+		return msg.Content
+	}
+	path := filepath.Join(h.cfg.uploadsDir, sessionID, filepath.Base(msg.ImageFilename))
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[%s] image read failed (%v); sending text only", sessionID, err)
+		return msg.Content
+	}
+	media := msg.ImageMediaType
+	if media == "" {
+		media = "image/png"
+	}
+	blocks := []map[string]interface{}{{
+		"type": "image",
+		"source": map[string]interface{}{
+			"type":       "base64",
+			"media_type": media,
+			"data":       base64.StdEncoding.EncodeToString(bytes),
+		},
+	}}
+	if msg.Content != "" {
+		blocks = append(blocks, map[string]interface{}{"type": "text", "text": msg.Content})
+	}
+	return blocks
 }
 
 func (h *Hub) handleInterrupt(client *Client) {
