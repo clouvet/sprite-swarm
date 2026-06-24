@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/process"
 	"github.com/clouvet/sprite-agent/internal/session"
 	"github.com/clouvet/sprite-agent/internal/watcher"
@@ -135,11 +136,29 @@ func (h *Hub) Run() {
 	}
 }
 
+// sessionCWD is the per-chat working directory: an isolated subdir under the base
+// workdir so concurrent chats don't clobber each other's files. Shared context
+// flows through the fleet brain, not the filesystem. Everything lives under the
+// base workdir (/home/sprite) so a human who logs into the sprite can inspect it.
+func (h *Hub) sessionCWD(id string) string {
+	return filepath.Join(h.cfg.workDir, "chats", id)
+}
+
+// sessionProjectsDir is where Claude writes this session's transcript (derived
+// from its per-session cwd), used for history replay and the resume decision.
+func (h *Hub) sessionProjectsDir(id string) string {
+	return config.ProjectsDirFor(h.sessionCWD(id))
+}
+
 func (h *Hub) spawnOpts(sessionID string) process.Options {
+	cwd := h.sessionCWD(sessionID)
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		log.Printf("[%s] mkdir chat workdir failed: %v", sessionID, err)
+	}
 	return process.Options{
 		SessionID:      sessionID,
-		CWD:            h.cfg.workDir,
-		ProjectsDir:    h.cfg.projectsDir,
+		CWD:            cwd,
+		ProjectsDir:    h.sessionProjectsDir(sessionID),
 		DangerousSkip:  h.cfg.dangerousSkip,
 		PermissionMode: h.cfg.permissionMode,
 		SettingsPath:   h.cfg.settingsPath,
@@ -160,10 +179,10 @@ func (h *Hub) registerClient(client *Client) {
 
 	sess := h.sessions[client.sessionID]
 	if sess == nil {
-		sess = session.NewSession(client.sessionID, h.cfg.workDir)
+		sess = session.NewSession(client.sessionID, h.sessionCWD(client.sessionID))
 		// Deterministic ids: the transcript is <id>.jsonl. If it already exists
 		// this is a resume (restart recovery / co-presence).
-		if _, err := os.Stat(watcher.TranscriptPath(h.cfg.projectsDir, client.sessionID)); err == nil {
+		if _, err := os.Stat(watcher.TranscriptPath(h.sessionProjectsDir(client.sessionID), client.sessionID)); err == nil {
 			log.Printf("session %s: found existing transcript, will resume", client.sessionID)
 		} else {
 			log.Printf("session %s: new", client.sessionID)
@@ -350,7 +369,7 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 	h.mu.Lock()
 	sess := h.sessions[sessionID]
 	if sess == nil {
-		sess = session.NewSession(sessionID, h.cfg.workDir)
+		sess = session.NewSession(sessionID, h.sessionCWD(sessionID))
 		h.sessions[sessionID] = sess
 	}
 	h.mu.Unlock()
@@ -561,7 +580,7 @@ func (h *Hub) startFileWatchingLocked(sessionID string, sess *session.Session) {
 	if h.watchers[sessionID] != nil || sess.ClaudeUUID == "" {
 		return
 	}
-	w, err := watcher.NewSessionWatcher(h.cfg.projectsDir, sessionID, sess.ClaudeUUID)
+	w, err := watcher.NewSessionWatcher(h.sessionProjectsDir(sessionID), sessionID, sess.ClaudeUUID)
 	if err != nil {
 		log.Printf("[%s] failed to create watcher: %v", sessionID, err)
 		return
@@ -618,7 +637,7 @@ func (h *Hub) notifyLocked(sessionID, message string) {
 
 // sendHistoryToClient replays the transcript to a newly connected client.
 func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGenerating bool) {
-	filePath := watcher.TranscriptPath(h.cfg.projectsDir, claudeUUID)
+	filePath := watcher.TranscriptPath(h.sessionProjectsDir(client.sessionID), claudeUUID)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return
