@@ -84,14 +84,14 @@
       if (!res.ok) return;
       const c = await res.json();
       if (c.agentID) {
-        spriteName = 'sprite agent #' + c.agentID;
+        spriteName = c.agentID;
         document.title = spriteName;
         if (!currentSession) showBaselineTitle();
       }
     } catch (e) { /* keep default */ }
   }
   function showBaselineTitle() {
-    chatTitle.textContent = spriteName;
+    chatTitle.innerHTML = '👾 ' + escapeHtml(spriteName);
     const h2 = emptyState.querySelector('h2');
     if (h2) h2.innerHTML = '👾 ' + escapeHtml(spriteName);
   }
