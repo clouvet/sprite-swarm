@@ -80,6 +80,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
+	mux.HandleFunc("/api/config", s.serveConfig)
+	mux.HandleFunc("/api/upload", s.serveUpload)
+	mux.HandleFunc("/api/uploads/", s.serveUploadFile)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
