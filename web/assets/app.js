@@ -786,6 +786,11 @@
     } else { fallbackCopy(msg._raw, done); }
   });
 
+  // Tapping anywhere outside the composer dismisses the mobile keyboard.
+  $('stage').addEventListener('click', (e) => {
+    if (!e.target.closest('#input-area')) inputEl.blur();
+  });
+
   // ---- wire up ----
   $('new-chat-btn').addEventListener('click', newChat);
   { const sb = $('spawn-btn'); if (sb) sb.addEventListener('click', spawnWorker); }
