@@ -92,12 +92,17 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 	}
 	b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
 		"and open PRs directly. ")
+	mem := fleetMemoryDir()
+	own := filepath.Join(mem, cfg.AgentID)
 	fmt.Fprintf(b, "Shared fleet memory is a local folder, %s — treat it exactly like your own memory. "+
-		"At the START of a task, read it (start with MEMORY.md) so you inherit what other sprites have "+
-		"learned. As you work, and especially before you finish, record durable learnings (what a repo is "+
-		"like, decisions, gotchas, how a feature was built) as concise markdown files under %s/ — it syncs "+
-		"to the whole fleet automatically, so a future worker starts already knowing. Make writing memory "+
-		"as second-nature as committing code.", fleetMemoryDir(), filepath.Join(fleetMemoryDir(), cfg.AgentID))
+		"At the START of a task read %s/MEMORY.md (entries grouped by topic across the whole fleet) so you "+
+		"inherit what's known; when working on a repo, read everything under the 'repos' group for it. "+
+		"Record durable learnings as you go and before you finish — write concise markdown under %s/ using "+
+		"this light structure: repos/<repo-name>.md (what a repo is like: architecture, conventions, gotchas, "+
+		"how a feature was built), decisions/<slug>.md (a choice + why), how-to/<slug>.md (a reusable "+
+		"procedure); anything else can be a top-level .md. It syncs fleet-wide automatically, so the next "+
+		"worker starts already knowing. Make writing memory as second-nature as committing code.",
+		mem, mem, own)
 	return b.String()
 }
 
