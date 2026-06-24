@@ -173,6 +173,10 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if strings.HasSuffix(rest, "/retitle") {
+		s.retitle(w, r, strings.TrimSuffix(rest, "/retitle"))
+		return
+	}
 	id := rest
 	switch r.Method {
 	case http.MethodDelete:
