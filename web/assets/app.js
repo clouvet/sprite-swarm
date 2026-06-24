@@ -85,6 +85,7 @@
       if (c.agentID) {
         spriteName = c.agentID;
         document.title = spriteName;
+        try { localStorage.setItem('spriteName', spriteName); } catch (e) {}
         if (!currentSession) showBaselineTitle();
       }
     } catch (e) { /* keep default */ }
@@ -105,7 +106,7 @@
   // Composing state: a new chat shows a centered, large composer; once it has
   // messages the composer docks to the bottom. Driven purely by message presence.
   function setComposing(on) {
-    mainEl.classList.toggle('composing', on);
+    document.documentElement.setAttribute('data-view', on ? 'new' : 'chat');
     inputEl.placeholder = on ? 'How can I help you?' : 'Write a message';
   }
   function updateComposing() {
@@ -701,16 +702,22 @@
 
   // ---- sidebar ----
   const appEl = $('app');
-  function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); }
-  function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+  // Mobile: the sidebar sits underneath; opening slides the main page right to
+  // reveal it (#app.sidebar-open). Closing happens via ☰, selecting a chat, or swipe.
+  function openSidebar() { appEl.classList.add('sidebar-open'); }
+  function closeSidebar() { appEl.classList.remove('sidebar-open'); }
   const mqMobile = window.matchMedia('(max-width: 768px)');
-  // The ☰ button: on mobile it opens the slide-in sidebar; on desktop it
-  // shows/hides the persistent sidebar (preference remembered across refresh).
+  // The ☰ button: on mobile it reveals the under-sidebar; on desktop it shows/hides
+  // the persistent sidebar (state on <html data-sidebar>, remembered across refresh
+  // and applied pre-paint by a <head> script so there's no flash).
   function toggleSidebar() {
     if (mqMobile.matches) {
-      sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+      appEl.classList.toggle('sidebar-open');
     } else {
-      const collapsed = appEl.classList.toggle('sidebar-collapsed');
+      const el = document.documentElement;
+      const collapsed = el.getAttribute('data-sidebar') !== 'collapsed';
+      if (collapsed) el.setAttribute('data-sidebar', 'collapsed');
+      else el.removeAttribute('data-sidebar');
       try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch (e) {}
     }
   }
@@ -775,23 +782,16 @@
     if (assistantTurns <= 2 || assistantTurns % 3 === 0) retitle();
   }
 
-  // sidebar swipe-to-close (item #9)
+  // Swipe left on the revealed sidebar to close it (item #9).
   let sbStartX = 0, sbSwiping = false;
   sidebar.addEventListener('touchstart', e => {
-    if (!sidebar.classList.contains('open')) return;
-    sbStartX = e.touches[0].clientX; sbSwiping = true; sidebar.style.transition = 'none';
-  }, { passive: true });
-  sidebar.addEventListener('touchmove', e => {
-    if (!sbSwiping) return;
-    const diff = e.touches[0].clientX - sbStartX;
-    if (diff < 0) { sidebar.style.transform = `translateX(${diff}px)`; overlay.style.opacity = Math.max(0, 1 + diff / 280); }
+    if (!appEl.classList.contains('sidebar-open')) return;
+    sbStartX = e.touches[0].clientX; sbSwiping = true;
   }, { passive: true });
   sidebar.addEventListener('touchend', e => {
     if (!sbSwiping) return;
     sbSwiping = false;
-    const diff = e.changedTouches[0].clientX - sbStartX;
-    sidebar.style.transition = ''; sidebar.style.transform = ''; overlay.style.opacity = '';
-    if (diff < -80) closeSidebar();
+    if (e.changedTouches[0].clientX - sbStartX < -60) closeSidebar();
   });
 
   // pull-to-refresh (item #8)
@@ -890,7 +890,7 @@
 
   // ---- boot ----
   async function boot() {
-    try { if (localStorage.getItem('sidebarCollapsed') === '1') appEl.classList.add('sidebar-collapsed'); } catch (e) {}
+    // (desktop sidebar-collapsed state is applied pre-paint by the <head> script)
     setupVoice();
     loadConfig();
     showBaselineTitle();
