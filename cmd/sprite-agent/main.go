@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,35 @@ func setupGitHubAuth(token string) {
 	os.Setenv("GIT_CONFIG_COUNT", "1")
 	os.Setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
 	os.Setenv("GIT_CONFIG_VALUE_0", helper)
+}
+
+// setupFlyAuth wires flyctl to the brain-sourced Fly token and ensures the CLI is
+// available, so any sprite can run `fly`/`flyctl` non-interactively. The token lives
+// only in process env (FLY_API_TOKEN), inherited by the claude subprocess. flyctl is
+// installed to ~/.fly/bin in the background if missing (workers boot from the bare
+// artifact); ~/.fly/bin is put on PATH immediately so it's usable once present.
+func setupFlyAuth(token string) {
+	os.Setenv("FLY_API_TOKEN", token)
+	os.Setenv("FLY_ACCESS_TOKEN", token)
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sprite"
+	}
+	flyBin := filepath.Join(home, ".fly", "bin")
+	if p := os.Getenv("PATH"); !strings.Contains(p, flyBin) {
+		os.Setenv("PATH", flyBin+":"+p)
+	}
+	if _, err := os.Stat(filepath.Join(flyBin, "flyctl")); err != nil {
+		go func() {
+			cmd := exec.Command("sh", "-c", "curl -fsSL https://fly.io/install.sh | sh")
+			cmd.Env = os.Environ()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				log.Printf("fly: install failed: %v (%s)", err, strings.TrimSpace(string(out)))
+			} else {
+				log.Printf("fly: flyctl installed to %s", flyBin)
+			}
+		}()
+	}
 }
 
 // fleetMemoryDir is the local markdown fleet-memory directory (synced to the brain).
@@ -166,6 +196,10 @@ func main() {
 		if gh := fleetSvc.GetSecret(sctx, fleet.SecretGitHubToken); gh != "" {
 			setupGitHubAuth(gh) // GH_TOKEN for gh + a git credential helper (no token on disk)
 			log.Printf("secrets: loaded github token from brain (git/gh enabled)")
+		}
+		if fly := fleetSvc.GetSecret(sctx, fleet.SecretFlyToken); fly != "" {
+			setupFlyAuth(fly) // FLY_API_TOKEN + ensure flyctl installed/on PATH
+			log.Printf("secrets: loaded fly token from brain (flyctl enabled)")
 		}
 		scancel()
 	}
