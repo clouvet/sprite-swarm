@@ -25,6 +25,8 @@ import (
 type Fleet interface {
 	Roster(ctx context.Context) (interface{}, error)
 	MarkReapable(ctx context.Context) error
+	AgentPresent(ctx context.Context, id string) (exists, present bool, err error)
+	RemoveAgent(ctx context.Context, id string) error
 	Dispatch(ctx context.Context, target, task string) (interface{}, error)
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -85,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
+	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
@@ -290,6 +293,57 @@ func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveDestroy tears down a worker sprite (destroy VM + remove its brain entry).
+// It honors presence (§2.4): if a human is attached to the target it refuses with
+// 409 and a clear message unless {"force":true} is passed, so we never silently
+// kill a session someone is actively steering. Refuses to destroy self.
+func (s *Server) serveDestroy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+		Force  bool   `json:"force"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" {
+		http.Error(w, "target is required", http.StatusBadRequest)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no teardown capability on this sprite (no sprites API token)", http.StatusNotImplemented)
+		return
+	}
+	if body.Target == s.cfg.AgentID {
+		http.Error(w, "refusing to destroy self ("+body.Target+") — run this from another sprite", http.StatusConflict)
+		return
+	}
+	exists, present, err := s.fleet.AgentPresent(r.Context(), body.Target)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !exists {
+		http.Error(w, "no such agent in the roster: "+body.Target, http.StatusNotFound)
+		return
+	}
+	if present && !body.Force {
+		http.Error(w, "DEFER: a human is attached to "+body.Target+
+			". Re-POST with {\"force\":true} to destroy anyway.", http.StatusConflict)
+		return
+	}
+	if err := s.spawner.Destroy(r.Context(), body.Target); err != nil {
+		http.Error(w, "destroy failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	_ = s.fleet.RemoveAgent(r.Context(), body.Target) // best-effort brain cleanup
+	writeJSON(w, map[string]interface{}{"destroyed": body.Target, "forced": body.Force})
 }
 
 // serveMemory: GET = the always-loaded index; POST = append a memory (P2.2).
