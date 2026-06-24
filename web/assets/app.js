@@ -1,22 +1,41 @@
 // sprite-agent reference web client.
 //
-// Speaks the same WebSocket/REST protocol as sprite-mobile v1 (the protocol the
-// Go hub broadcasts): stream-json events forwarded per-session. Trimmed to the
-// Phase-1 core: session list, token streaming, tool indicators, co-presence.
+// Speaks the WebSocket/REST protocol the Go hub broadcasts: stream-json events
+// forwarded per-session. UI parity with sprite-mobile: rich activity indicator,
+// syntax highlighting, image attach, voice input, pull-to-refresh, swipe-to-close,
+// session restore, dynamic sprite name.
 'use strict';
 
 (() => {
-  // ---- markdown (progressive enhancement) ----
+  // ---- markdown + syntax highlighting (progressive enhancement) ----
+  const hasHljs = () => window.hljs && !window.__noHljs;
+  const hasMarked = () => window.marked && !window.__noMarked;
+  if (hasMarked()) {
+    window.marked.setOptions({
+      breaks: true,
+      highlight: (code, lang) => {
+        if (!hasHljs()) return null;
+        try {
+          if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+          return hljs.highlightAuto(code).value;
+        } catch (e) { return null; }
+      },
+    });
+  }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
     ));
   }
   function renderMarkdown(text) {
-    if (window.marked && !window.__noMarked) {
+    if (hasMarked()) {
       try { return window.marked.parse(text); } catch (e) { /* fall through */ }
     }
     return '<p>' + escapeHtml(text).replace(/\n/g, '<br>') + '</p>';
+  }
+  function highlightWithin(el) {
+    if (!hasHljs() || !el) return;
+    el.querySelectorAll('pre code').forEach(b => { try { hljs.highlightElement(b); } catch (e) {} });
   }
 
   // ---- DOM ----
@@ -25,13 +44,21 @@
   const fleetList = $('fleet-list');
   const messagesEl = $('messages');
   const inputEl = $('input');
+  const inputArea = $('input-area');
   const sendBtn = $('send');
   const stopBtn = $('stop-btn');
+  const attachBtn = $('attach-btn');
+  const micBtn = $('mic-btn');
+  const fileInput = $('file-input');
+  const imagePreview = $('image-preview');
+  const imagePreviewImg = $('image-preview-img');
+  const imagePreviewName = $('image-preview-name');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const emptyState = $('empty-state');
   const sidebar = $('sidebar');
   const overlay = $('overlay');
+  const pullIndicator = $('pull-indicator');
 
   // ---- state ----
   let ws = null;
@@ -45,6 +72,28 @@
   let assistantText = '';
   let currentToolName = null;
   let currentToolInput = '';
+  let pendingImage = null;
+  let isOpeningFilePicker = false;
+  let spriteName = 'sprite-agent';
+
+  // ---- dynamic sprite name (item #24) ----
+  async function loadConfig() {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      const c = await res.json();
+      if (c.agentID) {
+        spriteName = 'sprite agent #' + c.agentID;
+        document.title = spriteName;
+        if (!currentSession) showBaselineTitle();
+      }
+    } catch (e) { /* keep default */ }
+  }
+  function showBaselineTitle() {
+    chatTitle.textContent = spriteName;
+    const h2 = emptyState.querySelector('h2');
+    if (h2) h2.innerHTML = '👾 ' + escapeHtml(spriteName);
+  }
 
   // ---- sessions REST ----
   async function loadSessions() {
@@ -74,18 +123,28 @@
       disconnectWs();
       messagesEl.innerHTML = '';
       emptyState.style.display = 'flex';
-      chatTitle.textContent = 'sprite-agent';
+      showBaselineTitle();
     }
     renderSessions();
   }
   window.deleteSession = deleteSession;
 
+  function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
   function renderSessions() {
     sessionsList.innerHTML = sessions.map(s => `
       <div class="session-item ${currentSession && currentSession.id === s.id ? 'active' : ''}" data-id="${s.id}">
-        <div class="session-name">${escapeHtml(s.name || 'Chat')}</div>
-        <button class="session-delete" onclick="deleteSession('${s.id}', event)">×</button>
+        <div class="session-name"><span>${escapeHtml(s.name || 'Chat')}</span><button class="session-delete" onclick="deleteSession('${s.id}', event)">×</button></div>
         <div class="session-preview">${escapeHtml(s.lastMessage || 'No messages yet')}</div>
+        <div class="session-time">${formatTime(s.lastMessageAt)}</div>
       </div>`).join('');
     sessionsList.querySelectorAll('.session-item').forEach(el => {
       el.addEventListener('click', () => {
@@ -102,9 +161,11 @@
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
+    clearPendingImage();
     renderSessions();
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
+    try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
     closeSidebar();
   }
 
@@ -134,7 +195,6 @@
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
   }
 
-  // Surface the effective capability policy (control plane, §6.2).
   async function loadPolicy() {
     const el = $('policy-line');
     if (!el) return;
@@ -147,15 +207,12 @@
     } catch (e) { el.textContent = ''; }
   }
 
-  // Attach-to-worker: open the agent's session service in a new tab. Its URL is
-  // org-gated (Fly OAuth); the human is a member, so the browser authenticates.
   function attachToAgent(id) {
     const a = fleetRoster.find(x => x.id === id);
     if (!a || !a.url) return;
     window.open(a.url, '_blank', 'noopener');
   }
 
-  // Spawn a worker from the UI (home/token-bearing agents). Best-effort.
   async function spawnWorker() {
     const btn = $('spawn-btn');
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -204,6 +261,7 @@
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
     reconnectAttempts++;
     const target = currentWsSessionId;
+    statusEl.textContent = `Reconnecting in ${Math.round(delay / 1000)}s…`; statusEl.className = 'error';
     reconnectTimer = setTimeout(() => {
       if (currentWsSessionId === target && !intentionalDisconnect) connectWs(target);
     }, delay);
@@ -219,7 +277,7 @@
         messagesEl.innerHTML = '';
         currentAssistantEl = null; assistantText = '';
         (msg.messages || []).forEach(m => {
-          if (m.role === 'user') addUser(m.content);
+          if (m.role === 'user') addUser(m.content, m.image);
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
@@ -228,29 +286,28 @@
         if (msg.isProcessing) showThinking();
         break;
       case 'user_message':
-        if (msg.message) { addUser(msg.message.content); showThinking(); }
+        if (msg.message) { addUser(msg.message.content, msg.message.image); showThinking(); }
         break;
       case 'assistant':
-        // Terminal co-presence path: a complete message from the transcript.
         if (msg.message && msg.message.content) renderAssistantContent(msg.message.content);
         break;
       case 'content_block_start':
         if (msg.content_block?.type === 'text') startAssistant();
-        else if (msg.content_block?.type === 'tool_use') addTool(msg.content_block.name);
+        else if (msg.content_block?.type === 'tool_use') addTool(msg.content_block.name, msg.content_block.input);
         break;
       case 'content_block_delta':
         if (msg.delta?.type === 'text_delta') appendAssistant(msg.delta.text);
-        else if (msg.delta?.type === 'input_json_delta') currentToolInput += msg.delta.partial_json || '';
+        else if (msg.delta?.type === 'input_json_delta') accumulateToolInput(msg.delta.partial_json);
         break;
       case 'message_stop':
         finalizeAssistant();
         break;
       case 'result':
-        removeTool(); finalizeAssistant(); stopBtn.disabled = true;
+        removeActivity(); finalizeAssistant(); setGenerating(false);
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
-        finalizeAssistant(); stopBtn.disabled = true;
+        finalizeAssistant(); setGenerating(false);
         break;
     }
     scrollDown();
@@ -260,18 +317,23 @@
     if (Array.isArray(content)) {
       for (const b of content) {
         if (b.type === 'text') { startAssistant(); appendAssistant(b.text); }
-        else if (b.type === 'tool_use') addTool(b.name);
+        else if (b.type === 'tool_use') addTool(b.name, b.input);
       }
     } else if (typeof content === 'string') { startAssistant(); appendAssistant(content); }
     finalizeAssistant();
   }
 
   // ---- message DOM ----
-  function addUser(text) {
+  function userImageHtml(image) {
+    if (!image || !image.filename || !currentSession) return '';
+    const url = '/api/uploads/' + currentSession.id + '/' + encodeURIComponent(image.filename);
+    return `<img class="message-image" src="${url}" alt="attachment">`;
+  }
+  function addUser(text, image) {
     removeThinking();
     const el = document.createElement('div');
     el.className = 'message user';
-    el.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
+    el.innerHTML = `<div class="message-content">${userImageHtml(image)}${escapeHtml(text || '')}</div>`;
     messagesEl.appendChild(el); scrollDown();
   }
   function addSystem(text) {
@@ -285,16 +347,17 @@
     el.className = 'message assistant';
     el.innerHTML = `<div class="message-header">Claude</div><div class="message-content">${renderMarkdown(text)}</div>`;
     messagesEl.appendChild(el);
+    highlightWithin(el.querySelector('.message-content'));
   }
   function startAssistant() {
     if (currentAssistantEl) return;
-    removeThinking(); removeTool();
+    removeThinking(); removeActivity();
     currentAssistantEl = document.createElement('div');
     currentAssistantEl.className = 'message assistant';
     currentAssistantEl.innerHTML = `<div class="message-header">Claude</div><div class="message-content streaming"></div>`;
     messagesEl.appendChild(currentAssistantEl);
     assistantText = '';
-    stopBtn.disabled = false;
+    setGenerating(true);
   }
   function appendAssistant(text) {
     if (!currentAssistantEl) startAssistant();
@@ -303,54 +366,274 @@
     scrollDown();
   }
   function finalizeAssistant() {
-    removeTool();
+    removeActivity();
     if (currentAssistantEl) {
-      currentAssistantEl.querySelector('.message-content').classList.remove('streaming');
+      const content = currentAssistantEl.querySelector('.message-content');
+      content.classList.remove('streaming');
+      highlightWithin(content);
       currentAssistantEl = null; assistantText = '';
     }
   }
 
-  // ---- indicators ----
+  // ---- thinking indicator (three bouncing dots) ----
   function showThinking() {
     if ($('thinking')) return;
+    setGenerating(true);
     const el = document.createElement('div');
-    el.id = 'thinking'; el.className = 'message assistant thinking';
-    el.innerHTML = `<div class="message-content"><span class="dots"><span>·</span><span>·</span><span>·</span></span></div>`;
+    el.id = 'thinking'; el.className = 'thinking-indicator';
+    el.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-text">Claude is thinking…</span>`;
     messagesEl.appendChild(el); scrollDown();
   }
   function removeThinking() { const t = $('thinking'); if (t) t.remove(); }
-  function addTool(name) {
+
+  // ---- activity / tool indicator ----
+  const toolActions = {
+    'Read':            { action: 'Reading',            getDetail: i => i?.file_path },
+    'Write':           { action: 'Writing',            getDetail: i => i?.file_path },
+    'Edit':            { action: 'Editing',            getDetail: i => i?.file_path },
+    'Bash':            { action: 'Running',            getDetail: i => i?.command?.slice(0, 60) },
+    'Grep':            { action: 'Searching',          getDetail: i => i?.pattern ? `"${i.pattern}"` : null },
+    'Glob':            { action: 'Finding files',      getDetail: i => i?.pattern },
+    'Task':            { action: 'Working on subtask', getDetail: i => i?.description },
+    'WebFetch':        { action: 'Fetching',           getDetail: i => i?.url },
+    'WebSearch':       { action: 'Searching web',      getDetail: i => i?.query },
+    'LSP':             { action: 'Analyzing code',     getDetail: i => i?.operation },
+    'TodoWrite':       { action: 'Updating tasks',     getDetail: () => null },
+    'AskUserQuestion': { action: 'Asking question',    getDetail: () => null },
+    'NotebookEdit':    { action: 'Editing notebook',   getDetail: i => i?.notebook_path },
+  };
+  function getToolAction(name) {
+    return toolActions[name] || { action: 'Using ' + name, getDetail: () => null };
+  }
+  function truncatePath(path, maxLen = 40) {
+    if (!path) return '';
+    const s = String(path);
+    return s.length <= maxLen ? s : '...' + s.slice(-(maxLen - 3));
+  }
+  function addTool(name, input) {
     currentToolName = name; currentToolInput = '';
-    removeThinking(); removeTool();
+    removeThinking(); removeActivity();
+    setGenerating(true);
+    const ta = getToolAction(name);
+    const detail = input ? ta.getDetail(input) : null;
     const el = document.createElement('div');
-    el.id = 'tool'; el.className = 'message tool-indicator';
-    el.textContent = '🔧 ' + (name || 'tool');
+    el.id = 'activity'; el.className = 'activity-indicator';
+    el.innerHTML = `<div class="activity-spinner"><span class="spinner-sprite">👾</span></div>
+      <div class="activity-content"><div class="activity-action">${escapeHtml(ta.action)}…</div>${detail ? `<div class="activity-detail">${escapeHtml(truncatePath(detail))}</div>` : ''}</div>`;
     messagesEl.appendChild(el); scrollDown();
   }
-  function removeTool() { const t = $('tool'); if (t) t.remove(); currentToolName = null; }
+  function accumulateToolInput(partial) {
+    if (!currentToolName) return;
+    currentToolInput += partial || '';
+    try {
+      const parsed = JSON.parse(currentToolInput);
+      const detail = getToolAction(currentToolName).getDetail(parsed);
+      if (detail) updateActivity(detail);
+    } catch (e) { /* incomplete JSON; wait for more deltas */ }
+  }
+  function updateActivity(detail) {
+    const el = $('activity'); if (!el) return;
+    let d = el.querySelector('.activity-detail');
+    if (!d) {
+      d = document.createElement('div'); d.className = 'activity-detail';
+      el.querySelector('.activity-content').appendChild(d);
+    }
+    d.textContent = truncatePath(detail);
+  }
+  function removeActivity() { const t = $('activity'); if (t) t.remove(); currentToolName = null; currentToolInput = ''; }
+
+  // ---- generating state (drives send/stop button swap) ----
+  function setGenerating(on) {
+    inputArea.classList.toggle('generating', !!on);
+    stopBtn.disabled = !on;
+  }
 
   function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+  // ---- image attachment ----
+  function clearPendingImage() {
+    if (pendingImage && pendingImage.localUrl) URL.revokeObjectURL(pendingImage.localUrl);
+    pendingImage = null;
+    imagePreview.classList.remove('has-image');
+    imagePreviewImg.src = '';
+    imagePreviewName.textContent = '';
+  }
+  function resizeImage(file, maxSize = 2048) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        if (img.width <= maxSize && img.height <= maxSize) { resolve(file); return; }
+        const scale = maxSize / Math.max(img.width, img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(blob => {
+          resolve(blob ? new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+  async function uploadImage(file) {
+    if (!currentSession) { addSystem('Start a chat before attaching an image.'); return; }
+    try {
+      const resized = await resizeImage(file);
+      const form = new FormData();
+      form.append('file', resized);
+      const res = await fetch('/api/upload?session=' + currentSession.id, { method: 'POST', body: form });
+      if (!res.ok) { addSystem('Upload failed: ' + (await res.text())); return; }
+      const data = await res.json();
+      const localUrl = URL.createObjectURL(file);
+      pendingImage = { id: data.id, filename: data.filename, mediaType: data.mediaType, localUrl };
+      imagePreviewImg.src = localUrl;
+      imagePreviewName.textContent = data.filename;
+      imagePreview.classList.add('has-image');
+      inputArea.classList.add('focused');
+    } catch (e) { addSystem('Upload error: ' + e.message); }
+  }
 
   // ---- send ----
   function send() {
     const text = inputEl.value.trim();
-    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-    addUser(text); showThinking();
-    ws.send(JSON.stringify({ type: 'user', content: text }));
+    const hasImage = !!pendingImage;
+    if ((!text && !hasImage) || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
+
+    addUser(text, hasImage ? { filename: pendingImage.filename } : null);
+    showThinking();
+    const payload = { type: 'user', content: text };
+    if (hasImage) {
+      payload.imageId = pendingImage.id;
+      payload.imageFilename = pendingImage.filename;
+      payload.imageMediaType = pendingImage.mediaType;
+    }
+    ws.send(JSON.stringify(payload));
     inputEl.value = ''; autoGrow();
-    stopBtn.disabled = false;
+    clearPendingImage();
+    setGenerating(true);
   }
   function interrupt() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'interrupt' }));
+    setGenerating(false); removeThinking(); removeActivity();
   }
   function autoGrow() {
     inputEl.style.height = 'auto';
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
   }
+
+  // ---- voice input (SpeechRecognition) ----
+  let recognition = null;
+  let isRecording = false;
+  let voiceInputSent = false;
+  function setupVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { micBtn.classList.add('unsupported'); return; }
+    recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    let finalTranscript = '';
+    let originalInputText = '';
+    recognition.onstart = () => {
+      isRecording = true; voiceInputSent = false; finalTranscript = '';
+      originalInputText = inputEl.value;
+      micBtn.classList.add('recording');
+    };
+    recognition.onend = () => { isRecording = false; micBtn.classList.remove('recording'); };
+    recognition.onerror = (e) => {
+      isRecording = false; micBtn.classList.remove('recording');
+      if (e.error === 'not-allowed') addSystem('Microphone permission denied.');
+    };
+    recognition.onresult = (event) => {
+      if (voiceInputSent) return;
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += t; else interim += t;
+      }
+      const spacer = originalInputText && !originalInputText.endsWith(' ') ? ' ' : '';
+      inputEl.value = originalInputText + spacer + finalTranscript + interim;
+      autoGrow();
+    };
+    micBtn.addEventListener('click', () => {
+      if (!currentSession) return;
+      if (isRecording) { try { recognition.stop(); } catch (e) {} }
+      else { try { recognition.start(); } catch (e) {} }
+    });
+  }
+
+  // ---- input focus/collapse ----
+  inputEl.addEventListener('focus', () => inputArea.classList.add('focused'));
+  inputEl.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (!inputEl.value.trim() && !pendingImage && !isOpeningFilePicker) inputArea.classList.remove('focused');
+    }, 120);
+  });
+  [attachBtn, micBtn, sendBtn, stopBtn].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
 
   // ---- sidebar (mobile) ----
   function openSidebar() { sidebar.classList.add('open'); overlay.classList.add('show'); }
   function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('show'); }
+
+  // sidebar swipe-to-close (item #9)
+  let sbStartX = 0, sbSwiping = false;
+  sidebar.addEventListener('touchstart', e => {
+    if (!sidebar.classList.contains('open')) return;
+    sbStartX = e.touches[0].clientX; sbSwiping = true; sidebar.style.transition = 'none';
+  }, { passive: true });
+  sidebar.addEventListener('touchmove', e => {
+    if (!sbSwiping) return;
+    const diff = e.touches[0].clientX - sbStartX;
+    if (diff < 0) { sidebar.style.transform = `translateX(${diff}px)`; overlay.style.opacity = Math.max(0, 1 + diff / 280); }
+  }, { passive: true });
+  sidebar.addEventListener('touchend', e => {
+    if (!sbSwiping) return;
+    sbSwiping = false;
+    const diff = e.changedTouches[0].clientX - sbStartX;
+    sidebar.style.transition = ''; sidebar.style.transform = ''; overlay.style.opacity = '';
+    if (diff < -80) closeSidebar();
+  });
+
+  // pull-to-refresh (item #8)
+  const PULL_THRESHOLD = 80;
+  let pullStartY = 0, pullDistance = 0, isPulling = false;
+  function canPull(target) {
+    if (sidebar.classList.contains('open')) return false;
+    if (document.querySelector('header').contains(target)) return true;
+    return messagesEl.scrollTop <= 0;
+  }
+  document.addEventListener('touchstart', e => {
+    if (!canPull(e.target)) { isPulling = false; return; }
+    pullStartY = e.touches[0].clientY; isPulling = true; pullDistance = 0;
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!isPulling) return;
+    pullDistance = e.touches[0].clientY - pullStartY;
+    if (pullDistance > 0) {
+      const progress = Math.min(pullDistance / PULL_THRESHOLD, 1);
+      pullIndicator.style.transition = 'none';
+      pullIndicator.style.transform = `translateX(-50%) translateY(${-60 + progress * 80}px)`;
+      pullIndicator.classList.add('visible');
+      pullIndicator.classList.toggle('ready', pullDistance >= PULL_THRESHOLD);
+    }
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (!isPulling) return;
+    isPulling = false;
+    if (pullDistance >= PULL_THRESHOLD) {
+      pullIndicator.classList.add('refreshing');
+      if (currentSession) { try { localStorage.setItem('lastSessionId', currentSession.id); } catch (e) {} }
+      setTimeout(() => window.location.reload(), 300);
+    } else {
+      pullIndicator.style.transition = '';
+      pullIndicator.style.transform = '';
+      pullIndicator.classList.remove('visible', 'ready');
+    }
+  });
 
   // ---- wire up ----
   $('new-chat-btn').addEventListener('click', createSession);
@@ -360,24 +643,43 @@
   overlay.addEventListener('click', closeSidebar);
   sendBtn.addEventListener('click', send);
   stopBtn.addEventListener('click', interrupt);
+  attachBtn.addEventListener('click', () => {
+    isOpeningFilePicker = true; fileInput.click();
+    setTimeout(() => { isOpeningFilePicker = false; }, 400);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) uploadImage(fileInput.files[0]);
+    fileInput.value = '';
+  });
+  $('remove-image').addEventListener('click', clearPendingImage);
   inputEl.addEventListener('input', autoGrow);
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') interrupt(); });
+  // Esc interrupts Claude while it's generating (item #26).
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
 
   // ---- boot ----
   async function boot() {
+    setupVoice();
+    loadConfig();
+    showBaselineTitle();
     await loadSessions();
     loadFleet();
     loadPolicy();
     setInterval(loadFleet, 5000);
+
+    // Restore the session on refresh (item #17): URL hash first, then localStorage.
+    let restoreId = null;
     const hash = location.hash.match(/session=([\w-]+)/);
-    if (hash) {
-      let s = sessions.find(x => x.id === hash[1]);
-      if (!s) { s = { id: hash[1], name: 'Chat' }; sessions.unshift(s); }
+    if (hash) restoreId = hash[1];
+    else { try { restoreId = localStorage.getItem('lastSessionId'); } catch (e) {} }
+    if (restoreId) {
+      let s = sessions.find(x => x.id === restoreId);
+      if (!s) { s = { id: restoreId, name: 'Chat' }; sessions.unshift(s); }
       selectSession(s);
     }
+    try { localStorage.removeItem('lastSessionId'); } catch (e) {}
   }
   boot();
 })();
