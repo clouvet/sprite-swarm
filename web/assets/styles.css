@@ -82,22 +82,32 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 #status.connected::before { filter: sepia(100%) saturate(500%) hue-rotate(60deg) brightness(0.9); }
 #status.error::before { filter: sepia(100%) saturate(500%) hue-rotate(-20deg) brightness(1.1); }
 
-#empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); }
+/* stage = everything below the header (empty-state, messages, input). Lets the
+   composer center for a new chat and dock to the bottom once it's active. */
+#stage { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#empty-state { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); text-align: center; }
 #empty-state h2 { color: var(--text); }
-#start-chat-btn { background: var(--accent); color: #fff; border: none; padding: 10px 20px; border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 8px; }
+
+/* Composing (new chat): center the heading + a larger composer; no docked bar. */
+#main.composing #stage { justify-content: center; align-items: center; gap: 20px; padding: 16px; }
+#main.composing #messages { display: none; }
+/* New chat: the same composer card, just centered, wider, and taller. */
+#main.composing #input-area { flex: 0 0 auto; width: 100%; max-width: 760px; border-top: none; background: transparent; padding: 0; }
+#main.composing #input { min-height: 120px; max-height: 340px; }
 
 /* ---- messages ---- */
 #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .message { max-width: 760px; width: 100%; align-self: center; }
-.message-header { display: flex; align-items: center; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
-.copy-btn { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
+.message.assistant { position: relative; }
+.copy-btn { position: absolute; top: 0; right: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
 .message.assistant:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { color: var(--text); }
 .copy-btn.copied { color: var(--on); opacity: 1; }
 @media (hover: none) { .copy-btn { opacity: .55; } }
 .message-content { line-height: 1.55; word-wrap: break-word; }
-.message.user .message-content { background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
-.message.assistant .message-content { background: var(--assistant-bg); padding: 12px 16px; border-radius: 12px; }
+.message.user { display: flex; justify-content: flex-end; }
+.message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
+/* Assistant responses render as plain text on the page — no label, no bubble. */
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
 .message.system { align-self: center; font-size: 12px; color: var(--text-muted); font-style: italic; }
 .message-image { max-width: 240px; max-height: 200px; border-radius: 10px; margin-bottom: 6px; display: block; }
@@ -131,28 +141,28 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes spin-clockwise { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* ---- input area + collapsed/focused state ---- */
-#input-area { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--safe-bottom)); background: var(--bg-secondary); border-top: 1px solid var(--border); position: relative; }
-#input-wrapper { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; max-width: 792px; margin: 0 auto; }
-#input { flex: 1; min-height: 44px; max-height: 120px; padding: 10px 14px; background: var(--input-bg); border: 1px solid var(--border);
-  border-radius: 22px; color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
-#input:focus { border-color: var(--accent); }
+/* ---- input area: a single bordered "card" with the buttons inside, as the
+   bottom toolbar row. Uniform across mobile/desktop and new-chat/active. ---- */
+#input-area { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--safe-bottom)); background: transparent; position: relative; }
+#input-wrapper { display: flex; flex-direction: column; gap: 6px; max-width: 792px; margin: 0 auto;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 20px; padding: 8px 10px; }
+#input-wrapper:focus-within { border-color: var(--accent); }
+#input { width: 100%; min-height: 26px; max-height: 200px; padding: 6px 6px 0; background: transparent; border: none;
+  color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
 
-/* Desktop: everything stays on one row (attach + mic + input + send/stop). */
-#attach-btn, #mic-btn { width: 44px; height: 44px; border-radius: 50%; background: transparent; border: 1px solid var(--border);
-  color: var(--text-secondary); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0; }
-#attach-btn:active, #mic-btn:active { transform: scale(0.95); }
+#input-toolbar { display: flex; align-items: center; gap: 8px; }
+#input-toolbar svg { width: 17px; height: 17px; }
+#attach-btn, #mic-btn, #send, #stop-btn { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; border: none; transition: transform .1s; }
+#attach-btn:active, #mic-btn:active, #send:active, #stop-btn:active { transform: scale(0.92); }
+#attach-btn, #mic-btn, #send, #stop-btn { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+#send, #stop-btn { margin-left: auto; color: var(--accent); }
+#stop-btn { display: none; }
+#input-area.generating #send { display: none; }
+#input-area.generating #stop-btn { display: flex; margin-left: auto; }
 #mic-btn.unsupported { display: none; }
 #mic-btn.recording { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.2); animation: pulse-recording 1.5s ease-in-out infinite; }
 @keyframes pulse-recording { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
-
-#send, #stop-btn { width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: #fff; border: none; cursor: pointer;
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0; transition: opacity .15s, transform .1s; margin-left: auto; }
-#send:active:not(:disabled), #stop-btn:active:not(:disabled) { transform: scale(0.95); }
-#send:disabled { opacity: 0; pointer-events: none; }
-#stop-btn { display: none; }
-#input-area.generating #stop-btn { display: flex; }
-#input-area.generating #send { display: none; }
 
 /* image preview pill */
 #image-preview { display: none; max-width: 792px; margin: 0 auto 10px; }
@@ -178,10 +188,4 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 @media (max-width: 768px) {
   #sidebar { position: fixed; left: 0; top: 0; bottom: 0; transform: translateX(-100%); transition: transform .3s ease; z-index: 100; }
   #sidebar.open { transform: translateX(0); }
-
-  /* Collapsed/expand-on-focus input (Slack-style): attach hidden until focus,
-     and the textarea jumps to a full-width top row with buttons below. */
-  #attach-btn { display: none; }
-  #input-area.focused #attach-btn { display: flex; }
-  #input-area.focused #input { flex: 1 1 100%; order: -1; }
 }
