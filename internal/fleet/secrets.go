@@ -19,6 +19,7 @@ import (
 const (
 	SecretSpritesAPIToken = "sprites-api-token"
 	SecretGitHubToken     = "github"
+	SecretFlyToken        = "fly"
 )
 
 func secretKey(name string) string { return path.Join("fleet", "config", "secrets", name) }
