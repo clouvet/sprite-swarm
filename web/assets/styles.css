@@ -116,7 +116,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 .code-copy.copied { color: var(--on); opacity: 1; }
 @media (hover: none) { .code-copy { opacity: .6; } }
 .message-content { line-height: 1.55; word-wrap: break-word; }
-.message.user { display: flex; justify-content: flex-end; }
+.message.user { display: flex; justify-content: flex-end; margin: 8px 0; }
 .message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
