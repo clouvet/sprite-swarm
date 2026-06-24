@@ -16,3 +16,7 @@ func (notConfigured) Spawn(_ context.Context, _ Request) (Result, error) {
 func (notConfigured) Destroy(_ context.Context, _ string) error {
 	return ErrNotConfigured
 }
+
+func (notConfigured) Exists(_ context.Context, _ string) (bool, error) {
+	return false, ErrNotConfigured
+}

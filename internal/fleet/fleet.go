@@ -193,13 +193,23 @@ func (s *Service) AgentPresent(ctx context.Context, id string) (exists, present 
 	return false, false, nil
 }
 
-// ReapTargets returns the ids the reaper should destroy now (pure policy).
-func (s *Service) ReapTargets(ctx context.Context, deadReapAfter time.Duration) ([]string, error) {
+// ReapTargets returns the ids to destroy now (explicit done only; pure policy).
+func (s *Service) ReapTargets(ctx context.Context) ([]string, error) {
 	roster, err := s.roster(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return ReapTargets(roster, s.now(), deadReapAfter), nil
+	return ReapTargets(roster), nil
+}
+
+// StaleWorkers returns non-home workers with a stale heartbeat — brain-cleanup
+// candidates only if their sprite turns out to be gone (the reaper verifies).
+func (s *Service) StaleWorkers(ctx context.Context, staleAfter time.Duration) ([]string, error) {
+	roster, err := s.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return StaleWorkers(roster, s.now(), staleAfter), nil
 }
 
 func (s *Service) writeHeartbeat(ctx context.Context) error {

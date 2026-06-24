@@ -10,16 +10,18 @@ import (
 	"time"
 )
 
-// Registry is the brain side: which agents to reap, and removing their entries.
+// Registry is the brain side: which agents to reap/clean, and removing entries.
 type Registry interface {
-	ReapTargets(ctx context.Context, deadReapAfter time.Duration) ([]string, error)
+	ReapTargets(ctx context.Context) ([]string, error)
+	StaleWorkers(ctx context.Context, staleAfter time.Duration) ([]string, error)
 	RemoveAgent(ctx context.Context, id string) error
 }
 
-// Destroyer is the platform side: destroy a sprite by name.
+// Destroyer is the platform side: destroy a sprite, and check whether it exists.
 type Destroyer interface {
 	Available() bool
 	Destroy(ctx context.Context, name string) error
+	Exists(ctx context.Context, name string) (bool, error)
 }
 
 // Reaper periodically reaps reapable workers.
@@ -62,12 +64,15 @@ func (r *Reaper) Run(ctx context.Context) {
 	}
 }
 
-// reapOnce destroys each reap target (sprite first, then its brain entry).
+// reapOnce destroys explicitly-done workers, and separately cleans the brain
+// entries of workers whose sprite is actually gone. A stale heartbeat alone is NOT
+// destroyed — a suspended (idle/awaiting-follow-up) worker is kept alive.
 func (r *Reaper) reapOnce(ctx context.Context) {
 	scanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	targets, err := r.reg.ReapTargets(scanCtx, r.deadReapAfter)
+	// 1. Explicit done → destroy the sprite + remove its brain entry.
+	targets, err := r.reg.ReapTargets(scanCtx)
 	if err != nil {
 		log.Printf("reaper: scan failed: %v", err)
 		return
@@ -81,6 +86,22 @@ func (r *Reaper) reapOnce(ctx context.Context) {
 			log.Printf("reaper: remove brain entry %s failed: %v", id, err)
 			continue
 		}
-		log.Printf("reaper: reaped %s (destroyed sprite + removed brain entry)", id)
+		log.Printf("reaper: reaped %s (done → destroyed sprite + removed brain entry)", id)
+	}
+
+	// 2. Stale heartbeat → only clean the brain entry if the sprite is truly gone.
+	//    A suspended worker still exists and is left untouched (durable workspace).
+	stale, err := r.reg.StaleWorkers(scanCtx, r.deadReapAfter)
+	if err != nil {
+		return
+	}
+	for _, id := range stale {
+		exists, err := r.dst.Exists(scanCtx, id)
+		if err != nil || exists {
+			continue // exists (suspended) or unknown → keep it
+		}
+		if err := r.reg.RemoveAgent(scanCtx, id); err == nil {
+			log.Printf("reaper: cleaned orphaned brain entry %s (sprite gone)", id)
+		}
 	}
 }
