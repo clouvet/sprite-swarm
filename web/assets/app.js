@@ -865,6 +865,16 @@
     if (!e.target.closest('#input-area')) inputEl.blur();
   });
 
+  // Mobile: when the sidebar is open, a tap anywhere on the main panel (outside the
+  // sidebar) closes it — and is consumed, so it doesn't also trigger what it hit.
+  mainEl.addEventListener('click', (e) => {
+    if (appEl.classList.contains('sidebar-open')) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSidebar();
+    }
+  }, true);
+
   // ---- wire up ----
   $('new-chat-btn').addEventListener('click', newChat);
   { const sb = $('spawn-btn'); if (sb) sb.addEventListener('click', spawnWorker); }
