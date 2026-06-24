@@ -177,6 +177,22 @@ func (s *Service) RemoveAgent(ctx context.Context, id string) error {
 	return nil
 }
 
+// AgentPresent reports whether an agent exists in the roster and whether a human
+// is currently attached to it (presence / the DEFER signal, §2.4). Used to guard
+// explicit teardown so we don't kill a session someone is actively steering.
+func (s *Service) AgentPresent(ctx context.Context, id string) (exists, present bool, err error) {
+	roster, err := s.roster(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, e := range roster {
+		if e.ID == id {
+			return true, e.Present, nil
+		}
+	}
+	return false, false, nil
+}
+
 // ReapTargets returns the ids the reaper should destroy now (pure policy).
 func (s *Service) ReapTargets(ctx context.Context, deadReapAfter time.Duration) ([]string, error) {
 	roster, err := s.roster(ctx)

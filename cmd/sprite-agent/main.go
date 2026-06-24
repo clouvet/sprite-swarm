@@ -70,7 +70,12 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
 			"To assign work to a peer, POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"} — " +
-			"it lands in that worker's own session (attach to watch). ")
+			"it lands in that worker's own session (attach to watch). " +
+			"To tear a worker down, POST /api/fleet/destroy {\"target\":\"<id>\"} — this destroys its VM " +
+			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that worker " +
+			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
+			"with {\"target\":\"<id>\",\"force\":true}. Do NOT hand-roll teardown via the host socket or " +
+			"guess routes — this endpoint is the mechanism. ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
