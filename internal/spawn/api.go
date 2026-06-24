@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -160,10 +161,21 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 		if res.URL != "" {
 			env["SPRITE_AGENT_URL"] = res.URL
 		}
-		if err := a.provisionAgent(ctx, res.Name, env); err != nil {
-			// Sprite exists but isn't running the agent yet; surface both.
-			return res, fmt.Errorf("spawn: created %s but provisioning failed: %w", res.Name, err)
-		}
+		// The sprite is created (fast). Provisioning — warm → PUT service → confirm —
+		// takes 60-150s and would blow past the proxy's request timeout (a 502). Do it
+		// in the BACKGROUND with its own context (the request ctx dies when the handler
+		// returns); the worker registers into the brain on boot, so the roster the UI
+		// polls reflects it. Return the created sprite immediately.
+		name := res.Name
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			defer cancel()
+			if err := a.provisionAgent(bg, name, env); err != nil {
+				log.Printf("spawn: background provisioning of %s failed: %v", name, err)
+			} else {
+				log.Printf("spawn: %s provisioned (registering into the brain)", name)
+			}
+		}()
 	}
 	return res, nil
 }
