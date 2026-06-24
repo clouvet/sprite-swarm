@@ -56,6 +56,7 @@
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const emptyState = $('empty-state');
+  const mainEl = $('main');
   const sidebar = $('sidebar');
   const overlay = $('overlay');
   const pullIndicator = $('pull-indicator');
@@ -104,26 +105,74 @@
     renderSessions();
     return sessions;
   }
-  async function createSession() {
-    const res = await fetch('/api/sessions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'New chat' }),
-    });
-    const s = await res.json();
-    sessions.unshift(s);
+  // Composing state: a new chat shows a centered, large composer; once it has
+  // messages the composer docks to the bottom. Driven purely by message presence.
+  function setComposing(on) {
+    mainEl.classList.toggle('composing', on);
+    emptyState.style.display = on ? 'flex' : 'none';
+  }
+  function updateComposing() {
+    setComposing(!messagesEl.querySelector('.message'));
+  }
+  function isEmptyChat() {
+    return currentSession && isDefaultName(currentSession.name) && !messagesEl.querySelector('.message');
+  }
+
+  // newChat resets to the empty centered composer WITHOUT creating a session — the
+  // session is created on first send/attach (no empty-session clutter).
+  function newChat() {
+    closeSidebar();
+    if (isEmptyChat()) { inputEl.focus(); return; }
+    disconnectWs();
+    currentSession = null;
+    currentAssistantEl = null; assistantText = ''; assistantTurns = 0;
+    messagesEl.innerHTML = '';
+    inputEl.value = ''; autoGrow();
+    clearPendingImage();
+    showBaselineTitle();
     renderSessions();
-    selectSession(s);
+    updateComposing();
+    history.replaceState(null, '', location.pathname);
+    inputEl.focus();
+  }
+
+  // ensureSession activates a session for the composer (creating one if needed)
+  // WITHOUT clearing the input/image, so typed text + attachments survive.
+  async function ensureSession() {
+    if (currentSession) return true;
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New chat' }),
+      });
+      const s = await res.json();
+      sessions.unshift(s);
+      currentSession = s;
+      chatTitle.textContent = s.name || 'Chat';
+      assistantTurns = 0;
+      renderSessions();
+      connectWs(s.id);
+      history.replaceState(null, '', '#session=' + s.id);
+      try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  }
+  function waitForWsOpen(timeoutMs) {
+    return new Promise(resolve => {
+      const start = Date.now();
+      (function chk() {
+        if (ws && ws.readyState === WebSocket.OPEN) return resolve(true);
+        if (Date.now() - start > timeoutMs) return resolve(false);
+        setTimeout(chk, 50);
+      })();
+    });
   }
   async function deleteSession(id, ev) {
     ev.stopPropagation();
     await fetch('/api/sessions/' + id, { method: 'DELETE' });
     sessions = sessions.filter(s => s.id !== id);
     if (currentSession && currentSession.id === id) {
-      currentSession = null;
-      disconnectWs();
-      messagesEl.innerHTML = '';
-      emptyState.style.display = 'flex';
-      showBaselineTitle();
+      newChat();
     }
     renderSessions();
   }
@@ -157,7 +206,6 @@
   function selectSession(s) {
     currentSession = s;
     chatTitle.textContent = s.name || 'Chat';
-    emptyState.style.display = 'none';
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
@@ -165,6 +213,7 @@
     restoreDraft();
     assistantTurns = 0;
     renderSessions();
+    updateComposing();
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
     try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
@@ -230,11 +279,11 @@
 
     ws.onopen = () => {
       statusEl.textContent = 'Connected'; statusEl.className = 'connected';
-      sendBtn.disabled = false; reconnectAttempts = 0;
+      reconnectAttempts = 0;
     };
     ws.onclose = () => {
       statusEl.textContent = 'Disconnected'; statusEl.className = 'error';
-      sendBtn.disabled = true; scheduleReconnect();
+      scheduleReconnect();
     };
     ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.className = 'error'; };
     ws.onmessage = (ev) => {
@@ -271,6 +320,7 @@
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
+        updateComposing();
         break;
       case 'processing':
         if (msg.isProcessing) showThinking();
@@ -331,7 +381,9 @@
     const el = document.createElement('div');
     el.className = 'message user';
     el.innerHTML = `<div class="message-content">${imgs}${escapeHtml(text || '')}</div>`;
-    messagesEl.appendChild(el); scrollDown();
+    messagesEl.appendChild(el);
+    updateComposing(); // first message → dock the composer to the bottom
+    scrollDown();
   }
   function addSystem(text) {
     const el = document.createElement('div');
@@ -481,7 +533,7 @@
     });
   }
   async function uploadImage(file) {
-    if (!currentSession) { addSystem('Start a chat before attaching an image.'); return; }
+    if (!currentSession && !(await ensureSession())) { addSystem('Could not start a chat.'); return; }
     try {
       const resized = await resizeImage(file);
       const form = new FormData();
@@ -499,11 +551,21 @@
   }
 
   // ---- send ----
-  function send() {
+  async function send() {
     const text = inputEl.value.trim();
     const hasImage = !!pendingImage;
-    if ((!text && !hasImage) || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!text && !hasImage) return;
     if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
+
+    // Composing a brand-new chat: create + connect the session first (text/image
+    // are captured above, so ensureSession won't clobber them).
+    if (!currentSession) {
+      if (!(await ensureSession())) { addSystem('Could not start a chat.'); return; }
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      await waitForWsOpen(5000);
+      if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem('Not connected — try again.'); return; }
+    }
 
     maybeAutoTitle(text);
     addUser(text, hasImage ? [uploadUrl(pendingImage.filename)] : null);
@@ -731,8 +793,7 @@
   });
 
   // ---- wire up ----
-  $('new-chat-btn').addEventListener('click', createSession);
-  $('start-chat-btn').addEventListener('click', createSession);
+  $('new-chat-btn').addEventListener('click', newChat);
   { const sb = $('spawn-btn'); if (sb) sb.addEventListener('click', spawnWorker); }
   $('menu-btn').addEventListener('click', toggleSidebar);
   overlay.addEventListener('click', closeSidebar);
@@ -773,6 +834,8 @@
       let s = sessions.find(x => x.id === restoreId);
       if (!s) { s = { id: restoreId, name: 'Chat' }; sessions.unshift(s); }
       selectSession(s);
+    } else {
+      newChat(); // no session → centered composer
     }
     try { localStorage.removeItem('lastSessionId'); } catch (e) {}
   }

@@ -35,10 +35,10 @@
         <div id="status">Disconnected</div>
       </header>
 
+      <div id="stage">
       <div id="empty-state">
         <h2>👾 sprite-agent</h2>
-        <p>Start a new chat to talk to this sprite's Claude.</p>
-        <button id="start-chat-btn">New Chat</button>
+        <p>What can I help you with?</p>
       </div>
 
       <div id="messages"></div>
@@ -68,7 +68,7 @@
           <input type="file" id="file-input" accept="image/*" hidden>
           <textarea id="input" placeholder="Message Claude…" rows="1" enterkeyhint="send"
                     autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>
-          <button id="send" disabled title="Send">
+          <button id="send" title="Send">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
@@ -80,6 +80,7 @@
             </svg>
           </button>
         </div>
+      </div>
       </div>
     </main>
   </div>
