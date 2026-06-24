@@ -393,11 +393,11 @@
   }
   // Copy button shown on each assistant message; copies the raw text (el._raw).
   const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-  const assistantHeader = `<div class="message-header">Claude<button class="copy-btn" title="Copy" aria-label="Copy">${COPY_SVG}</button></div>`;
+  const copyButton = `<button class="copy-btn" title="Copy" aria-label="Copy">${COPY_SVG}</button>`;
   function addStoredAssistant(text) {
     const el = document.createElement('div');
     el.className = 'message assistant';
-    el.innerHTML = `${assistantHeader}<div class="message-content">${renderMarkdown(text)}</div>`;
+    el.innerHTML = `<div class="message-content">${renderMarkdown(text)}</div>${copyButton}`;
     el._raw = text;
     messagesEl.appendChild(el);
     highlightWithin(el.querySelector('.message-content'));
@@ -407,7 +407,7 @@
     removeThinking(); removeActivity();
     currentAssistantEl = document.createElement('div');
     currentAssistantEl.className = 'message assistant';
-    currentAssistantEl.innerHTML = `${assistantHeader}<div class="message-content streaming"></div>`;
+    currentAssistantEl.innerHTML = `<div class="message-content streaming"></div>${copyButton}`;
     messagesEl.appendChild(currentAssistantEl);
     assistantText = '';
     setGenerating(true);
