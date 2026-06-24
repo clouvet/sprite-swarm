@@ -231,18 +231,42 @@
           (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '') +
           (a.reapable ? '<span class="fleet-badge reap" title="reapable">⌛</span>' : '');
         const attachable = a.url ? ' attachable' : '';
+        // Workers get a reap (destroy) button; home is never reaped.
+        const reap = a.role === 'home' ? '' : '<button class="fleet-reap" title="Reap (destroy) this worker">🗑</button>';
         return `<div class="fleet-item${attachable}" data-id="${escapeHtml(a.id)}" title="${a.url ? 'Attach (open session)' : 'no URL'}">
           <span class="dot ${a.alive ? 'on' : 'off'}"></span>
           <span class="fleet-id">${escapeHtml(a.id)}</span>
           <span class="fleet-role">${escapeHtml(a.role || '')}</span>
           ${badges}
           <span class="fleet-phase">${escapeHtml(a.phase || '')}</span>
+          ${reap}
         </div>`;
       }).join('') || '<div class="fleet-empty">empty</div>';
       fleetList.querySelectorAll('.fleet-item.attachable').forEach(el => {
-        el.addEventListener('click', () => attachToAgent(el.dataset.id));
+        el.addEventListener('click', (e) => { if (!e.target.closest('.fleet-reap')) attachToAgent(el.dataset.id); });
+      });
+      fleetList.querySelectorAll('.fleet-reap').forEach(el => {
+        el.addEventListener('click', (e) => { e.stopPropagation(); reapWorker(el.closest('.fleet-item').dataset.id); });
       });
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
+  }
+
+  // Reap (destroy) a worker via the teardown endpoint, honoring the presence guard.
+  async function reapWorker(id) {
+    if (!confirm('Reap ' + id + '? This destroys the worker VM (its branch/PR live on GitHub).')) return;
+    try {
+      let res = await fetch('/api/fleet/destroy', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: id }),
+      });
+      if (res.status === 409) {
+        if (!confirm((await res.text()).trim() + '\n\nDestroy anyway?')) return;
+        res = await fetch('/api/fleet/destroy', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: id, force: true }),
+        });
+      }
+      addSystem(res.ok ? 'Reaped ' + id : 'Reap failed: ' + (await res.text()));
+    } catch (e) { addSystem('Reap error: ' + e.message); }
+    loadFleet();
   }
 
   function attachToAgent(id) {

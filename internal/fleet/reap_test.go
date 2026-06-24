@@ -11,21 +11,28 @@ import (
 func TestReapTargets(t *testing.T) {
 	now := time.Unix(10_000_000, 0)
 	roster := []RosterEntry{
-		{Status: Status{ID: "home", Role: "home", Reapable: true}, LastSeen: now.Unix()},                  // protected even if reapable
-		{Status: Status{ID: "w-reapable", Role: "worker", Reapable: true}, LastSeen: now.Unix()},          // reap: self-declared
-		{Status: Status{ID: "w-alive", Role: "worker"}, LastSeen: now.Unix()},                             // keep: alive, not reapable
-		{Status: Status{ID: "w-dead", Role: "worker"}, LastSeen: now.Add(-10 * time.Minute).Unix()},       // reap: long dead
-		{Status: Status{ID: "w-recent-dead", Role: "worker"}, LastSeen: now.Add(-2 * time.Minute).Unix()}, // keep: not past dead TTL
+		{Status: Status{ID: "home", Role: "home", Reapable: true}, LastSeen: now.Unix()},            // protected even if reapable
+		{Status: Status{ID: "w-reapable", Role: "worker", Reapable: true}, LastSeen: now.Unix()},    // reap: self-declared done
+		{Status: Status{ID: "w-alive", Role: "worker"}, LastSeen: now.Unix()},                       // keep: alive, not reapable
+		{Status: Status{ID: "w-dead", Role: "worker"}, LastSeen: now.Add(-10 * time.Minute).Unix()}, // keep: stale != destroy (may be suspended)
 	}
-	got := ReapTargets(roster, now, 5*time.Minute)
-	want := map[string]bool{"w-reapable": true, "w-dead": true}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want keys %v", got, want)
+	got := ReapTargets(roster)
+	if len(got) != 1 || got[0] != "w-reapable" {
+		t.Fatalf("ReapTargets should destroy only explicitly-done workers, got %v", got)
 	}
-	for _, id := range got {
-		if !want[id] {
-			t.Errorf("unexpected reap target %q", id)
-		}
+}
+
+func TestStaleWorkers(t *testing.T) {
+	now := time.Unix(10_000_000, 0)
+	roster := []RosterEntry{
+		{Status: Status{ID: "home", Role: "home"}, LastSeen: now.Add(-time.Hour).Unix()},                     // never (home)
+		{Status: Status{ID: "w-stale", Role: "worker"}, LastSeen: now.Add(-10 * time.Minute).Unix()},         // stale candidate
+		{Status: Status{ID: "w-recent", Role: "worker"}, LastSeen: now.Add(-1 * time.Minute).Unix()},         // fresh
+		{Status: Status{ID: "w-done", Role: "worker", Reapable: true}, LastSeen: now.Add(-time.Hour).Unix()}, // handled by ReapTargets
+	}
+	got := StaleWorkers(roster, now, 5*time.Minute)
+	if len(got) != 1 || got[0] != "w-stale" {
+		t.Fatalf("StaleWorkers should be only w-stale, got %v", got)
 	}
 }
 

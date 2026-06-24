@@ -360,6 +360,24 @@ func (a *apiSpawner) Destroy(ctx context.Context, name string) error {
 	return nil
 }
 
+// Exists reports whether a sprite still exists on the platform (a suspended sprite
+// does; a destroyed one 404s). Used by the reaper to tell "suspended" from "gone".
+func (a *apiSpawner) Exists(ctx context.Context, name string) (bool, error) {
+	resp, err := a.do(ctx, http.MethodGet, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		return false, fmt.Errorf("spawn: exists %s: %d", name, resp.StatusCode)
+	}
+	return true, nil
+}
+
 func (a *apiSpawner) do(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {

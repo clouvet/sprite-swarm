@@ -47,18 +47,35 @@ type RosterEntry struct {
 
 // ReapTargets is the pure reaping policy: which agents should be destroyed now.
 //
-// Reapable = a worker (never role "home") that either self-declared Reapable
-// (idle/done) or has been dead far longer than the liveness TTL (its sprite
-// crashed/was destroyed and isn't coming back — clean up its brain entry).
-// Home is always protected (DESIGN §4.2: home is pinned, never auto-reaped).
-func ReapTargets(roster []RosterEntry, now time.Time, deadReapAfter time.Duration) []string {
+// ReapTargets = workers (never "home") to DESTROY now: only those that explicitly
+// self-declared Reapable (done). A stale heartbeat no longer means "destroy" — a
+// suspended worker (idle, finished a feature, awaiting follow-up) looks identical
+// to a crashed one over the heartbeat, and we must not nuke work you might iterate
+// on. Home is always protected (DESIGN §4.2).
+func ReapTargets(roster []RosterEntry) []string {
 	var ids []string
 	for _, e := range roster {
 		if e.Role == "home" {
 			continue
 		}
-		dead := e.LastSeen > 0 && now.Sub(time.Unix(e.LastSeen, 0)) > deadReapAfter
-		if e.Reapable || dead {
+		if e.Reapable {
+			ids = append(ids, e.ID)
+		}
+	}
+	return ids
+}
+
+// StaleWorkers = non-home workers whose heartbeat has been stale beyond staleAfter
+// and that did NOT self-declare reapable. These are only candidates for brain
+// cleanup IF their sprite is actually gone (the reaper verifies via the platform);
+// a stale-but-existing sprite is just suspended and is left alone.
+func StaleWorkers(roster []RosterEntry, now time.Time, staleAfter time.Duration) []string {
+	var ids []string
+	for _, e := range roster {
+		if e.Role == "home" || e.Reapable {
+			continue
+		}
+		if e.LastSeen > 0 && now.Sub(time.Unix(e.LastSeen, 0)) > staleAfter {
 			ids = append(ids, e.ID)
 		}
 	}
