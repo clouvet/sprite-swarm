@@ -86,7 +86,6 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
    collapsed doesn't flash the sidebar open. */
 @media (min-width: 769px) {
   html[data-sidebar="collapsed"] #main { margin-left: 0; }
-  #status::before { font-size: 42px; } /* larger sprite indicator on desktop */
 }
 
 /* connection status — 👾 tinted via filter, like sprite-mobile */
@@ -94,6 +93,8 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 #status::before { content: "👾"; font-size: 14px; filter: grayscale(100%) brightness(0.8); }
 #status.connected::before { filter: sepia(100%) saturate(500%) hue-rotate(60deg) brightness(0.9); }
 #status.error::before { filter: sepia(100%) saturate(500%) hue-rotate(-20deg) brightness(1.1); }
+/* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
+@media (min-width: 769px) { #status::before { font-size: 42px; } }
 
 /* stage = everything below the header (empty-state, messages, input). Lets the
    composer center for a new chat and dock to the bottom once it's active. */
