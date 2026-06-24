@@ -93,6 +93,8 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 #status::before { content: "👾"; font-size: 14px; filter: grayscale(100%) brightness(0.8); }
 #status.connected::before { filter: sepia(100%) saturate(500%) hue-rotate(60deg) brightness(0.9); }
 #status.error::before { filter: sepia(100%) saturate(500%) hue-rotate(-20deg) brightness(1.1); }
+/* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
+@media (min-width: 769px) { #status::before { font-size: 28px; } }
 
 /* stage = everything below the header (empty-state, messages, input). Lets the
    composer center for a new chat and dock to the bottom once it's active. */
@@ -175,6 +177,8 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 #input-wrapper { display: flex; flex-direction: column; gap: 6px; max-width: 792px; margin: 0 auto;
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 20px; padding: 8px 10px; }
 #input-wrapper:focus-within { border-color: var(--accent); }
+/* desktop: a little breathing room below the composer */
+@media (min-width: 769px) { #input-wrapper { margin-bottom: 12px; } }
 #input { width: 100%; min-height: 26px; max-height: 200px; padding: 6px 6px 0; background: transparent; border: none;
   color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
 
@@ -218,4 +222,5 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
      covers it); opening slides the main page RIGHT to reveal the sidebar. */
   #main { margin-left: 0; }
   #app.sidebar-open #main { transform: translateX(var(--sidebar-width)); }
+  #menu-btn { transform: translateY(-4px); } /* optical nudge up on mobile */
 }
