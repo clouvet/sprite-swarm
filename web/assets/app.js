@@ -213,7 +213,9 @@
     restoreDraft();
     assistantTurns = 0;
     renderSessions();
-    updateComposing();
+    // Assume docked while history loads (it almost always has messages) so we
+    // don't flash the centered new-chat composer; history then corrects it.
+    setComposing(false);
     connectWs(s.id);
     history.replaceState(null, '', '#session=' + s.id);
     try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
