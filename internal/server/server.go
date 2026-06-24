@@ -181,6 +181,7 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		s.store.Delete(id)
+		s.hub.RemoveSession(id) // evict from the hub so it doesn't reappear via the list merge
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPatch, http.MethodPut:
 		var body struct {

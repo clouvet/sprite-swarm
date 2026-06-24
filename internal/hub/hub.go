@@ -588,6 +588,18 @@ func (h *Hub) startFileWatchingLocked(sessionID string, sess *session.Session) {
 	go h.handleWatcherEvents(sessionID, w)
 }
 
+// RemoveSession evicts a session from the hub entirely (kills its process, stops
+// its watcher, drops it from the session/client maps), so a deleted chat doesn't
+// linger and reappear via the /api/sessions hub-merge after a refresh.
+func (h *Hub) RemoveSession(sessionID string) {
+	_ = h.processMgr.Kill(sessionID) // best-effort; own lock
+	h.stopFileWatching(sessionID)    // own lock
+	h.mu.Lock()
+	delete(h.sessions, sessionID)
+	delete(h.clients, sessionID)
+	h.mu.Unlock()
+}
+
 func (h *Hub) stopFileWatching(sessionID string) {
 	h.mu.Lock()
 	w := h.watchers[sessionID]
