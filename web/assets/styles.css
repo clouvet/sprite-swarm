@@ -80,7 +80,7 @@ body {
 header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
 header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sprite-emoji { font-size: 14px; }
-#menu-btn { display: block; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; }
+#menu-btn { display: block; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
 /* Desktop: ☰ shows/hides the persistent sidebar. */
 @media (min-width: 769px) {
   /* Hide: the main page slides left over the stationary sidebar (covers it). */
