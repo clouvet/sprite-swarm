@@ -49,6 +49,10 @@ func New(cfg config.Config) (*Service, error) {
 }
 
 // newService is the dependency-injected constructor (used by tests with a fake).
+// Brain exposes the underlying brain store (used by memsync to mirror the
+// markdown fleet-memory directory).
+func (s *Service) Brain() Brain { return s.brain }
+
 func newService(brain Brain, cfg config.Config) *Service {
 	role := "worker"
 	if r := strings.TrimSpace(envRole()); r != "" {
