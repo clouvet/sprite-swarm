@@ -277,7 +277,7 @@
         messagesEl.innerHTML = '';
         currentAssistantEl = null; assistantText = '';
         (msg.messages || []).forEach(m => {
-          if (m.role === 'user') addUser(m.content, m.image);
+          if (m.role === 'user') addUser(m.content, m.images);
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
@@ -286,7 +286,11 @@
         if (msg.isProcessing) showThinking();
         break;
       case 'user_message':
-        if (msg.message) { addUser(msg.message.content, msg.message.image); showThinking(); }
+        if (msg.message) {
+          const im = msg.message.image;
+          addUser(msg.message.content, im && im.filename ? [uploadUrl(im.filename)] : null);
+          showThinking();
+        }
         break;
       case 'assistant':
         if (msg.message && msg.message.content) renderAssistantContent(msg.message.content);
@@ -324,16 +328,18 @@
   }
 
   // ---- message DOM ----
-  function userImageHtml(image) {
-    if (!image || !image.filename || !currentSession) return '';
-    const url = '/api/uploads/' + currentSession.id + '/' + encodeURIComponent(image.filename);
-    return `<img class="message-image" src="${url}" alt="attachment">`;
+  function uploadUrl(filename) {
+    return currentSession ? '/api/uploads/' + currentSession.id + '/' + encodeURIComponent(filename) : '';
   }
-  function addUser(text, image) {
+  // addUser renders the user turn. imageSrcs is an array of ready-to-use <img src>
+  // values: upload URLs for live turns, data URLs when replayed from history.
+  function addUser(text, imageSrcs) {
     removeThinking();
+    const imgs = (imageSrcs || []).filter(Boolean)
+      .map(s => `<img class="message-image" src="${s}" alt="attachment">`).join('');
     const el = document.createElement('div');
     el.className = 'message user';
-    el.innerHTML = `<div class="message-content">${userImageHtml(image)}${escapeHtml(text || '')}</div>`;
+    el.innerHTML = `<div class="message-content">${imgs}${escapeHtml(text || '')}</div>`;
     messagesEl.appendChild(el); scrollDown();
   }
   function addSystem(text) {
@@ -503,7 +509,7 @@
     if ((!text && !hasImage) || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
 
-    addUser(text, hasImage ? { filename: pendingImage.filename } : null);
+    addUser(text, hasImage ? [uploadUrl(pendingImage.filename)] : null);
     showThinking();
     const payload = { type: 'user', content: text };
     if (hasImage) {

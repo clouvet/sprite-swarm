@@ -129,8 +129,11 @@ func FromEnv() Config {
 }
 
 // deriveProjectsDir mirrors how Claude Code names its per-project transcript
-// directory: the absolute cwd with path separators replaced by dashes, under
-// ~/.claude/projects. e.g. /home/sprite -> -home-sprite.
+// directory: the absolute cwd slugified under ~/.claude/projects. Claude replaces
+// every character that is not [a-zA-Z0-9-] with a dash — NOT just path separators.
+// e.g. /home/sprite -> -home-sprite ; /home/sprite/.sa-home -> -home-sprite--sa-home
+// (the leading "/." becomes "--"). Getting this wrong points history replay at an
+// empty directory, so transcripts (and thus chat history on refresh) are lost.
 func deriveProjectsDir(workDir string) string {
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -142,8 +145,23 @@ func deriveProjectsDir(workDir string) string {
 			abs = a
 		}
 	}
-	slug := strings.ReplaceAll(abs, "/", "-")
-	return filepath.Join(home, ".claude", "projects", slug)
+	return filepath.Join(home, ".claude", "projects", slugifyCwd(abs))
+}
+
+// slugifyCwd replaces every rune that is not alphanumeric or '-' with '-',
+// matching Claude Code's transcript-directory naming.
+func slugifyCwd(abs string) string {
+	var b strings.Builder
+	b.Grow(len(abs))
+	for _, r := range abs {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
 }
 
 func getenv(key, def string) string {
