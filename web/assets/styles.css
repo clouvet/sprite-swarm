@@ -105,7 +105,8 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 .copy-btn.copied { color: var(--on); opacity: 1; }
 @media (hover: none) { .copy-btn { opacity: .55; } }
 .message-content { line-height: 1.55; word-wrap: break-word; }
-.message.user .message-content { display: inline-block; margin-left: 12%; max-width: 88%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
+.message.user { display: flex; justify-content: flex-end; }
+.message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
 .message.system { align-self: center; font-size: 12px; color: var(--text-muted); font-style: italic; }
