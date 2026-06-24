@@ -104,7 +104,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 .message { max-width: 760px; width: 100%; align-self: center; }
 /* Assistant messages reserve a little bottom room for the corner copy button. */
 .message.assistant { position: relative; padding-bottom: 22px; }
-.copy-btn { position: absolute; bottom: 0; right: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
+.copy-btn { position: absolute; bottom: 0; left: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0; transition: opacity .15s, color .15s; }
 .message.assistant:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { color: var(--text); }
 .copy-btn.copied { color: var(--on); opacity: 1; }
