@@ -39,6 +39,7 @@ type Spawner interface {
 	Available() bool
 	Spawn(ctx context.Context, req Request) (Result, error)
 	Destroy(ctx context.Context, name string) error
+	Exists(ctx context.Context, name string) (bool, error)
 }
 
 // New returns a live spawner when SPRITE_API_TOKEN is set, otherwise a stub that

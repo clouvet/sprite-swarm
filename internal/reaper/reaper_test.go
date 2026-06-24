@@ -8,12 +8,16 @@ import (
 )
 
 type fakeRegistry struct {
-	targets []string
+	targets []string // explicit reap targets (done)
+	stale   []string // stale-heartbeat workers
 	removed []string
 }
 
-func (f *fakeRegistry) ReapTargets(_ context.Context, _ time.Duration) ([]string, error) {
+func (f *fakeRegistry) ReapTargets(_ context.Context) ([]string, error) {
 	return f.targets, nil
+}
+func (f *fakeRegistry) StaleWorkers(_ context.Context, _ time.Duration) ([]string, error) {
+	return f.stale, nil
 }
 func (f *fakeRegistry) RemoveAgent(_ context.Context, id string) error {
 	f.removed = append(f.removed, id)
@@ -24,6 +28,7 @@ type fakeDestroyer struct {
 	available bool
 	destroyed []string
 	failOn    map[string]bool
+	gone      map[string]bool // sprites that no longer exist
 }
 
 func (f *fakeDestroyer) Available() bool { return f.available }
@@ -33,6 +38,9 @@ func (f *fakeDestroyer) Destroy(_ context.Context, name string) error {
 	}
 	f.destroyed = append(f.destroyed, name)
 	return nil
+}
+func (f *fakeDestroyer) Exists(_ context.Context, name string) (bool, error) {
+	return !f.gone[name], nil
 }
 
 func TestReapOnceDestroysThenRemoves(t *testing.T) {
@@ -62,5 +70,29 @@ func TestReapOnceKeepsBrainEntryWhenDestroyFails(t *testing.T) {
 	}
 	if len(dst.destroyed) != 1 || dst.destroyed[0] != "w2" {
 		t.Fatalf("expected only w2 destroyed, got %v", dst.destroyed)
+	}
+}
+
+func TestStaleButExistingWorkerIsKept(t *testing.T) {
+	// A suspended worker (stale heartbeat but sprite still exists) must NOT be
+	// destroyed or cleaned — it's a durable workspace awaiting follow-up.
+	reg := &fakeRegistry{stale: []string{"w-suspended"}}
+	dst := &fakeDestroyer{available: true} // gone is empty → exists
+	New(reg, dst, time.Minute, 5*time.Minute).reapOnce(context.Background())
+	if len(dst.destroyed) != 0 || len(reg.removed) != 0 {
+		t.Fatalf("suspended worker must be left alone, got destroyed=%v removed=%v", dst.destroyed, reg.removed)
+	}
+}
+
+func TestStaleAndGoneWorkerIsBrainCleanedNotDestroyed(t *testing.T) {
+	// A stale worker whose sprite is actually gone → clean its brain entry only.
+	reg := &fakeRegistry{stale: []string{"w-gone"}}
+	dst := &fakeDestroyer{available: true, gone: map[string]bool{"w-gone": true}}
+	New(reg, dst, time.Minute, 5*time.Minute).reapOnce(context.Background())
+	if len(dst.destroyed) != 0 {
+		t.Fatalf("must not destroy an already-gone sprite, got %v", dst.destroyed)
+	}
+	if len(reg.removed) != 1 || reg.removed[0] != "w-gone" {
+		t.Fatalf("expected brain cleanup of w-gone, got %v", reg.removed)
 	}
 }
