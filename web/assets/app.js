@@ -91,7 +91,7 @@
     } catch (e) { /* keep default */ }
   }
   function showBaselineTitle() {
-    chatTitle.innerHTML = '👾 ' + escapeHtml(spriteName);
+    chatTitle.textContent = spriteName;
   }
 
   // ---- sessions REST ----
@@ -302,14 +302,14 @@
     ws = new WebSocket(`${proto}//${location.host}/ws?session=${sessionId}`);
 
     ws.onopen = () => {
-      statusEl.textContent = 'Connected'; statusEl.className = 'connected';
+      statusEl.className = 'connected'; // 👾 indicator (no text)
       reconnectAttempts = 0;
     };
     ws.onclose = () => {
-      statusEl.textContent = 'Disconnected'; statusEl.className = 'error';
+      statusEl.className = 'error';
       scheduleReconnect();
     };
-    ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.className = 'error'; };
+    ws.onerror = () => { statusEl.className = 'error'; };
     ws.onmessage = (ev) => {
       try { handleMessage(JSON.parse(ev.data)); } catch (e) { console.error('bad msg', e); }
     };
@@ -324,7 +324,7 @@
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
     reconnectAttempts++;
     const target = currentWsSessionId;
-    statusEl.textContent = `Reconnecting in ${Math.round(delay / 1000)}s…`; statusEl.className = 'error';
+    statusEl.className = 'error';
     reconnectTimer = setTimeout(() => {
       if (currentWsSessionId === target && !intentionalDisconnect) connectWs(target);
     }, delay);
