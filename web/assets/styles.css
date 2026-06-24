@@ -91,9 +91,12 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 /* Composing (new chat): center the heading + a larger composer; no docked bar. */
 #main.composing #stage { justify-content: center; align-items: center; gap: 20px; padding: 16px; }
 #main.composing #messages { display: none; }
-#main.composing #input-area { flex: 0 0 auto; width: 100%; max-width: 640px; border-top: none; background: transparent; padding: 0; }
-#main.composing #input { min-height: 130px; max-height: 340px; }
+#main.composing #input-area { flex: 0 0 auto; width: 100%; max-width: 760px; border-top: none; background: transparent; padding: 0; }
 #main.composing #send { opacity: 1; }
+/* Stacked composer (all viewports): wide textarea on top, attach+mic bottom-left,
+   send/stop bottom-right — independent of focus. */
+#main.composing #input { flex: 1 1 100%; order: -1; min-height: 130px; max-height: 340px; }
+#main.composing #attach-btn { display: flex; }
 
 /* ---- messages ---- */
 #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
@@ -143,7 +146,7 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
 /* ---- input area + collapsed/focused state ---- */
 #input-area { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--safe-bottom)); background: var(--bg-secondary); border-top: 1px solid var(--border); position: relative; }
 #input-wrapper { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; max-width: 792px; margin: 0 auto; }
-#input { flex: 1; min-height: 44px; max-height: 120px; padding: 10px 14px; background: var(--input-bg); border: 1px solid var(--border);
+#input { flex: 1; min-height: 44px; max-height: 120px; padding: 12px 18px; background: var(--input-bg); border: 1px solid var(--border);
   border-radius: 22px; color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
 #input:focus { border-color: var(--accent); }
 
