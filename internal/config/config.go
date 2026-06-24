@@ -134,6 +134,11 @@ func FromEnv() Config {
 // e.g. /home/sprite -> -home-sprite ; /home/sprite/.sa-home -> -home-sprite--sa-home
 // (the leading "/." becomes "--"). Getting this wrong points history replay at an
 // empty directory, so transcripts (and thus chat history on refresh) are lost.
+// ProjectsDirFor returns the ~/.claude/projects transcript directory Claude uses
+// for a given working directory. Exposed so per-session working dirs can locate
+// their own transcripts for history replay.
+func ProjectsDirFor(cwd string) string { return deriveProjectsDir(cwd) }
+
 func deriveProjectsDir(workDir string) string {
 	home := os.Getenv("HOME")
 	if home == "" {
