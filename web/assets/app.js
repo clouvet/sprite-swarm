@@ -546,7 +546,6 @@
       imagePreviewImg.src = localUrl;
       imagePreviewName.textContent = data.filename;
       imagePreview.classList.add('has-image');
-      inputArea.classList.add('focused');
     } catch (e) { addSystem('Upload error: ' + e.message); }
   }
 
@@ -588,7 +587,7 @@
   }
   function autoGrow() {
     inputEl.style.height = 'auto';
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
   }
 
   // ---- voice input (SpeechRecognition) ----
@@ -633,12 +632,7 @@
   }
 
   // ---- input focus/collapse ----
-  inputEl.addEventListener('focus', () => inputArea.classList.add('focused'));
-  inputEl.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (!inputEl.value.trim() && !pendingImage && !isOpeningFilePicker) inputArea.classList.remove('focused');
-    }, 120);
-  });
+  // Keep textarea focus when tapping a toolbar button.
   [attachBtn, micBtn, sendBtn, stopBtn].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
 
   // ---- sidebar ----
