@@ -4,6 +4,7 @@
   --bg: #1a1a2e;
   --bg-secondary: #252539;
   --bg-tertiary: #2d2d41;
+  --bg-sunken: #14141f;
   --text: #e5e5e5;
   --text-muted: #888;
   --text-secondary: #aaa;
@@ -29,7 +30,7 @@ body {
 
 /* ---- sidebar ---- */
 #sidebar {
-  width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border);
+  width: var(--sidebar-width); background: var(--bg-sunken);
   display: flex; flex-direction: column; flex-shrink: 0; padding-top: var(--safe-top);
   transition: margin-left .25s ease;
 }
@@ -71,7 +72,10 @@ body {
 #overlay.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; }
 
 /* ---- main ---- */
-#main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-top); }
+/* Main floats above the recessed sidebar: a soft shadow off its left edge falls
+   onto the (darker) sidebar so the sidebar reads as set back, coming from under. */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-top);
+  position: relative; z-index: 1; background: var(--bg); box-shadow: -8px 0 18px rgba(0,0,0,0.38); }
 header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
 header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sprite-emoji { font-size: 14px; }
