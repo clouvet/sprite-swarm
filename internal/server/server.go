@@ -28,6 +28,7 @@ type Fleet interface {
 	AgentPresent(ctx context.Context, id string) (exists, present bool, err error)
 	RemoveAgent(ctx context.Context, id string) error
 	Dispatch(ctx context.Context, target, task string) (interface{}, error)
+	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
 	GetMemoryValue(ctx context.Context, author, id string) (interface{}, error)
@@ -87,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
+	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
@@ -309,6 +311,35 @@ func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// servePhase records this agent's current activity (free-text, one line) in the
+// brain. It's how a worker keeps peers informed without interrupting them: the
+// phase shows in the roster and in every peer's injected fleet context, so when a
+// human asks home "how's wk-3 doing?", home already has wk-3's latest note. This
+// is a self-report on the LOCAL agent only (no target) — cross-sprite reads go
+// through the brain, never a direct call.
+func (s *Server) servePhase(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Phase string `json:"phase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Phase) == "" {
+		http.Error(w, "phase is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.fleet.UpdatePhase(r.Context(), strings.TrimSpace(body.Phase)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // serveDestroy tears down a worker sprite (destroy VM + remove its brain entry).
