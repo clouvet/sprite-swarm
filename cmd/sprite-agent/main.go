@@ -125,11 +125,17 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 	if spawnAvailable {
 		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
-			"To assign work to a peer, POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"} — " +
-			"it lands in that worker's own session (attach to watch). " +
-			"To check how a peer is doing without interrupting it, GET /api/fleet/status?target=<id> — " +
-			"it returns that peer's latest phase plus its LIVE state (generating right now? sessions? awake?), " +
-			"so you can answer \"how is <worker> progressing?\" with current info. " +
+			"DELEGATING WORK follows ONE fixed protocol — use it exactly, never improvise a way to get " +
+			"results: " +
+			"(1) ASSIGN — POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"}; the response has a " +
+			"\"session_id\" — REMEMBER it, that's where the worker does the work in its own session. " +
+			"(2) PROGRESS — GET /api/fleet/status?target=<id> returns the peer's latest phase + LIVE state " +
+			"(generating now? sessions? awake?), so you can answer \"how is <worker> doing?\" without interrupting it. " +
+			"(3) RESULT — GET /api/fleet/result?target=<id>&session=<session_id> returns the worker's final " +
+			"answer (\"ready\":true once done); poll status until done, then PULL the result and relay it to the human " +
+			"in this chat. NEVER ask a worker to dispatch/send/curl its result back to you — a result delivered " +
+			"through dispatch is misread as a NEW task and executed, spawning runaway sessions. You PULL; the worker never pushes. " +
+			"To send an informational FYI rather than work, add \"kind\":\"note\" to a dispatch — the recipient is told not to execute it. " +
 			"To tear a worker down, POST /api/fleet/destroy {\"target\":\"<id>\"} — this destroys its VM " +
 			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that worker " +
 			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
@@ -307,14 +313,25 @@ func main() {
 		// Dispatch (P2.1): poll this agent's task inbox and inject each task into a
 		// local session so it materializes in the transcript (seam #2). Label the
 		// session so the dispatched work shows up in the UI list (visible + attachable).
-		inject := func(sessionID, task string) error {
+		inject := func(sessionID, task, kind string) error {
+			if kind == fleet.KindNote {
+				// A note is informational — deliver it but make clear it is NOT work,
+				// so a relayed report/FYI is never executed as a task.
+				srv.RegisterSession(sessionID, "note: "+taskSnippet(task))
+				framed := "[Informational note from a fleet peer — NOT a task] Shared for your awareness " +
+					"only. Do NOT execute it, act on it, or treat it as work — just take it in. No response " +
+					"or action is needed unless it changes something you're already doing.\n\n" + task
+				return h.InjectMessage(sessionID, framed)
+			}
 			srv.RegisterSession(sessionID, "task: "+taskSnippet(task))
-			// Frame it so the worker knows this is dispatched work a peer is tracking
-			// (and that publishing its phase is how they'll see progress — they can't
-			// read this transcript). Keeps the report channel obvious, not guessed.
+			// Frame dispatched work, and pin down the RESULT contract: the peer pulls
+			// the result from this session — the worker must NOT push it back (a pushed
+			// result is misread as a new task, the bug this protocol exists to prevent).
 			framed := "[Dispatched task from a fleet peer] Work this to completion in this session. " +
-				"As you go, keep your fleet phase current (POST /api/fleet/phase {\"phase\":\"…\"}) at each " +
-				"milestone and a final \"done: <result>\" — that note is how the peer tracks your progress.\n\n" + task
+				"Keep your fleet phase current (POST /api/fleet/phase {\"phase\":\"…\"}) at each milestone and a " +
+				"final \"done: <result>\". Put your final answer/report as your LAST message in this session — the " +
+				"peer RETRIEVES it by pulling this session. Do NOT dispatch, curl, or otherwise send your result " +
+				"back to anyone; that would be misread as a new task. Just finish here.\n\n" + task
 			return h.InjectMessage(sessionID, framed)
 		}
 		fleetSvc.StartTaskPolling(context.Background(), inject)

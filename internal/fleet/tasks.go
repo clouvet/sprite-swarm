@@ -35,9 +35,17 @@ type Task struct {
 	From      string `json:"from"`
 	To        string `json:"to"`
 	Task      string `json:"task"`
+	Kind      string `json:"kind"`       // "task" = work to execute; "note" = informational, do NOT execute
 	SessionID string `json:"session_id"` // session the target should inject the task into
 	CreatedAt int64  `json:"created_at"`
 }
+
+// Task kinds. A "note" is the guardrail against the report-as-work-order trap:
+// informational sends are delivered as an FYI the target must not execute.
+const (
+	KindTask = "task"
+	KindNote = "note"
+)
 
 // Tasks are append-only under a dedicated prefix (collision-proof per-key), so
 // many assigners never clobber each other (DESIGN §4.1 pattern 2). They live
@@ -47,12 +55,16 @@ func taskKey(to, id string) string    { return path.Join("fleet", "tasks", to, i
 func seenTasksKey(self string) string { return path.Join("fleet", self, "seen-tasks.json") }
 
 // Dispatch records a task assigned by this agent to target, returning it (with a
-// fresh session id the target will inject into). RosterProvider/Dispatcher hook.
-func (s *Service) Dispatch(ctx context.Context, target, task string) (interface{}, error) {
-	return s.dispatch(ctx, target, task)
+// fresh session id the target will inject into). kind is "task" (execute) or
+// "note" (informational); empty defaults to task. RosterProvider/Dispatcher hook.
+func (s *Service) Dispatch(ctx context.Context, target, task, kind string) (interface{}, error) {
+	return s.dispatch(ctx, target, task, kind)
 }
 
-func (s *Service) dispatch(ctx context.Context, target, task string) (Task, error) {
+func (s *Service) dispatch(ctx context.Context, target, task, kind string) (Task, error) {
+	if kind != KindNote {
+		kind = KindTask
+	}
 	now := s.now()
 	t := Task{
 		// id is timestamp-prefixed for natural ordering + a uuid for uniqueness.
@@ -60,6 +72,7 @@ func (s *Service) dispatch(ctx context.Context, target, task string) (Task, erro
 		From:      s.id,
 		To:        target,
 		Task:      task,
+		Kind:      kind,
 		SessionID: newUUID(),
 		CreatedAt: now.Unix(),
 	}
@@ -142,7 +155,7 @@ func (s *Service) Inbox(ctx context.Context, id string) ([]Task, error) {
 // once immediately (so a freshly-booted or just-nudged agent picks up tasks that
 // arrived while it was down), then keeps a slow backstop poll running. Seen task
 // ids persist so a restart never re-injects.
-func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, task string) error) {
+func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, task, kind string) error) {
 	s.taskMu.Lock()
 	s.injectFn = inject
 	s.seen = s.loadSeen(ctx)
@@ -185,11 +198,11 @@ func (s *Service) DrainInbox(ctx context.Context) error {
 		if s.seen[t.ID] {
 			continue
 		}
-		if err := s.injectFn(t.SessionID, t.Task); err != nil {
+		if err := s.injectFn(t.SessionID, t.Task, t.Kind); err != nil {
 			log.Printf("fleet: inject task %s failed: %v", t.ID, err)
 			continue
 		}
-		log.Printf("fleet: accepted task %s from %s -> session %s", t.ID, t.From, t.SessionID)
+		log.Printf("fleet: accepted %s %s from %s -> session %s", t.Kind, t.ID, t.From, t.SessionID)
 		s.seen[t.ID] = true
 		changed = true
 	}

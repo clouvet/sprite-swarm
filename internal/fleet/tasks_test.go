@@ -14,7 +14,7 @@ func TestDispatchThenInbox(t *testing.T) {
 	home := newService(brain, config.Config{AgentID: "home"})
 	home.now = func() time.Time { return now }
 
-	task, err := home.dispatch(context.Background(), "wk-1", "build the thing")
+	task, err := home.dispatch(context.Background(), "wk-1", "build the thing", KindTask)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,11 +43,11 @@ func TestDrainInboxInjectsOnceAndDedups(t *testing.T) {
 	now := time.Unix(41_000_000, 0)
 	home := newService(brain, config.Config{AgentID: "home"})
 	home.now = func() time.Time { return now }
-	task, _ := home.dispatch(context.Background(), "wk-1", "do work")
+	task, _ := home.dispatch(context.Background(), "wk-1", "do work", KindTask)
 
 	worker := newService(brain, config.Config{AgentID: "wk-1"})
 	var injected []string
-	worker.injectFn = func(sid, tk string) error { injected = append(injected, sid+"|"+tk); return nil }
+	worker.injectFn = func(sid, tk, _ string) error { injected = append(injected, sid+"|"+tk); return nil }
 	worker.seen = worker.loadSeen(context.Background())
 
 	if err := worker.DrainInbox(context.Background()); err != nil {
@@ -72,14 +72,14 @@ func TestStartTaskPollingDrainsImmediately(t *testing.T) {
 	now := time.Unix(42_000_000, 0)
 	home := newService(brain, config.Config{AgentID: "home"})
 	home.now = func() time.Time { return now }
-	home.dispatch(context.Background(), "wk-1", "waiting task")
+	home.dispatch(context.Background(), "wk-1", "waiting task", KindTask)
 
 	worker := newService(brain, config.Config{AgentID: "wk-1"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // stop the backstop goroutine when the test ends
 
 	done := make(chan string, 1)
-	worker.StartTaskPolling(ctx, func(_, tk string) error { done <- tk; return nil })
+	worker.StartTaskPolling(ctx, func(_, tk, _ string) error { done <- tk; return nil })
 
 	select {
 	case got := <-done:

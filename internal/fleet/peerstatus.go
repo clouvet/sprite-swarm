@@ -62,16 +62,37 @@ func (s *Service) PeerStatus(ctx context.Context, target string) (interface{}, e
 	return out, nil
 }
 
-// fetchHealth does an authenticated GET of a peer's /health and returns the parsed
-// JSON. Uses the sprites token as a Bearer against the peer's .sprites.app URL.
+// PeerResult fetches what a worker produced in a given session — its final
+// assistant message — by an authenticated GET of the worker's
+// /api/sessions/<session>/result. This is how home RETRIEVES a delegated result:
+// it pulls from the exact session dispatch returned, so the worker never pushes
+// anything back (no report-as-work-order trap). Empty session is rejected.
+func (s *Service) PeerResult(ctx context.Context, target, session string) (interface{}, error) {
+	if target == "" || session == "" {
+		return nil, fmt.Errorf("target and session are required")
+	}
+	url := s.agentURL(ctx, target)
+	if url == "" {
+		return nil, fmt.Errorf("no such agent in the roster: %s", target)
+	}
+	return s.authedGetJSON(ctx, strings.TrimRight(url, "/")+"/api/sessions/"+session+"/result")
+}
+
+// fetchHealth does an authenticated GET of a peer's /health.
 func (s *Service) fetchHealth(ctx context.Context, baseURL string) (interface{}, error) {
+	return s.authedGetJSON(ctx, strings.TrimRight(baseURL, "/")+"/health")
+}
+
+// authedGetJSON GETs a peer URL with the sprites token as a Bearer (the verified
+// .sprites.app cross-sprite path) and returns the parsed JSON body.
+func (s *Service) authedGetJSON(ctx context.Context, url string) (interface{}, error) {
 	tok := s.GetSecret(ctx, SecretSpritesAPIToken)
 	if tok == "" {
 		return nil, fmt.Errorf("no sprites token to authenticate the call")
 	}
 	ctx, cancel := context.WithTimeout(ctx, peerStatusTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +102,13 @@ func (s *Service) fetchHealth(ctx context.Context, baseURL string) (interface{},
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("health returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("GET %s returned %d", url, resp.StatusCode)
 	}
 	var parsed interface{}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("bad health body: %w", err)
+		return nil, fmt.Errorf("bad JSON body: %w", err)
 	}
 	return parsed, nil
 }
