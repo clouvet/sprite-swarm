@@ -127,6 +127,9 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
 			"To assign work to a peer, POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"} — " +
 			"it lands in that worker's own session (attach to watch). " +
+			"To check how a peer is doing without interrupting it, GET /api/fleet/status?target=<id> — " +
+			"it returns that peer's latest phase plus its LIVE state (generating right now? sessions? awake?), " +
+			"so you can answer \"how is <worker> progressing?\" with current info. " +
 			"To tear a worker down, POST /api/fleet/destroy {\"target\":\"<id>\"} — this destroys its VM " +
 			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that worker " +
 			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
