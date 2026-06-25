@@ -111,9 +111,12 @@ func ExtractContent(msg *ClaudeMessage) (*ParsedMessage, error) {
 	return nil, nil
 }
 
-// shouldSkipMessage filters internal Claude Code command/markers.
+// shouldSkipMessage filters internal Claude Code command/markers and
+// harness-injected meta turns that aren't real conversation, so they don't render
+// as user bubbles in replayed history (and don't clobber the human's own turns).
 func shouldSkipMessage(content string) bool {
-	markers := []string{
+	trimmed := strings.TrimSpace(content)
+	prefixes := []string{
 		"<local-command-caveat>",
 		"<command-name>",
 		"<command-message>",
@@ -121,11 +124,14 @@ func shouldSkipMessage(content string) bool {
 		"<local-command-stdout>",
 		"<local-command-stderr>",
 		"<system-reminder>",
+		"[SYSTEM NOTIFICATION", // background-task completion notice
 	}
-	for _, marker := range markers {
-		if strings.HasPrefix(content, marker) {
+	for _, p := range prefixes {
+		if strings.HasPrefix(trimmed, p) {
 			return true
 		}
 	}
-	return false
+	// Background-task notifications are injected as a user turn; both wrapper
+	// forms carry this tag. They're harness noise, never the human's message.
+	return strings.Contains(trimmed, "<task-notification>")
 }
