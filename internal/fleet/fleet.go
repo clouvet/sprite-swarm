@@ -33,6 +33,10 @@ type Service struct {
 	idleSince       time.Time             // when the current idle stretch began (zero = not idle)
 	manualReapable  bool                  // set via MarkReapable (e.g. work done / PR merged)
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
+
+	taskMu  sync.Mutex                          // serializes inbox drains (one at a time)
+	seen    map[string]bool                     // task ids already injected (loaded once, persisted on change)
+	injectFn func(sessionID, task string) error // delivers a task into a local session
 }
 
 // New builds a Service backed by the brain. Prefers the gateway connector
