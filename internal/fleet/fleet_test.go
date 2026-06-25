@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,48 @@ func TestRegisterThenRoster(t *testing.T) {
 	}
 	if roster[0].ID != "agent-a" || !roster[0].Alive || roster[0].Phase != "idle" {
 		t.Fatalf("unexpected entry: %+v", roster[0])
+	}
+}
+
+// A worker's published phase is visible to a peer reading the roster + fleet
+// context — the channel that lets home answer "how's wk-3 doing?" without
+// reading the worker's transcript.
+func TestUpdatePhaseVisibleToPeer(t *testing.T) {
+	brain := newFakeBrain()
+	now := time.Unix(5_000_000, 0)
+
+	worker := newService(brain, config.Config{AgentID: "wk-3"})
+	worker.now = func() time.Time { return now }
+	if err := worker.Register(context.Background()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := worker.UpdatePhase(context.Background(), "running the test suite"); err != nil {
+		t.Fatalf("update phase: %v", err)
+	}
+
+	home := newService(brain, config.Config{AgentID: "home"})
+	home.now = func() time.Time { return now }
+
+	roster, err := home.roster(context.Background())
+	if err != nil {
+		t.Fatalf("roster: %v", err)
+	}
+	var wk *RosterEntry
+	for i := range roster {
+		if roster[i].ID == "wk-3" {
+			wk = &roster[i]
+		}
+	}
+	if wk == nil || wk.Phase != "running the test suite" {
+		t.Fatalf("peer should see worker's published phase, got %+v", wk)
+	}
+
+	ctx, err := home.FleetContext(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("fleet context: %v", err)
+	}
+	if !strings.Contains(ctx, "running the test suite") {
+		t.Fatalf("fleet context should surface the worker phase:\n%s", ctx)
 	}
 }
 
