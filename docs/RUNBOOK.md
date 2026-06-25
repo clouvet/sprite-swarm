@@ -86,6 +86,29 @@ runs the binary with the bootstrap env. The worker boots `sprite-agent` and
 self-registers — it appears in `GET /api/fleet` (`alive:true`) within ~1–2 min.
 Set `SPRITE_AGENT_SPAWN_PROVISION=0` for a bare create (no agent installed).
 
+## Long-running tasks (durable background turns)
+A turn keeps running when you disconnect. Closing the browser / locking the phone
+does **not** abort the work: the grace timer reaps a session's `claude` process only
+once it's **idle** with no client attached — while a turn is still generating the
+process is kept alive and re-checked (`process.Manager.StartGracePeriod`). The
+transcript is written to disk throughout and keepalive holds the VM awake while any
+session generates (`hub.IsIdle` checks generation first), so you can start a long
+task, leave, and on **refresh/re-attach** the session replays the full history of
+work done while you were away — the web equivalent of detaching and re-attaching a
+terminal `claude` session.
+
+## Progress visibility across the fleet
+Delegated work runs in the **worker's own session**. To watch it, click the worker in
+the fleet list — that opens the worker's own URL (a human browser passes the OAuth
+gate that blocks *cross-sprite* calls), and durable turns mean its chat shows live
+progress on refresh. To ask a *peer* ("how is wk-3 doing?") without attaching, read
+its **phase**: each agent self-reports a one-line status to the brain with
+`POST /api/fleet/phase {"phase":"<what I'm doing / done: <result>>"}`, which appears in
+the roster (`GET /api/fleet`) and in every peer's injected fleet context. A worker
+can't read another's transcript, so this note is the cross-agent progress channel;
+agents are told (in the fleet affordance) to keep it current, especially on dispatched
+work.
+
 ## Durable workers + reaping
 Workers are **durable workspaces, not one-shots.** A worker that finishes a feature
 goes idle and *suspends* (cheap; the keep-awake task releases) — its VM disk (repo +
