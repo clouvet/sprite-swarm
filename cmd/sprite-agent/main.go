@@ -110,13 +110,23 @@ func taskSnippet(task string) string {
 // appended to Claude's system prompt so the agent knows it can spin up isolated
 // worker sprites instead of doing all work on its own filesystem.
 func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
+	apiBase := cfg.Addr
+	if strings.HasPrefix(apiBase, ":") {
+		apiBase = "localhost" + apiBase
+	}
+	apiBase = "http://" + apiBase
+
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "You are sprite-agent %q, one peer in a symmetric fleet of identical agents — "+
 		"not a standalone assistant. For parallel or isolated work, prefer spinning up a worker "+
 		"sprite (its own microVM, filesystem, and git checkout) over doing everything here. ", cfg.AgentID)
 	if cfg.Brain.Enabled() {
-		b.WriteString("The live fleet roster is available at GET /api/fleet on this service. " +
-			"Keep your own status current so peers can see how you're doing without interrupting you: " +
+		fmt.Fprintf(b, "Your fleet API lives on your OWN service at %s — this is a given: never discover, "+
+			"announce, restate, or verify the API location, and don't pre-check the roster or remark on who "+
+			"else is in the fleet just to act. When asked to spawn a worker, dispatch, etc., DO it (call the "+
+			"endpoint) and report the outcome — skip the narration about plumbing. The live roster is "+
+			"GET /api/fleet. ", apiBase)
+		b.WriteString("Keep your own status current so peers can see how you're doing without interrupting you: " +
 			"POST /api/fleet/phase {\"phase\":\"<one line: what you're doing now, or 'done: <result>'>\"}. " +
 			"This is especially important while working a dispatched task — update it at each milestone and " +
 			"when you finish, so when a human asks another agent \"how is <you> progressing?\" they get a real " +
