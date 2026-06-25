@@ -115,7 +115,12 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 		"not a standalone assistant. For parallel or isolated work, prefer spinning up a worker "+
 		"sprite (its own microVM, filesystem, and git checkout) over doing everything here. ", cfg.AgentID)
 	if cfg.Brain.Enabled() {
-		b.WriteString("The live fleet roster is available at GET /api/fleet on this service. ")
+		b.WriteString("The live fleet roster is available at GET /api/fleet on this service. " +
+			"Keep your own status current so peers can see how you're doing without interrupting you: " +
+			"POST /api/fleet/phase {\"phase\":\"<one line: what you're doing now, or 'done: <result>'>\"}. " +
+			"This is especially important while working a dispatched task — update it at each milestone and " +
+			"when you finish, so when a human asks another agent \"how is <you> progressing?\" they get a real " +
+			"answer from your latest phase (peers can't read your transcript; this note is the channel). ")
 	}
 	if spawnAvailable {
 		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
@@ -301,7 +306,13 @@ func main() {
 		// session so the dispatched work shows up in the UI list (visible + attachable).
 		inject := func(sessionID, task string) error {
 			srv.RegisterSession(sessionID, "task: "+taskSnippet(task))
-			return h.InjectMessage(sessionID, task)
+			// Frame it so the worker knows this is dispatched work a peer is tracking
+			// (and that publishing its phase is how they'll see progress — they can't
+			// read this transcript). Keeps the report channel obvious, not guessed.
+			framed := "[Dispatched task from a fleet peer] Work this to completion in this session. " +
+				"As you go, keep your fleet phase current (POST /api/fleet/phase {\"phase\":\"…\"}) at each " +
+				"milestone and a final \"done: <result>\" — that note is how the peer tracks your progress.\n\n" + task
+			return h.InjectMessage(sessionID, framed)
 		}
 		fleetSvc.StartTaskPolling(context.Background(), inject)
 
