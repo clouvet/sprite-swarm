@@ -108,6 +108,10 @@
   function setComposing(on) {
     document.documentElement.setAttribute('data-view', on ? 'new' : 'chat');
     inputEl.placeholder = on ? 'How can I help you?' : 'Write a message';
+    // Recompute height AFTER the view switch. autoGrow sets an inline style.height,
+    // and the "new" view's min-height:120px makes it tall; without this, that tall
+    // inline height sticks when we dock to "chat" (large composer on existing chats).
+    autoGrow();
   }
   function updateComposing() {
     setComposing(!messagesEl.querySelector('.message'));
