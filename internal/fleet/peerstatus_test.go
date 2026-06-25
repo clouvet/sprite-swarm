@@ -62,6 +62,45 @@ func TestPeerStatusMergesLiveHealth(t *testing.T) {
 	}
 }
 
+func TestPeerResultPullsSessionResult(t *testing.T) {
+	var gotPath, gotAuth string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"session":"sess-1","ready":true,"result":"the findings"}`))
+	}))
+	defer peer.Close()
+
+	brain := newFakeBrain()
+	now := time.Unix(52_000_000, 0)
+	worker := newService(brain, config.Config{AgentID: "wk-1", PublicURL: peer.URL})
+	worker.now = func() time.Time { return now }
+	worker.Register(context.Background())
+	worker.PutSecret(context.Background(), SecretSpritesAPIToken, "org/oid/tid/secret")
+
+	home := newService(brain, config.Config{AgentID: "home"})
+	home.now = func() time.Time { return now }
+
+	res, err := home.PeerResult(context.Background(), "wk-1", "sess-1")
+	if err != nil {
+		t.Fatalf("PeerResult: %v", err)
+	}
+	m := res.(map[string]interface{})
+	if m["ready"] != true || m["result"] != "the findings" {
+		t.Fatalf("result not pulled through: %+v", m)
+	}
+	if gotPath != "/api/sessions/sess-1/result" {
+		t.Fatalf("wrong path pulled: %q", gotPath)
+	}
+	if gotAuth != "Bearer org/oid/tid/secret" {
+		t.Fatalf("result pull lacked the bearer: %q", gotAuth)
+	}
+	// A missing session id is rejected without a network call.
+	if _, err := home.PeerResult(context.Background(), "wk-1", ""); err == nil {
+		t.Fatal("expected error for empty session")
+	}
+}
+
 // A reachable-but-down peer (no live endpoint) still answers from the roster, with
 // the failure surfaced rather than fatal.
 func TestPeerStatusFallsBackWhenUnreachable(t *testing.T) {

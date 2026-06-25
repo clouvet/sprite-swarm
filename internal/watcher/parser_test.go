@@ -38,6 +38,21 @@ func TestExtractContentSkipsMarkers(t *testing.T) {
 	}
 }
 
+func TestExtractContentSkipsTaskNotifications(t *testing.T) {
+	// Background-task notifications are injected as user turns; they must not render
+	// as the human's message (the refresh-clobber bug). Both wrapper forms.
+	cases := []string{
+		`{"type":"user","timestamp":"2026-06-22T20:00:00Z","message":{"role":"user","content":"<task-notification>\n<task-id>x</task-id>\n</task-notification>"}}`,
+		`{"type":"user","timestamp":"2026-06-22T20:00:00Z","message":{"role":"user","content":"[SYSTEM NOTIFICATION - NOT USER INPUT]\nbackground task done\n<task-notification></task-notification>"}}`,
+	}
+	for i, line := range cases {
+		msg, _ := ParseJSONLLine(line)
+		if parsed, _ := ExtractContent(msg); parsed != nil {
+			t.Fatalf("case %d: expected task-notification to be skipped, got %+v", i, parsed)
+		}
+	}
+}
+
 func TestExtractContentSkipsNonDisplayable(t *testing.T) {
 	line := `{"type":"file-history-snapshot","timestamp":"2026-06-22T20:00:00Z"}`
 	msg, _ := ParseJSONLLine(line)
