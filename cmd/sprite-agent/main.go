@@ -142,8 +142,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 			"(2) PROGRESS — GET /api/fleet/status?target=<id> returns the peer's latest phase + LIVE state " +
 			"(generating now? sessions? awake?), so you can answer \"how is <worker> doing?\" without interrupting it. " +
 			"(3) RESULT — GET /api/fleet/result?target=<id>&session=<session_id> returns the worker's final " +
-			"answer (\"ready\":true once done); poll status until done, then PULL the result and relay it to the human " +
-			"in this chat. NEVER ask a worker to dispatch/send/curl its result back to you — a result delivered " +
+			"answer (\"ready\":true once done), which you PULL and relay to the human in this chat. " +
+			"After assigning, just tell the human it's dispatched and stop — do NOT narrate a plan, set up a " +
+			"polling loop, or spawn background watchers. Pull status/result ON DEMAND: when the human asks, or " +
+			"once when you'd reasonably expect it done; if it's not ready, say so — never sit in a loop. " +
+			"NEVER ask a worker to dispatch/send/curl its result back to you — a result delivered " +
 			"through dispatch is misread as a NEW task and executed, spawning runaway sessions. You PULL; the worker never pushes. " +
 			"To send an informational FYI rather than work, add \"kind\":\"note\" to a dispatch — the recipient is told not to execute it. " +
 			"To tear a worker down, POST /api/fleet/destroy {\"target\":\"<id>\"} — this destroys its VM " +
