@@ -38,7 +38,7 @@ func TestDispatchThenInbox(t *testing.T) {
 	}
 }
 
-func TestTaskPollingInjectsOnceAndDedups(t *testing.T) {
+func TestDrainInboxInjectsOnceAndDedups(t *testing.T) {
 	brain := newFakeBrain()
 	now := time.Unix(41_000_000, 0)
 	home := newService(brain, config.Config{AgentID: "home"})
@@ -46,31 +46,47 @@ func TestTaskPollingInjectsOnceAndDedups(t *testing.T) {
 	task, _ := home.dispatch(context.Background(), "wk-1", "do work")
 
 	worker := newService(brain, config.Config{AgentID: "wk-1"})
-
-	// Simulate two poll passes: inject unseen, persist seen, re-load, no re-inject.
 	var injected []string
-	seen := worker.loadSeen(context.Background())
-	pass := func() {
-		inbox, _ := worker.Inbox(context.Background(), "wk-1")
-		changed := false
-		for _, tk := range inbox {
-			if seen[tk.ID] {
-				continue
-			}
-			injected = append(injected, tk.SessionID+"|"+tk.Task)
-			seen[tk.ID] = true
-			changed = true
-		}
-		if changed {
-			worker.saveSeen(context.Background(), seen)
-		}
+	worker.injectFn = func(sid, tk string) error { injected = append(injected, sid+"|"+tk); return nil }
+	worker.seen = worker.loadSeen(context.Background())
+
+	if err := worker.DrainInbox(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	pass()
-	// Reload seen from the brain (as a restart would) and poll again.
-	seen = worker.loadSeen(context.Background())
-	pass()
+	// Simulate a restart: reload seen from the brain, drain again — no re-inject.
+	worker.seen = worker.loadSeen(context.Background())
+	if err := worker.DrainInbox(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(injected) != 1 || injected[0] != task.SessionID+"|do work" {
 		t.Fatalf("expected exactly one injection, got %v", injected)
+	}
+}
+
+// StartTaskPolling drains immediately, so a task waiting in the brain at boot is
+// delivered without waiting for the backstop tick (the nudge fast-path relies on
+// this same immediate drain when a peer pokes us).
+func TestStartTaskPollingDrainsImmediately(t *testing.T) {
+	brain := newFakeBrain()
+	now := time.Unix(42_000_000, 0)
+	home := newService(brain, config.Config{AgentID: "home"})
+	home.now = func() time.Time { return now }
+	home.dispatch(context.Background(), "wk-1", "waiting task")
+
+	worker := newService(brain, config.Config{AgentID: "wk-1"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // stop the backstop goroutine when the test ends
+
+	done := make(chan string, 1)
+	worker.StartTaskPolling(ctx, func(_, tk string) error { done <- tk; return nil })
+
+	select {
+	case got := <-done:
+		if got != "waiting task" {
+			t.Fatalf("unexpected task: %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartTaskPolling did not drain the waiting task on boot")
 	}
 }
