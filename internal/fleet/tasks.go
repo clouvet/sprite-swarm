@@ -4,23 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"path"
 	"sort"
 	"strings"
 	"time"
 )
 
-// taskPollInterval is how often an agent checks its task inbox.
-const taskPollInterval = 10 * time.Second
+// taskPollInterval is the BACKSTOP cadence for draining the inbox. Delivery is
+// normally instant: the assigner nudges the target directly (see dispatch), the
+// target drains on boot, and dedup makes a redundant drain harmless. This slow
+// poll only catches a task whose nudge was missed (e.g. a transient network
+// blip while the target was up), so it can be lazy.
+const taskPollInterval = 60 * time.Second
+
+// nudgeTimeout bounds the direct "drain now" call to a peer.
+const nudgeTimeout = 10 * time.Second
 
 // Task is a unit of work one agent assigns to another (P2.1 dispatch).
 //
-// DESIGN §10 wants delivery via the target's session API with the assignment
-// mirrored to S3 as visible fleet state. Because private sprite URLs are
-// OAuth-gated (no direct cross-sprite session call), the brain IS the delivery
-// channel here: the assigner writes the task; the target polls its inbox and
-// injects the task into its own session locally, so it still materializes in the
-// target's transcript (seam #2 holds — see BUILD_REPORT for the rationale).
+// Delivery: the assigner writes the task to the brain (the durable, visible
+// record) and then nudges the target directly so it drains immediately — sprite
+// URLs are reachable cross-sprite with the sprites token as a Bearer (an earlier
+// "OAuth-gated, no direct call" assumption turned out to be wrong). The target
+// always injects from the brain locally (so the task materializes in its own
+// transcript) and dedups by id, so a nudge, a boot drain, and the backstop poll
+// can all fire without double-injecting.
 type Task struct {
 	ID        string `json:"id"`
 	From      string `json:"from"`
@@ -58,7 +67,53 @@ func (s *Service) dispatch(ctx context.Context, target, task string) (Task, erro
 	if err := s.brain.Put(ctx, taskKey(target, t.ID), data); err != nil {
 		return Task{}, err
 	}
+	// The brain holds the durable record; nudge the target so it drains NOW
+	// instead of waiting for its backstop poll. Best-effort, in the background:
+	// if the nudge fails (target down/suspended), the task still lands via the
+	// target's boot drain or next poll. A nudge to a suspended sprite wakes it.
+	go s.nudge(context.Background(), target)
 	return t, nil
+}
+
+// nudge tells target to drain its inbox immediately via a direct sprite-to-sprite
+// call (its roster .sprites.app URL + Bearer token — the verified path). Content-
+// free and idempotent: worst case the target does a redundant, dedup-safe drain.
+func (s *Service) nudge(ctx context.Context, target string) {
+	url := s.agentURL(ctx, target)
+	if url == "" {
+		return
+	}
+	tok := s.GetSecret(ctx, SecretSpritesAPIToken)
+	if tok == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, nudgeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/api/fleet/nudge", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("fleet: nudge %s failed (%v); task will deliver via poll", target, err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// agentURL looks up a peer's session-service URL from the roster.
+func (s *Service) agentURL(ctx context.Context, id string) string {
+	roster, err := s.roster(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, e := range roster {
+		if e.ID == id {
+			return e.URL
+		}
+	}
+	return ""
 }
 
 // Inbox lists tasks addressed to id (visible fleet state), oldest first.
@@ -83,10 +138,18 @@ func (s *Service) Inbox(ctx context.Context, id string) ([]Task, error) {
 	return tasks, nil
 }
 
-// StartTaskPolling polls this agent's inbox and injects unseen tasks via inject.
-// Seen task ids persist to this agent's own prefix so a restart doesn't re-inject.
+// StartTaskPolling wires the task inbox: it registers the inject function, drains
+// once immediately (so a freshly-booted or just-nudged agent picks up tasks that
+// arrived while it was down), then keeps a slow backstop poll running. Seen task
+// ids persist so a restart never re-injects.
 func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, task string) error) {
-	seen := s.loadSeen(ctx)
+	s.taskMu.Lock()
+	s.injectFn = inject
+	s.seen = s.loadSeen(ctx)
+	s.taskMu.Unlock()
+
+	s.DrainInbox(ctx) // catch anything waiting right now
+
 	go func() {
 		ticker := time.NewTicker(taskPollInterval)
 		defer ticker.Stop()
@@ -96,31 +159,44 @@ func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, t
 				return
 			case <-ticker.C:
 				pollCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-				tasks, err := s.Inbox(pollCtx, s.id)
-				if err != nil {
-					cancel()
-					continue
-				}
-				changed := false
-				for _, t := range tasks {
-					if seen[t.ID] {
-						continue
-					}
-					if err := inject(t.SessionID, t.Task); err != nil {
-						log.Printf("fleet: inject task %s failed: %v", t.ID, err)
-						continue
-					}
-					log.Printf("fleet: accepted task %s from %s -> session %s", t.ID, t.From, t.SessionID)
-					seen[t.ID] = true
-					changed = true
-				}
-				if changed {
-					s.saveSeen(pollCtx, seen)
-				}
+				s.DrainInbox(pollCtx)
 				cancel()
 			}
 		}
 	}()
+}
+
+// DrainInbox injects every unseen task addressed to this agent. It's the single
+// delivery path — called on boot, on the backstop tick, and on demand when a peer
+// nudges (POST /api/fleet/nudge). Serialized so concurrent triggers can't double-
+// inject; dedup via the persisted seen set makes repeats harmless.
+func (s *Service) DrainInbox(ctx context.Context) error {
+	s.taskMu.Lock()
+	defer s.taskMu.Unlock()
+	if s.injectFn == nil {
+		return nil // polling not started yet
+	}
+	tasks, err := s.Inbox(ctx, s.id)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, t := range tasks {
+		if s.seen[t.ID] {
+			continue
+		}
+		if err := s.injectFn(t.SessionID, t.Task); err != nil {
+			log.Printf("fleet: inject task %s failed: %v", t.ID, err)
+			continue
+		}
+		log.Printf("fleet: accepted task %s from %s -> session %s", t.ID, t.From, t.SessionID)
+		s.seen[t.ID] = true
+		changed = true
+	}
+	if changed {
+		s.saveSeen(ctx, s.seen)
+	}
+	return nil
 }
 
 func (s *Service) loadSeen(ctx context.Context) map[string]bool {

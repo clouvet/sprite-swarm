@@ -28,6 +28,7 @@ type Fleet interface {
 	AgentPresent(ctx context.Context, id string) (exists, present bool, err error)
 	RemoveAgent(ctx context.Context, id string) error
 	Dispatch(ctx context.Context, target, task string) (interface{}, error)
+	DrainInbox(ctx context.Context) error
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -88,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
+	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -311,6 +313,26 @@ func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveNudge is the receiving end of a peer's direct "drain your inbox now" call
+// (the fast path for dispatch). Cross-sprite it's reachable only with a Bearer
+// token on the public URL; on localhost it's open. Idempotent — it just triggers
+// an inbox drain — so it needs no body and no app-layer auth of its own.
+func (s *Server) serveNudge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.fleet.DrainInbox(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // servePhase records this agent's current activity (free-text, one line) in the
