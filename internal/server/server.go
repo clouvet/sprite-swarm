@@ -27,9 +27,10 @@ type Fleet interface {
 	MarkReapable(ctx context.Context) error
 	AgentPresent(ctx context.Context, id string) (exists, present bool, err error)
 	RemoveAgent(ctx context.Context, id string) error
-	Dispatch(ctx context.Context, target, task string) (interface{}, error)
+	Dispatch(ctx context.Context, target, task, kind string) (interface{}, error)
 	DrainInbox(ctx context.Context) error
 	PeerStatus(ctx context.Context, target string) (interface{}, error)
+	PeerResult(ctx context.Context, target, session string) (interface{}, error)
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -92,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
 	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
 	mux.HandleFunc("/api/fleet/status", s.serveStatus)
+	mux.HandleFunc("/api/fleet/result", s.serveFleetResult)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -181,6 +183,10 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(rest, "/retitle") {
 		s.retitle(w, r, strings.TrimSuffix(rest, "/retitle"))
+		return
+	}
+	if strings.HasSuffix(rest, "/result") {
+		s.serveSessionResult(w, r, strings.TrimSuffix(rest, "/result"))
 		return
 	}
 	id := rest
@@ -304,12 +310,13 @@ func (s *Server) serveDispatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Target string `json:"target"`
 		Task   string `json:"task"`
+		Kind   string `json:"kind"` // "task" (default, execute) or "note" (informational)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" || body.Task == "" {
 		http.Error(w, "target and task are required", http.StatusBadRequest)
 		return
 	}
-	res, err := s.fleet.Dispatch(r.Context(), body.Target, body.Task)
+	res, err := s.fleet.Dispatch(r.Context(), body.Target, body.Task, body.Kind)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -357,6 +364,44 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveFleetResult retrieves a delegated worker's output: GET /api/fleet/result?target=<id>&session=<sid>.
+// Home pulls the worker's final answer from the exact session dispatch returned —
+// the worker never pushes results back. The session id is the one /api/fleet/dispatch returned.
+func (s *Server) serveFleetResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.fleet.PeerResult(r.Context(), q.Get("target"), q.Get("session"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
+// serveSessionResult is the receiving end of a result pull: it returns a session's
+// final assistant message (read from the transcript). Cross-sprite it's reachable
+// only with the bearer on the public URL; on localhost it's open.
+func (s *Server) serveSessionResult(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	text, ts, ok := s.hub.SessionResult(id)
+	writeJSON(w, map[string]interface{}{
+		"session":   id,
+		"ready":     ok,
+		"result":    text,
+		"timestamp": ts,
+	})
 }
 
 // servePhase records this agent's current activity (free-text, one line) in the

@@ -716,6 +716,46 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 	}
 }
 
+// SessionResult returns a session's final assistant message — its "result" —
+// read from the transcript on disk. This backs the result-pull endpoint: a peer
+// (home) fetches what a worker produced from the exact session it dispatched to,
+// so the worker never has to push anything back. ok is false if there's no
+// transcript or no assistant text yet.
+func (h *Hub) SessionResult(sessionID string) (text string, tsMillis int64, ok bool) {
+	claudeUUID := sessionID
+	if sess := h.GetSession(sessionID); sess != nil && sess.ClaudeUUID != "" {
+		claudeUUID = sess.ClaudeUUID
+	}
+	file, err := os.Open(watcher.TranscriptPath(h.sessionProjectsDir(sessionID), claudeUUID))
+	if err != nil {
+		return "", 0, false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		msg, err := watcher.ParseJSONLLine(line)
+		if err != nil {
+			continue
+		}
+		parsed, err := watcher.ExtractContent(msg)
+		if err != nil || parsed == nil {
+			continue
+		}
+		if parsed.Role == "assistant" && strings.TrimSpace(parsed.Content) != "" {
+			text = parsed.Content
+			tsMillis = parsed.Timestamp.Unix() * 1000
+			ok = true
+		}
+	}
+	return text, tsMillis, ok
+}
+
 // sendJSON marshals v and sends it to one client (best-effort).
 func (h *Hub) sendJSON(client *Client, v interface{}) {
 	data, err := json.Marshal(v)
