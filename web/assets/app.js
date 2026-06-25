@@ -108,6 +108,10 @@
   function setComposing(on) {
     document.documentElement.setAttribute('data-view', on ? 'new' : 'chat');
     inputEl.placeholder = on ? 'How can I help you?' : 'Write a message';
+    // Recompute height AFTER the view switch. autoGrow sets an inline style.height,
+    // and the "new" view's min-height:120px makes it tall; without this, that tall
+    // inline height sticks when we dock to "chat" (large composer on existing chats).
+    autoGrow();
   }
   function updateComposing() {
     setComposing(!messagesEl.querySelector('.message'));
@@ -344,7 +348,11 @@
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
-        updateComposing();
+        // A history event only arrives for an existing session we've opened, so
+        // dock the composer — never flip to the big centered "new chat" composer
+        // just because the rendered list is momentarily empty (history still
+        // loading, mid-generation, or every line filtered as harness noise).
+        setComposing(false);
         break;
       case 'processing':
         if (msg.isProcessing) showThinking();
