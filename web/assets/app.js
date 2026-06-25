@@ -344,7 +344,11 @@
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         if (msg.isGenerating) showThinking();
-        updateComposing();
+        // A history event only arrives for an existing session we've opened, so
+        // dock the composer — never flip to the big centered "new chat" composer
+        // just because the rendered list is momentarily empty (history still
+        // loading, mid-generation, or every line filtered as harness noise).
+        setComposing(false);
         break;
       case 'processing':
         if (msg.isProcessing) showThinking();
