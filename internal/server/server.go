@@ -29,6 +29,7 @@ type Fleet interface {
 	RemoveAgent(ctx context.Context, id string) error
 	Dispatch(ctx context.Context, target, task string) (interface{}, error)
 	DrainInbox(ctx context.Context) error
+	PeerStatus(ctx context.Context, target string) (interface{}, error)
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -90,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/done", s.serveDone)
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
 	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
+	mux.HandleFunc("/api/fleet/status", s.serveStatus)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -333,6 +335,28 @@ func (s *Server) serveNudge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveStatus answers "how is <target> doing?" on demand: GET /api/fleet/status?target=<id>.
+// It merges the target's roster phase/liveness with a LIVE authenticated pull of
+// its /health, so an agent can report a peer's progress without attaching or
+// waiting for the peer to re-publish. No target (or self) returns this agent's own
+// roster view.
+func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	res, err := s.fleet.PeerStatus(r.Context(), r.URL.Query().Get("target"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, res)
 }
 
 // servePhase records this agent's current activity (free-text, one line) in the
