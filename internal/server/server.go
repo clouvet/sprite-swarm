@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/hub"
@@ -31,6 +33,9 @@ type Fleet interface {
 	DrainInbox(ctx context.Context) error
 	PeerStatus(ctx context.Context, target string) (interface{}, error)
 	PeerResult(ctx context.Context, target, session string) (interface{}, error)
+	PrepareSelfUpdate(ctx context.Context) (bool, string, error)
+	Reexec() error
+	UpdateFleet(ctx context.Context, target string) (interface{}, error)
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -94,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
 	mux.HandleFunc("/api/fleet/status", s.serveStatus)
 	mux.HandleFunc("/api/fleet/result", s.serveFleetResult)
+	mux.HandleFunc("/api/fleet/update", s.serveUpdate)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -385,6 +391,55 @@ func (s *Server) serveFleetResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveUpdate rolls out a new binary. POST /api/fleet/update with no body =
+// self-update (fetch the staged binary from the brain, swap it in place, re-exec
+// — the VM disk survives). With {"target":"<id>"|"all"} the caller stages its own
+// binary and tells that worker / every other agent to self-update via direct
+// authenticated calls. Cross-sprite it's reachable only with the bearer token.
+func (s *Server) serveUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // empty body is valid: self-update
+
+	if t := strings.TrimSpace(body.Target); t != "" {
+		res, err := s.fleet.UpdateFleet(r.Context(), t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, res)
+		return
+	}
+
+	// Self-update: prepare (swap the on-disk binary) BEFORE responding, then
+	// re-exec just after, so the caller gets the 200 before the process is replaced.
+	willUpdate, detail, err := s.fleet.PrepareSelfUpdate(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"updated": willUpdate, "detail": detail})
+	if willUpdate {
+		go func() {
+			time.Sleep(300 * time.Millisecond) // let the response flush
+			log.Printf("self-update: %s — re-execing", detail)
+			if err := s.fleet.Reexec(); err != nil {
+				log.Printf("self-update: re-exec failed (%v); exiting for service restart", err)
+				os.Exit(0) // boot command keeps the swapped on-disk binary
+			}
+		}()
+	}
 }
 
 // serveSessionResult is the receiving end of a result pull: it returns a session's

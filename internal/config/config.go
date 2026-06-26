@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+// ArtifactKey is the brain key where a sprite stages its own binary so peers can
+// fetch it — at spawn time (a new sprite downloads it) and for self-update (a
+// running sprite re-fetches it). Arch-tagged: the staged binary must match the
+// target platform (same as the stager's in practice).
+const ArtifactKey = "fleet/artifacts/sprite-agent-linux-amd64"
+
 // Config is the resolved runtime configuration for one sprite-agent instance.
 type Config struct {
 	// HTTP listen address for the session service + web UI.
