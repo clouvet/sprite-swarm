@@ -45,9 +45,9 @@ body {
 }
 #app { position: relative; height: 100vh; height: 100dvh; overflow: hidden; }
 
-/* ---- sidebar: a stationary panel underneath; the main page slides over it ---- */
+/* ---- sidebar: a stationary panel underneath (right side); main slides over it ---- */
 #sidebar {
-  position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+  position: absolute; right: 0; top: 0; bottom: 0; z-index: 0;
   width: var(--sidebar-width); background: var(--bg-secondary);
   display: flex; flex-direction: column; padding-top: var(--safe-top);
 }
@@ -121,21 +121,21 @@ body {
 .modal-btn.danger:disabled:hover { background: #b91c1c; border-color: #b91c1c; }
 
 /* ---- main ---- */
-/* Main floats above the sidebar (offset by the sidebar width) with a soft shadow
-   off its left edge, so the sidebar reads as set back / coming from under. Hiding
-   the sidebar slides the main page LEFT over it (animated margin-left). */
-#main { height: 100%; margin-left: var(--sidebar-width); display: flex; flex-direction: column; min-width: 0;
-  position: relative; z-index: 1; background: var(--bg); box-shadow: -3px 0 8px rgba(0,0,0,0.2);
-  padding-top: var(--safe-top); transition: margin-left .25s ease, transform .25s ease; }
+/* Main floats above the sidebar (offset by the sidebar width on the right) with a
+   soft shadow off its right edge, so the sidebar reads as set back / coming from
+   under. Hiding the sidebar slides the main page RIGHT over it (animated margin-right). */
+#main { height: 100%; margin-right: var(--sidebar-width); display: flex; flex-direction: column; min-width: 0;
+  position: relative; z-index: 1; background: var(--bg); box-shadow: 3px 0 8px rgba(0,0,0,0.2);
+  padding-top: var(--safe-top); transition: margin-right .25s ease, transform .25s ease; }
 header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; background: var(--bg); }
-header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .sprite-emoji { font-size: 14px; }
 #menu-btn { display: block; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
 /* Desktop: ☰ shows/hides the persistent sidebar. The collapsed state is applied
    pre-paint via a <head> script (html[data-sidebar=collapsed]) so a refresh while
    collapsed doesn't flash the sidebar open. */
 @media (min-width: 769px) {
-  html[data-sidebar="collapsed"] #main { margin-left: 0; }
+  html[data-sidebar="collapsed"] #main { margin-right: 0; }
 }
 
 /* connection status — 👾 tinted via filter, like sprite-mobile */
@@ -285,7 +285,7 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 @media (max-width: 768px) {
   /* Same "under" effect as desktop: the sidebar sits beneath (full-width main
      covers it); opening slides the main page RIGHT to reveal the sidebar. */
-  #main { margin-left: 0; }
-  #app.sidebar-open #main { transform: translateX(var(--sidebar-width)); }
+  #main { margin-right: 0; }
+  #app.sidebar-open #main { transform: translateX(calc(-1 * var(--sidebar-width))); }
   #menu-btn { transform: translateY(-4px); } /* optical nudge up on mobile */
 }
