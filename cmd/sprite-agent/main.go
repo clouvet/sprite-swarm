@@ -133,7 +133,10 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"answer from your latest phase (peers can't read your transcript; this note is the channel). ")
 	}
 	if spawnAvailable {
-		b.WriteString("To create a worker, POST /api/fleet/spawn (or use the sprites API); the new " +
+		b.WriteString("Do ALL fleet operations through these /api/fleet endpoints — do NOT shell out to the " +
+			"`sprite` CLI or curl api.sprites.dev directly: that auth path may not exist on this fleet (the " +
+			"endpoints route through the gateway connector, which works token-free), so the CLI will just fail. " +
+			"To create a worker, POST /api/fleet/spawn; the new " +
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
 			"DELEGATING WORK follows ONE fixed protocol — use it exactly, never improvise a way to get " +
 			"results: " +
@@ -272,7 +275,20 @@ func main() {
 		scancel()
 	}
 
-	// Spawn capability (M4): live when a sprites token is available (env or brain).
+	// No sprites token (env or brain)? Fall back to a custom_api connector fronting
+	// the Sprites API — spawn/reap then route through the gateway, authed by sprite
+	// identity, with no token on the sprite or in the brain.
+	if cfg.SpriteAPIToken == "" && cfg.SpriteAPIGateway == "" {
+		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if base := gateway.SpritesAPIBase(dctx, cfg.SpriteAPIConnectorID); base != "" {
+			cfg.SpriteAPIGateway = base
+			log.Printf("spawn: using custom_api connector for the Sprites API (token-free): %s", base)
+		}
+		dcancel()
+	}
+
+	// Spawn capability (M4): live when a sprites token (env or brain) or a Sprites
+	// API gateway connector is available.
 	spawner := spawn.New(cfg)
 	log.Printf("spawn: available=%v", spawner.Available())
 
