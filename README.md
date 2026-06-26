@@ -13,14 +13,17 @@ booted against the brain reconstitutes the whole fleet.
 ## What each sprite does
 
 - **Session service** — a web chat UI (PWA) driving the sprite's Claude Code: token-by-token
-  streaming, a rich activity indicator, syntax highlighting, evolving chat titles, copy buttons,
-  voice input, and **attachments** (images + `doc/docx/xls/xlsx/csv/txt/md`). Terminal co-presence:
+  streaming (scroll up to read mid-stream without the view yanking back), a rich activity indicator,
+  syntax highlighting, evolving chat titles, copy buttons, voice input, and **attachments** (images +
+  `doc/docx/xls/xlsx/csv/txt/md`). **Background turns survive disconnect** — close the tab or lock your
+  phone mid-task and the work keeps running, replaying in full when you return. Terminal co-presence:
   the web UI and a `claude --resume` terminal share one transcript.
 - **GitHub** — its Claude can clone, branch, commit, and open PRs (token from the brain; no creds on
   disk).
 - **flyctl** — `fly`/`flyctl` is installed and authenticated on every sprite (token from the brain).
-- **Spawn + dispatch** — create another sprite running this same artifact and assign it work; the
-  task lands in the worker's own session (attach to watch).
+- **Spawn + dispatch** — create another sprite running this same artifact and assign it work; it runs
+  in the worker's own session (attach to watch, ask for its status, or pull its result back when done —
+  the worker never pushes results at you).
 - **Durable workers** — a worker that finishes a feature *persists* (it suspends, cheaply, but isn't
   destroyed); re-attach to it later to iterate on its PR with full context, then **Reap** it.
 - **Shared brain** — an S3/Tigris bucket holding the roster, operational secrets, policy, and
@@ -31,8 +34,15 @@ booted against the brain reconstitutes the whole fleet.
 
 - **Launch a new fleet** — `scripts/launch-fleet.sh` primes a brain (stages the binary + writes the
   secrets) and ignites a home sprite; everything else reconstitutes from the brain. See below.
-- **Dispatch** — `POST /api/fleet/dispatch {target, task}`; the worker pulls it and runs it in its
-  own session.
+- **Delegate & retrieve** — `POST /api/fleet/dispatch {target, task}` runs the task in the worker's
+  own session and returns a `session_id`; a direct nudge makes the worker start immediately. Check
+  progress with `GET /api/fleet/status?target=<id>` and pull the answer with
+  `GET /api/fleet/result?target=<id>&session=<session_id>`. **Home pulls — a worker never pushes its
+  result back** (a pushed result would be misread as a new task). `kind:"note"` sends an informational
+  FYI that isn't executed.
+- **Direct calls** — sprites reach each other over their `.sprites.app` URL with the sprites token as a
+  `Bearer` (the dispatch nudge and the status/result pulls ride this); the brain stays the durable
+  record + discovery. A human browser instead authenticates through the OAuth gate.
 - **Reap** — the fleet UI's per-worker reap button, or `POST /api/fleet/destroy {target[,force]}`.
   Presence-aware: it refuses (409) if a human is attached, unless `force`.
 - **Memory** — sprites read/write `$HOME/.sprite-agent/memory/` (grouped by topic: `repos/`,
