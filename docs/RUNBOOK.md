@@ -153,6 +153,30 @@ GitHub) nor the durable shared memory (a separate brain prefix).
 Optional idle-reap (`SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES`) is **off by default** — the
 reaper isn't PR-aware, so leave it off for workers awaiting review.
 
+## Upgrading running workers (in-place self-update)
+A worker runs the binary it booted with — spawn hands it home's binary at spawn time,
+and it doesn't change afterward. To push new code to a *running* worker without
+reap+respawn (which would lose its VM disk):
+
+Each agent hashes its own binary at boot and reports it as `build` in the roster
+(`GET /api/fleet`) and the injected fleet context, which flags peers on a different
+build than yours as **(stale)** — so "who needs updating" is visible.
+
+- **`POST /api/fleet/update`** (no body) — this node self-updates: fetch the staged
+  binary from the brain (`config.ArtifactKey`), and if it differs from the running
+  build, verify it (ELF + size), swap it in place (old kept as `<binary>.bak`),
+  respond, then re-exec. The VM disk (repo/branch/uncommitted work) survives.
+- **`POST /api/fleet/update {"target":"<id>"|"all"}`** — the caller stages its own
+  current binary to the brain, then tells that worker / every other agent to
+  self-update via direct authenticated (Bearer) calls.
+
+Typical rollout: rebuild + restart home, then `POST /api/fleet/update {"target":"all"}`
+(or just ask home in chat to "update all workers"). **Bootstrap caveat:** a node must
+already run update-capable code — a pre-existing worker on an older build `404`s on
+`/api/fleet/update` and needs one reap+respawn to adopt the mechanism; after that it
+updates in place. The `build` hash is of the compiled binary (Go builds aren't
+byte-reproducible), so any home rebuild marks workers stale until rolled.
+
 ## Launching a new fleet
 `scripts/launch-fleet.sh` stands up a brand-new fleet from anywhere with Go. Pre-reqs
 (once, in the Sprites dashboard): a Tigris bucket + an `s3_object_store` connector

@@ -43,6 +43,13 @@ booted against the brain reconstitutes the whole fleet.
 - **Direct calls** — sprites reach each other over their `.sprites.app` URL with the sprites token as a
   `Bearer` (the dispatch nudge and the status/result pulls ride this); the brain stays the durable
   record + discovery. A human browser instead authenticates through the OAuth gate.
+- **Upgrade** — `POST /api/fleet/update` (no body) makes a node self-update **in place**: it fetches the
+  staged binary from the brain, verifies it, swaps + re-execs, keeping its VM disk (repo/branch/uncommitted
+  work). `{target:"<id>"|"all"}` stages the caller's current binary and rolls that worker / every other
+  agent. Each agent reports its binary's `build` hash in the roster, so stale peers are visible (the
+  fleet context marks them). Typical flow: rebuild + restart home, then ask it in chat to "update all
+  workers." (A node must already run update-capable code; a pre-existing old worker needs one
+  reap+respawn to adopt it.)
 - **Reap** — the fleet UI's per-worker reap button, or `POST /api/fleet/destroy {target[,force]}`.
   Presence-aware: it refuses (409) if a human is attached, unless `force`.
 - **Memory** — sprites read/write `$HOME/.sprite-agent/memory/` (grouped by topic: `repos/`,
