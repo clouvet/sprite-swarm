@@ -966,9 +966,33 @@
   // Esc interrupts Claude while it's generating (item #26).
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
 
+  // ---- theme (light/dark) ----
+  // data-theme is set pre-paint from localStorage; this wires the toggle and keeps
+  // the mobile status-bar color in sync. Dark is the default (no attribute / :root).
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+  function syncThemeColor() {
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (!m) return;
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (bg) m.setAttribute('content', bg);
+  }
+  function setTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('theme', t); } catch (e) {}
+    syncThemeColor();
+  }
+  function setupTheme() {
+    syncThemeColor();
+    const btn = $('theme-toggle');
+    if (btn) btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
+  }
+
   // ---- boot ----
   async function boot() {
     // (desktop sidebar-collapsed state is applied pre-paint by the <head> script)
+    setupTheme();
     setupVoice();
     loadConfig();
     showBaselineTitle();
