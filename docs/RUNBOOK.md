@@ -68,6 +68,11 @@ itself on boot (`fleet/<id>/status.json`, `fleet/<id>/heartbeat.json`) and
 `GET /api/fleet` returns the roster from `ListObjects("fleet/")`. See §4.
 
 ## Operational secrets (brain)
+Capability model: **non-optional capabilities ride identity-authed connectors** (the brain via
+`s3_object_store`, Claude via `anthropic`, the Sprites API via `custom_api`) — no stored token needed.
+A token is used only for the **optional** CLIs that need a raw credential and hit endpoints connectors
+don't proxy: GitHub (`git`/`gh`) and Fly (`flyctl`). So the secrets below are all optional.
+
 Every sprite rehydrates the same secrets from `fleet/config/secrets/` on boot, so any
 sprite is equally capable (env values win if explicitly set). All are **optional** —
 an absent one just means that capability isn't wired (nothing fails):
