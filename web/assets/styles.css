@@ -221,7 +221,6 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
 .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-6px); opacity: 1; } }
-.thinking-text { font-size: 14px; color: var(--text-muted); }
 
 /* ---- activity / tool indicator (spinner + action + detail) ---- */
 .activity-indicator { display: flex; align-items: center; gap: 10px; padding: 12px 14px; align-self: center; max-width: 760px; width: 100%;
