@@ -59,15 +59,26 @@ func parseToken(raw string) (tokenParts, error) {
 }
 
 func newAPISpawner(cfg config.Config) Spawner {
-	base := os.Getenv("SPRITE_API_BASE")
-	if base == "" {
-		base = "https://api.sprites.dev"
-	}
-	tp, err := parseToken(cfg.SpriteAPIToken)
-	if err != nil {
-		// A malformed token means we cannot spawn; degrade to the stub so the
-		// failure is explicit rather than a confusing runtime panic.
-		return notConfigured{}
+	var base string
+	var tp tokenParts
+	if cfg.SpriteAPIToken != "" {
+		// Token mode: call the Sprites API directly with a Bearer token.
+		t, err := parseToken(cfg.SpriteAPIToken)
+		if err != nil {
+			// A malformed token means we cannot spawn; degrade to the stub so the
+			// failure is explicit rather than a confusing runtime panic.
+			return notConfigured{}
+		}
+		tp = t
+		base = os.Getenv("SPRITE_API_BASE")
+		if base == "" {
+			base = "https://api.sprites.dev"
+		}
+	} else {
+		// Connector mode: route through a custom_api gateway fronting the Sprites
+		// API. No token on the sprite — the gateway injects it by sprite identity,
+		// so do() sends no Authorization header (see below).
+		base = cfg.SpriteAPIGateway
 	}
 	return &apiSpawner{
 		cfg:          cfg,
@@ -399,7 +410,11 @@ func (a *apiSpawner) do(ctx context.Context, method, url string, body []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+a.cfg.SpriteAPIToken)
+	// Token mode attaches the Bearer; connector mode sends none — the gateway
+	// injects the credential by sprite identity.
+	if a.cfg.SpriteAPIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+a.cfg.SpriteAPIToken)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	return a.client.Do(req)
 }
