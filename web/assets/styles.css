@@ -35,7 +35,8 @@ body {
 }
 #sidebar-header { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); }
 #sidebar-header h2 { margin: 0; font-size: 16px; }
-#new-chat-btn { background: var(--accent); color: #fff; border: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; cursor: pointer; }
+#new-chat-btn { background: var(--accent); color: #fff; border: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+#new-chat-btn svg { width: 16px; height: 16px; display: block; }
 #sessions-list { flex: 1; overflow-y: auto; padding: 8px; }
 .session-item { position: relative; padding: 12px 14px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; border-left: 3px solid transparent; }
 .session-item:hover { background: var(--bg-tertiary); }
@@ -160,6 +161,11 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
    floating well below the text. */
 .message-content > :first-child { margin-top: 0; }
 .message-content > :last-child { margin-bottom: 0; }
+/* Links in Claude's responses: same color as the text, underlined — and the
+   underline drops on hover/press (desktop hover + touch :active). */
+.message.assistant .message-content a { color: inherit; text-decoration: underline; }
+.message.assistant .message-content a:hover,
+.message.assistant .message-content a:active { text-decoration: none; }
 .message.user { display: flex; justify-content: flex-end; margin: 8px 0; }
 .message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
