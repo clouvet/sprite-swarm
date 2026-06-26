@@ -70,6 +70,35 @@ body {
 #overlay { display: none; }
 #overlay.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; }
 
+/* Destructive-confirm modal (reap). Type-the-name to enable the danger button. */
+.modal-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center;
+  justify-content: center; padding: 20px; background: rgba(0,0,0,.6); }
+.modal-backdrop[hidden] { display: none; }
+.modal { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
+  padding: 20px; width: 100%; max-width: 420px; box-shadow: 0 16px 48px rgba(0,0,0,.5); }
+.modal h3 { margin: 0 0 10px; font-size: 17px; }
+.modal p { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
+.modal .modal-prompt { color: var(--text); }
+.modal .modal-prompt strong { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.copy-name { cursor: pointer; border-bottom: 1px dashed var(--accent); user-select: all; -webkit-user-select: all; }
+.copy-name:hover { filter: brightness(1.2); }
+.copy-name::after { content: ' ⧉'; opacity: .6; font-family: initial; }
+.copy-name.copied::after { content: ' ✓ copied'; color: var(--on); opacity: 1; }
+#reap-modal-input { width: 100%; box-sizing: border-box; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#reap-modal-input:focus { outline: none; border-color: var(--accent); }
+.modal-msg { min-height: 0; margin: 10px 0 0; font-size: 13px; color: #f0a; }
+.modal-msg:empty { display: none; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.modal-btn { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text);
+  border-radius: 8px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
+.modal-btn:hover { border-color: var(--accent); }
+.modal-btn.danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.modal-btn.danger:hover { background: #dc2626; border-color: #dc2626; }
+.modal-btn:disabled { opacity: .45; cursor: default; }
+.modal-btn.danger:disabled:hover { background: #b91c1c; border-color: #b91c1c; }
+
 /* ---- main ---- */
 /* Main floats above the sidebar (offset by the sidebar width) with a soft shadow
    off its left edge, so the sidebar reads as set back / coming from under. Hiding
