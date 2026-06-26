@@ -543,7 +543,7 @@
     setGenerating(true);
     const el = document.createElement('div');
     el.id = 'thinking'; el.className = 'thinking-indicator';
-    el.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-text">Claude is thinking…</span>`;
+    el.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div>`;
     messagesEl.appendChild(el); scrollDown();
   }
   function removeThinking() { const t = $('thinking'); if (t) t.remove(); }
