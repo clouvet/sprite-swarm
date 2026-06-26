@@ -40,7 +40,7 @@ html[data-theme="light"] {
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
   font-family: "MonoLisaText", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  background: var(--bg); color: var(--text); font-size: 16px; line-height: 1.5;
+  background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5;
   -webkit-font-smoothing: antialiased; min-height: 100dvh;
   /* MonoLisa renders heavier than the old system font — back the weight off a touch. */
   font-weight: 350;
