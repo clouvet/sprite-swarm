@@ -18,9 +18,8 @@ import (
 )
 
 // artifactKey is where a spawner stages its own binary in the brain bucket so a
-// freshly-created sprite can fetch it. Arch-tagged since the staged binary must
-// match the target (same platform as the spawner in practice).
-const artifactKey = "fleet/artifacts/sprite-agent-linux-amd64"
+// freshly-created sprite can fetch it. Shared with self-update (config.ArtifactKey).
+const artifactKey = config.ArtifactKey
 
 // credentialKey stages the Claude OAuth credential so a worker's `claude` can
 // authenticate (a fresh sprite has none). See provisionAgent for the tradeoff.

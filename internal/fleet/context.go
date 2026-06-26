@@ -33,6 +33,12 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 			self = " (you)"
 		}
 		line := fmt.Sprintf("- %s%s · %s · %s · %q", e.ID, self, e.Role, dot, e.Phase)
+		if e.Build != "" {
+			line += " · build " + e.Build
+			if e.ID != s.id && s.build != "" && e.Build != s.build {
+				line += " (stale)"
+			}
+		}
 		if e.Present && e.ID != s.id {
 			line += "  👤 human attached → DEFER (don't act/narrate)"
 			attended = append(attended, e.ID)

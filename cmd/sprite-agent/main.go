@@ -153,7 +153,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that worker " +
 			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
 			"with {\"target\":\"<id>\",\"force\":true}. Do NOT hand-roll teardown via the host socket or " +
-			"guess routes — this endpoint is the mechanism. ")
+			"guess routes — this endpoint is the mechanism. " +
+			"To roll out a new build after this binary is updated: POST /api/fleet/update {\"target\":\"<id>\"|\"all\"} " +
+			"stages your current binary and tells that worker (or every other agent) to self-update in place — they " +
+			"re-exec, keeping their VM disk (repo/branch/uncommitted work). POST /api/fleet/update with no body updates " +
+			"only this node. The roster's \"build\" hash shows who's stale (marked in the fleet context). ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
