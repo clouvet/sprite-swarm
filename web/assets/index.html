@@ -37,6 +37,23 @@
     </aside>
     <div id="overlay"></div>
 
+    <!-- Reap confirmation: type the worker name to destroy it (no native confirm). -->
+    <div id="reap-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reap-modal-title">
+        <h3 id="reap-modal-title">Reap worker</h3>
+        <p>This permanently destroys the worker's VM. Its branch/PR on GitHub and the shared fleet
+           memory survive — but the running sprite does not. This can't be undone.</p>
+        <p class="modal-prompt">Type <strong id="reap-modal-name"></strong> to confirm:</p>
+        <input id="reap-modal-input" type="text" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" placeholder="worker name">
+        <p id="reap-modal-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button id="reap-modal-cancel" class="modal-btn">Cancel</button>
+          <button id="reap-modal-confirm" class="modal-btn danger" disabled>Reap</button>
+        </div>
+      </div>
+    </div>
+
     <main id="main">
       <header>
         <button id="menu-btn">☰</button>

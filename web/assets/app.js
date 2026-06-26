@@ -258,22 +258,66 @@
   }
 
   // Reap (destroy) a worker via the teardown endpoint, honoring the presence guard.
-  async function reapWorker(id) {
-    if (!confirm('Reap ' + id + '? This destroys the worker VM (its branch/PR live on GitHub).')) return;
+  // Reap is destructive, so it goes through an in-app modal that requires typing the
+  // worker's exact name (no native confirm()). The 409 "human attached" case is handled
+  // in-modal: the button turns into "Force reap" rather than a second prompt.
+  const reapModal = $('reap-modal');
+  const reapInput = $('reap-modal-input');
+  const reapConfirmBtn = $('reap-modal-confirm');
+  const reapMsg = $('reap-modal-msg');
+  let reapTarget = null;
+
+  function reapWorker(id) {
+    reapTarget = id;
+    $('reap-modal-name').textContent = id;
+    reapInput.value = '';
+    reapMsg.textContent = '';
+    reapConfirmBtn.textContent = 'Reap';
+    reapConfirmBtn.dataset.force = '';
+    reapConfirmBtn.disabled = true;
+    reapModal.hidden = false;
+    reapInput.focus();
+  }
+  function closeReapModal() { reapModal.hidden = true; reapTarget = null; }
+
+  reapInput.addEventListener('input', () => {
+    reapConfirmBtn.disabled = reapInput.value.trim() !== reapTarget;
+  });
+  reapInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !reapConfirmBtn.disabled) reapConfirmBtn.click();
+  });
+  $('reap-modal-cancel').addEventListener('click', closeReapModal);
+  reapModal.addEventListener('click', (e) => { if (e.target === reapModal) closeReapModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !reapModal.hidden) closeReapModal(); });
+
+  reapConfirmBtn.addEventListener('click', async () => {
+    const id = reapTarget;
+    const force = reapConfirmBtn.dataset.force === '1';
+    reapConfirmBtn.disabled = true;
+    reapMsg.textContent = 'Reaping…';
     try {
-      let res = await fetch('/api/fleet/destroy', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: id }),
+      const body = force ? { target: id, force: true } : { target: id };
+      const res = await fetch('/api/fleet/destroy', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (res.status === 409) {
-        if (!confirm((await res.text()).trim() + '\n\nDestroy anyway?')) return;
-        res = await fetch('/api/fleet/destroy', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: id, force: true }),
-        });
+        // A human is attached — offer force without leaving the modal.
+        reapMsg.textContent = (await res.text()).trim();
+        reapConfirmBtn.textContent = 'Force reap';
+        reapConfirmBtn.dataset.force = '1';
+        reapConfirmBtn.disabled = false;
+        return;
       }
-      addSystem(res.ok ? 'Reaped ' + id : 'Reap failed: ' + (await res.text()));
-    } catch (e) { addSystem('Reap error: ' + e.message); }
-    loadFleet();
-  }
+      const ok = res.ok;
+      const detail = ok ? '' : (await res.text()).trim();
+      closeReapModal();
+      addSystem(ok ? 'Reaped ' + id : 'Reap failed: ' + detail);
+      loadFleet();
+    } catch (e) {
+      reapMsg.textContent = 'Error: ' + e.message;
+      reapConfirmBtn.disabled = false;
+    }
+  });
 
   function attachToAgent(id) {
     const a = fleetRoster.find(x => x.id === id);
