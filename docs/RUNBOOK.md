@@ -97,17 +97,38 @@ task, leave, and on **refresh/re-attach** the session replays the full history o
 work done while you were away — the web equivalent of detaching and re-attaching a
 terminal `claude` session.
 
-## Progress visibility across the fleet
-Delegated work runs in the **worker's own session**. To watch it, click the worker in
-the fleet list — that opens the worker's own URL (a human browser passes the OAuth
-gate that blocks *cross-sprite* calls), and durable turns mean its chat shows live
-progress on refresh. To ask a *peer* ("how is wk-3 doing?") without attaching, read
-its **phase**: each agent self-reports a one-line status to the brain with
-`POST /api/fleet/phase {"phase":"<what I'm doing / done: <result>>"}`, which appears in
-the roster (`GET /api/fleet`) and in every peer's injected fleet context. A worker
-can't read another's transcript, so this note is the cross-agent progress channel;
-agents are told (in the fleet affordance) to keep it current, especially on dispatched
-work.
+## Direct sprite-to-sprite calls
+Sprites call each other's session service directly: hit the peer's **`.sprites.app`
+URL** (the one stored in the roster `url`) with the **sprites token as a `Bearer`**
+(`Authorization: Bearer $SPRITE_API_TOKEN` — the same token + format the spawn API
+uses), and the request reaches its sprite-agent app. That auth mode ("sprite", the
+URL default) admits org members via browser **and** org tokens. Unauthenticated
+browser access is OAuth-gated (302), which is why a human just clicks a worker to open
+it, while agents present the bearer. (Note: `<sprite>-<org>.sprites.dev` is *not* the
+app ingress — it returns a platform 404; use the `.sprites.app` URL.) The brain stays
+the durable record + discovery; these direct calls carry the live, low-latency
+coordination below.
+
+## Delegating work: dispatch → status → result (pull-based)
+Delegation follows one fixed protocol (baked into the fleet affordance so agents don't
+improvise):
+1. **Assign** — `POST /api/fleet/dispatch {"target":"<id>","task":"…"}`. The task is
+   recorded durably in the brain (`fleet/tasks/<id>/`) **and** the assigner fires a
+   content-free nudge (`POST /api/fleet/nudge`) at the target so it drains and starts
+   **immediately** instead of waiting for its slow backstop poll (a nudge also wakes a
+   suspended worker). The response carries a `session_id` — the worker's session for
+   this work. Add `"kind":"note"` to send an informational FYI that is delivered but
+   **not executed** (the guardrail against a stray message being run as a task).
+2. **Progress** — `GET /api/fleet/status?target=<id>` merges the peer's last-published
+   **phase** (`POST /api/fleet/phase {"phase":"…"}`, surfaced in the roster + injected
+   context) with a live authenticated pull of its `/health` (generating now? sessions?).
+3. **Result** — `GET /api/fleet/result?target=<id>&session=<session_id>` pulls the
+   worker's final message from that session (`ready:true` once done). **Home pulls; a
+   worker never dispatches its result back** — a result delivered through dispatch is
+   misread as a new task and executed, which is exactly how a runaway happens.
+
+To *watch* a worker directly, click it in the fleet list — that opens its own URL in
+your browser, and durable turns mean its chat shows live progress on refresh.
 
 ## Durable workers + reaping
 Workers are **durable workspaces, not one-shots.** A worker that finishes a feature
