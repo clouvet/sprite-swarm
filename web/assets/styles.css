@@ -21,9 +21,9 @@
 /* Light mode: override the dark defaults. Toggled via html[data-theme="light"]
    (set pre-paint from localStorage). Accent stays purple in both. */
 html[data-theme="light"] {
-  --bg: #ffffff;
-  --bg-secondary: #f4f4f8;
-  --bg-tertiary: #e9e9f1;
+  --bg: #f7f7fb;
+  --bg-secondary: #edeef3;
+  --bg-tertiary: #e3e4ec;
   --text: #1a1a2e;
   --text-muted: #6b6b80;
   --text-secondary: #555;
