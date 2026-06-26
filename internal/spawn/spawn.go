@@ -43,10 +43,11 @@ type Spawner interface {
 	Exists(ctx context.Context, name string) (bool, error)
 }
 
-// New returns a live spawner when SPRITE_API_TOKEN is set, otherwise a stub that
-// returns ErrNotConfigured (the capability is present, the live call is not).
+// New returns a live spawner when a sprites token is set OR a gateway connector
+// fronting the Sprites API is configured; otherwise a stub that returns
+// ErrNotConfigured (the capability is present, the live call is not).
 func New(cfg config.Config) Spawner {
-	if cfg.SpriteAPIToken == "" {
+	if cfg.SpriteAPIToken == "" && cfg.SpriteAPIGateway == "" {
 		return notConfigured{}
 	}
 	return newAPISpawner(cfg)
