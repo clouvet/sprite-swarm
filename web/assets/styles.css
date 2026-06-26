@@ -160,8 +160,11 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
    floating well below the text. */
 .message-content > :first-child { margin-top: 0; }
 .message-content > :last-child { margin-bottom: 0; }
-/* Links in Claude's responses: same color as the text, just underlined (not blue). */
+/* Links in Claude's responses: same color as the text, underlined — and the
+   underline drops on hover/press (desktop hover + touch :active). */
 .message.assistant .message-content a { color: inherit; text-decoration: underline; }
+.message.assistant .message-content a:hover,
+.message.assistant .message-content a:active { text-decoration: none; }
 .message.user { display: flex; justify-content: flex-end; margin: 8px 0; }
 .message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
