@@ -207,6 +207,7 @@
 
   function selectSession(s) {
     currentSession = s;
+    stickToBottom = true; // opening a chat starts pinned to the latest
     chatTitle.textContent = s.name || 'Chat';
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
@@ -425,7 +426,7 @@
     el.innerHTML = `<div class="message-content">${imgs}${chip}${escapeHtml(text || '')}</div>`;
     messagesEl.appendChild(el);
     updateComposing(); // first message → dock the composer to the bottom
-    scrollDown();
+    forceScrollDown(); // your own turn always jumps to the bottom and re-pins
   }
   function addSystem(text) {
     const el = document.createElement('div');
@@ -559,7 +560,16 @@
     stopBtn.disabled = !on;
   }
 
-  function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+  // Stick-to-bottom: auto-scroll while streaming ONLY if you're already at the
+  // bottom. Scroll up to read mid-stream and the viewport stays put; scroll back
+  // down and it re-engages. forceScrollDown re-pins (you sent a message / opened a chat).
+  let stickToBottom = true;
+  function atBottom() {
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 80;
+  }
+  messagesEl.addEventListener('scroll', () => { stickToBottom = atBottom(); }, { passive: true });
+  function scrollDown() { if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight; }
+  function forceScrollDown() { stickToBottom = true; messagesEl.scrollTop = messagesEl.scrollHeight; }
 
   // ---- attachments (images + documents) ----
   function clearAttachment() {
