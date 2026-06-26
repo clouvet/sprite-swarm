@@ -39,6 +39,26 @@
         <div id="fleet-header"><span>Fleet</span><button id="spawn-btn" title="Spawn a worker sprite">+ worker</button></div>
         <div id="fleet-list"></div>
       </div>
+      <div id="sidebar-footer">
+        <button id="theme-toggle" title="Toggle light/dark" aria-label="Toggle light/dark">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg class="icon-deathstar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2.8 A9.2 9.2 0 1 0 21.2 12"></path>
+            <path class="ds-unbuilt" d="M12 2.8 A9.2 9.2 0 0 1 21.2 12" stroke-dasharray="1.6 2.2"></path>
+            <line class="ds-scaffold" x1="13.7" y1="3.2" x2="19.7" y2="11.3"></line>
+            <line class="ds-scaffold" x1="12" y1="2.8" x2="16.4" y2="12"></line>
+            <circle cx="8.4" cy="8.7" r="2.1"></circle>
+            <line x1="3" y1="12.3" x2="21" y2="12.3"></line>
+          </svg>
+        </button>
+        <div id="status"></div>
+      </div>
     </aside>
     <div id="overlay"></div>
 
@@ -62,27 +82,9 @@
 
     <main id="main">
       <header>
-        <button id="menu-btn">☰</button>
         <h1 id="chat-title"></h1>
         <script>try{var n=localStorage.getItem('spriteName');if(n)document.getElementById('chat-title').textContent=n}catch(e){}</script>
-        <button id="theme-toggle" title="Toggle light/dark" aria-label="Toggle light/dark">
-          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-          </svg>
-          <svg class="icon-deathstar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2.8 A9.2 9.2 0 1 0 21.2 12"></path>
-            <path class="ds-unbuilt" d="M12 2.8 A9.2 9.2 0 0 1 21.2 12" stroke-dasharray="1.6 2.2"></path>
-            <line class="ds-scaffold" x1="13.7" y1="3.2" x2="19.7" y2="11.3"></line>
-            <line class="ds-scaffold" x1="12" y1="2.8" x2="16.4" y2="12"></line>
-            <circle cx="8.4" cy="8.7" r="2.1"></circle>
-            <line x1="3" y1="12.3" x2="21" y2="12.3"></line>
-          </svg>
-        </button>
-        <div id="status"></div>
+        <button id="menu-btn">☰</button>
       </header>
 
       <div id="stage">
