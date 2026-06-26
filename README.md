@@ -66,7 +66,7 @@ booted against the brain reconstitutes the whole fleet.
 
   Fleet brain (S3/Tigris), reached via the s3 connector (token-free, by sprite identity):
     fleet/<id>/{status,heartbeat}.json   per-sprite keys → roster = ListObjects("fleet/")
-    fleet/config/secrets/{sprites-api-token,github,fly}   rehydrated on boot (symmetry)
+    fleet/config/secrets/{sprites-api-token?,github?,fly?}  rehydrated on boot (all optional)
     fleet/config/policy.json             capability/policy control plane
     fleet/memory-fs/<id>/…               frictionless shared memory (synced markdown)
     fleet/tasks/<id>/…                   dispatch inboxes
@@ -78,7 +78,9 @@ fan-out), adapted for v2: per-session working dirs, concurrent sessions (a sprit
 task while you attach a separate chat), and stream_event unwrapping for token-level streaming. Sprites
 stay awake while working via the local Tasks API (`internal/keepalive`); Claude + the brain are reached
 through API-Gateway connectors discovered by sprite identity (`internal/gateway`) — no provider creds
-copied onto sprites.
+copied onto sprites. Spawn/reap can likewise route through a `custom_api` connector fronting the Sprites
+API, so the spawn token need not sit on a sprite or in the brain either (token-free fleet); the brain
+secrets are all optional and a fleet runs with only what's connected.
 
 ## Layout
 
@@ -115,7 +117,8 @@ go run ./cmd/sprite-agent
 ## Launching a fleet
 
 Pre-reqs (once, in the Sprites dashboard): a Tigris bucket + an `s3_object_store` connector pointing
-at it, and an `anthropic` connector. Then, from anywhere with Go:
+at it, and an `anthropic` connector. Optionally a `custom_api` connector fronting `https://api.sprites.dev`
+for token-free spawn (then skip `--sprites-token`). Then, from anywhere with Go:
 
 ```sh
 scripts/launch-fleet.sh --name my-fleet \

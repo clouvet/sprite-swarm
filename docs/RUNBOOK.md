@@ -34,8 +34,10 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_AGENT_ROLE` | `worker` | `home` or `worker`, advertised in the roster. |
 | `SPRITE_AGENT_ARTIFACT` | `github.com/clouvet/sprite-agent@main` | bootstrap pointer handed to spawned sprites. |
 | `S3_BUCKET` `S3_REGION` `S3_ENDPOINT` `S3_ACCESS_KEY` `S3_SECRET_KEY` | _(unset)_ | fleet brain (Tigris/S3). Brain disabled if `S3_BUCKET` is empty. |
-| `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. Spawn is stubbed if unset. |
-| `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL. |
+| `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. If unset, spawn falls back to a `custom_api` connector; stubbed only if neither is available. |
+| `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL (token mode). |
+| `SPRITE_API_GATEWAY` | _(unset)_ | gateway base URL of a `custom_api` connector fronting the Sprites API (token-free spawn). Auto-discovered when no token; set to override. |
+| `SPRITE_API_CONNECTOR_ID` | _(unset)_ | pin which `custom_api` connector to use for the Sprites API (since `custom_api` is generic); empty = first discovered. |
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
 | `SPRITE_AGENT_IDLE_REAP_MINUTES` | `0` | This agent self-declares reapable after idle this long (0 = never). Home ignores it. |
 | `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES` | `0` (off) | Idle-reap threshold baked into spawned workers. Off by default — the reaper is not PR-aware, so an idle worker may be awaiting review of an open PR. Enable only for fire-and-forget workers. |
@@ -67,13 +69,27 @@ itself on boot (`fleet/<id>/status.json`, `fleet/<id>/heartbeat.json`) and
 
 ## Operational secrets (brain)
 Every sprite rehydrates the same secrets from `fleet/config/secrets/` on boot, so any
-sprite is equally capable (env values win if explicitly set):
-- `sprites-api-token` → spawn/reap/teardown (`SPRITE_API_TOKEN`).
+sprite is equally capable (env values win if explicitly set). All are **optional** —
+an absent one just means that capability isn't wired (nothing fails):
+- `sprites-api-token` → spawn/reap/teardown (`SPRITE_API_TOKEN`). **Optional:** if absent,
+  spawn falls back to a `custom_api` gateway connector (see below) — token-free.
 - `github` → git/gh (loaded into process env + a `GIT_CONFIG_*` credential helper; never on disk).
 - `fly` → flyctl (`FLY_API_TOKEN`; `flyctl` auto-installed to `~/.fly/bin` if missing).
 
 Seed them with `launch-fleet.sh` (below), or store/update one via the brain directly.
 The brain bucket holding these is the fleet's trust boundary — guard its keys + connector.
+
+### Token-free spawn (Sprites API via a `custom_api` connector)
+The spawn token need not live on a sprite or in the brain. Create a **Custom API**
+connector (Sprites dashboard) with upstream `https://api.sprites.dev`, injecting the
+token as `Authorization: Bearer`. When no `sprites-api-token` is present, the agent
+discovers it (`gateway.SpritesAPIBase`, pinned by `SPRITE_API_CONNECTOR_ID` since
+`custom_api` is generic) and routes spawn/reap through `<gateway>/v1/sprites/...` with
+no auth header — the gateway injects the credential by sprite identity, like the s3 /
+Anthropic connectors. Drop the brain secret to cut a fleet over: home + every future
+worker go token-free at once (workers never receive the token in their boot env). This
+covers sprite-agent's own `/api/fleet/*` ops only — the `sprite` CLI / direct
+`api.sprites.dev` calls use separate auth and won't work token-free.
 
 ## Spawning a worker that boots + registers (M4 + provisioning)
 With `SPRITE_API_TOKEN` and `S3_*` set:
