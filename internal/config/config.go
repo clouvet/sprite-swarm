@@ -49,8 +49,18 @@ type Config struct {
 	// disabled and the agent runs solo (still fully functional for chat).
 	Brain BrainConfig
 
-	// Spawn (sprites API) token. When empty, spawning is stubbed.
+	// Spawn (sprites API) token. When empty, spawning falls back to the gateway
+	// connector (SpriteAPIGateway) if available, else is stubbed.
 	SpriteAPIToken string
+
+	// SpriteAPIGateway is the gateway base URL of a custom_api connector fronting
+	// the Sprites API. When set (and no token), spawn/reap route through it with
+	// no token — the gateway injects the credential by sprite identity.
+	SpriteAPIGateway string
+
+	// SpriteAPIConnectorID optionally pins which custom_api connector to use for
+	// the Sprites API (since custom_api is generic); empty = first one discovered.
+	SpriteAPIConnectorID string
 
 	// ArtifactRef is the bootstrap pointer handed to spawned sprites so they
 	// run this same artifact (e.g. a git ref or image). Informational in
@@ -114,7 +124,9 @@ func FromEnv() Config {
 		PermissionMode:      getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
 		SettingsPath:        os.Getenv("SPRITE_AGENT_SETTINGS"),
 		MCPConfigPath:       os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
-		SpriteAPIToken:      os.Getenv("SPRITE_API_TOKEN"),
+		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
+		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
+		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
 		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
 		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
 		IdleReapAfter:       minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
