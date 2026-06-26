@@ -80,6 +80,10 @@ body {
 .modal p { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
 .modal .modal-prompt { color: var(--text); }
 .modal .modal-prompt strong { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.copy-name { cursor: pointer; border-bottom: 1px dashed var(--accent); user-select: all; -webkit-user-select: all; }
+.copy-name:hover { filter: brightness(1.2); }
+.copy-name::after { content: ' ⧉'; opacity: .6; font-family: initial; }
+.copy-name.copied::after { content: ' ✓ copied'; color: var(--on); opacity: 1; }
 #reap-modal-input { width: 100%; box-sizing: border-box; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

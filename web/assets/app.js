@@ -286,6 +286,12 @@
   reapInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !reapConfirmBtn.disabled) reapConfirmBtn.click();
   });
+  // Single tap/click (or Enter/Space) on the name copies it to the clipboard.
+  const reapName = $('reap-modal-name');
+  reapName.addEventListener('click', () => copyText(reapTarget || reapName.textContent, reapName));
+  reapName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(reapTarget || reapName.textContent, reapName); }
+  });
   $('reap-modal-cancel').addEventListener('click', closeReapModal);
   reapModal.addEventListener('click', (e) => { if (e.target === reapModal) closeReapModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !reapModal.hidden) closeReapModal(); });

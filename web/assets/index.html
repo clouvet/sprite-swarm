@@ -43,7 +43,8 @@
         <h3 id="reap-modal-title">Reap worker</h3>
         <p>This permanently destroys the worker's VM. Its branch/PR on GitHub and the shared fleet
            memory survive — but the running sprite does not. This can't be undone.</p>
-        <p class="modal-prompt">Type <strong id="reap-modal-name"></strong> to confirm:</p>
+        <p class="modal-prompt">Type <strong id="reap-modal-name" class="copy-name" role="button"
+           tabindex="0" title="Tap to copy"></strong> to confirm:</p>
         <input id="reap-modal-input" type="text" autocomplete="off" autocapitalize="off"
                autocorrect="off" spellcheck="false" placeholder="worker name">
         <p id="reap-modal-msg" class="modal-msg"></p>
