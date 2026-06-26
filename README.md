@@ -82,6 +82,12 @@ copied onto sprites. Spawn/reap can likewise route through a `custom_api` connec
 API, so the spawn token need not sit on a sprite or in the brain either (token-free fleet); the brain
 secrets are all optional and a fleet runs with only what's connected.
 
+**Capability model:** anything non-optional rides an identity-authed **connector** — the brain
+(`s3_object_store`), Claude (`anthropic`), and the Sprites API / spawn-reap (`custom_api`) — so a fleet
+needs no stored token to operate. Only the **optional** CLIs use a token: GitHub (`git`/`gh`) and Fly
+(`flyctl`), because they need a raw credential and hit endpoints connectors don't proxy. Absent ⇒ that
+capability is simply off (the agent is told so).
+
 ## Layout
 
 | Path | Purpose |
