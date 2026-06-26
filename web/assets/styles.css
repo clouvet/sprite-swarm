@@ -42,7 +42,11 @@ body {
   font-family: "MonoLisaText", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   background: var(--bg); color: var(--text); font-size: 16px; line-height: 1.5;
   -webkit-font-smoothing: antialiased; min-height: 100dvh;
+  /* MonoLisa renders heavier than the old system font — back the weight off a touch. */
+  font-weight: 350;
 }
+/* Headers too: a notch down from the UA bold so they don't read too heavy in MonoLisa. */
+h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 #app { position: relative; height: 100vh; height: 100dvh; overflow: hidden; }
 
 /* ---- sidebar: a stationary panel underneath (right side); main slides over it ---- */
