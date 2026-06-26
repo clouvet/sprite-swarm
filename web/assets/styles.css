@@ -69,6 +69,8 @@ body {
 /* ---- fleet section (sprite-agent) ---- */
 #fleet-section { border-top: 1px solid var(--border); padding: 8px; max-height: 38%; overflow-y: auto; }
 #fleet-header { display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 4px 8px; }
+/* Footer row: theme toggle on the left, connection indicator on the right. */
+#sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
 #spawn-btn { background: var(--bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 #spawn-btn:hover { border-color: var(--accent); }
 #spawn-btn:disabled { opacity: .5; cursor: default; }
@@ -126,7 +128,7 @@ body {
   position: relative; z-index: 1; background: var(--bg); box-shadow: -3px 0 8px rgba(0,0,0,0.2);
   padding-top: var(--safe-top); transition: margin-left .25s ease, transform .25s ease; }
 header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; background: var(--bg); }
-header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .sprite-emoji { font-size: 14px; }
 #menu-btn { display: block; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
 /* Desktop: ☰ shows/hides the persistent sidebar. The collapsed state is applied
@@ -152,7 +154,7 @@ html[data-theme="light"] #theme-toggle .icon-deathstar { display: block; }
 #status.connected::before { filter: sepia(100%) saturate(500%) hue-rotate(60deg) brightness(0.9); }
 #status.error::before { filter: sepia(100%) saturate(500%) hue-rotate(-20deg) brightness(1.1); }
 /* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
-@media (min-width: 769px) { #status::before { font-size: 28px; } }
+@media (min-width: 769px) { #status::before { font-size: 21px; } }
 
 /* stage = everything below the header (empty-state, messages, input). Lets the
    composer center for a new chat and dock to the bottom once it's active. */
