@@ -109,7 +109,7 @@ func taskSnippet(task string) string {
 // §5): a sprite won't spawn workers if nothing tells it that's an option. It is
 // appended to Claude's system prompt so the agent knows it can spin up isolated
 // worker sprites instead of doing all work on its own filesystem.
-func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
+func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) string {
 	apiBase := cfg.Addr
 	if strings.HasPrefix(apiBase, ":") {
 		apiBase = "localhost" + apiBase
@@ -162,8 +162,14 @@ func fleetAffordance(cfg config.Config, spawnAvailable bool) string {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
 	}
-	b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
-		"and open PRs directly. ")
+	if githubAvailable {
+		b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
+			"and open PRs directly. ")
+	} else {
+		b.WriteString("This fleet has NO GitHub access (no token configured) — git push / gh / opening PRs " +
+			"will fail, so don't attempt them; work on the local filesystem and tell the human if a task " +
+			"genuinely needs GitHub. ")
+	}
 	mem := fleetMemoryDir()
 	own := filepath.Join(mem, cfg.AgentID)
 	fmt.Fprintf(b, "Shared fleet memory is a local folder, %s — treat it exactly like your own memory. "+
@@ -291,7 +297,7 @@ func main() {
 		PermissionMode: permissionMode,
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
-		AppendSystem:   fleetAffordance(cfg, spawner.Available()),
+		AppendSystem:   fleetAffordance(cfg, spawner.Available(), os.Getenv("GH_TOKEN") != ""),
 	})
 	go h.Run()
 
