@@ -2,8 +2,12 @@ package fleet
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +27,7 @@ type Service struct {
 	role     string
 	url      string
 	artifact string
+	build    string // short hash of the running binary (immutable after construction)
 	started  int64
 	now      func() time.Time
 
@@ -68,9 +73,38 @@ func newService(brain Brain, cfg config.Config) *Service {
 		role:     role,
 		url:      cfg.PublicURL,
 		artifact: cfg.ArtifactRef,
+		build:    computeBuild(),
 		now:      time.Now,
 		phase:    "idle",
 	}
+}
+
+// Build is the short hash of this agent's running binary.
+func (s *Service) Build() string { return s.build }
+
+// computeBuild hashes the running binary so peers can tell who's on which build
+// (staleness) and self-update can no-op when already current. "unknown" if the
+// binary can't be read (it still works, just won't dedup the update).
+func computeBuild() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	return hashFile(self)
+}
+
+// hashFile returns the first 12 hex chars of a file's sha256, or "" on error.
+func hashFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // SetIdleReaping wires an idle probe + threshold so a worker self-declares
@@ -156,6 +190,7 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 		Phase:     curPhase,
 		URL:       s.url,
 		Artifact:  s.artifact,
+		Build:     s.build,
 		Reapable:  s.computeReapable(now),
 		Present:   present,
 		Session:   presentSession,

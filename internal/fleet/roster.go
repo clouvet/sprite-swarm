@@ -26,6 +26,7 @@ type Status struct {
 	Phase     string `json:"phase"`             // free-text current activity
 	URL       string `json:"url"`               // session-service URL, if known
 	Artifact  string `json:"artifact"`          // bootstrap pointer it's running
+	Build     string `json:"build,omitempty"`   // short hash of the running binary (for staleness/self-update)
 	Reapable  bool   `json:"reapable"`          // worker self-declares it can be reaped (idle/done)
 	Present   bool   `json:"present"`           // a human is currently attached to this agent (presence, §2.4)
 	Session   string `json:"session,omitempty"` // the session the human is attached to, if any
