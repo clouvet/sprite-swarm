@@ -79,7 +79,7 @@ func TestStartTaskPollingDrainsImmediately(t *testing.T) {
 	defer cancel() // stop the backstop goroutine when the test ends
 
 	done := make(chan string, 1)
-	worker.StartTaskPolling(ctx, func(_, tk, _ string) error { done <- tk; return nil })
+	worker.StartTaskPolling(ctx, func(_, tk, _ string) error { done <- tk; return nil }, func() bool { return false })
 
 	select {
 	case got := <-done:
@@ -88,5 +88,35 @@ func TestStartTaskPollingDrainsImmediately(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("StartTaskPolling did not drain the waiting task on boot")
+	}
+}
+
+func TestDrainSerializesExecutableTasks(t *testing.T) {
+	brain := newFakeBrain()
+	now := time.Unix(70_000_000, 0)
+	home := newService(brain, config.Config{AgentID: "home"})
+	home.now = func() time.Time { return now }
+	home.dispatch(context.Background(), "wk-1", "A", KindTask)
+	home.dispatch(context.Background(), "wk-1", "B", KindTask)
+
+	var injected []string
+	w := newService(brain, config.Config{AgentID: "wk-1"})
+	w.injectFn = func(_, tk, _ string) error { injected = append(injected, tk); return nil }
+	w.seen = map[string]bool{}
+	w.busy = func() bool { return false }
+
+	w.DrainInbox(context.Background())
+	if len(injected) != 1 {
+		t.Fatalf("one executable task per drain; got %v", injected)
+	}
+	w.DrainInbox(context.Background())
+	if len(injected) != 2 {
+		t.Fatalf("second drain takes the next; got %v", injected)
+	}
+	home.dispatch(context.Background(), "wk-1", "C", KindTask)
+	w.busy = func() bool { return true }
+	w.DrainInbox(context.Background())
+	if len(injected) != 2 {
+		t.Fatalf("busy worker must not start new tasks; got %v", injected)
 	}
 }

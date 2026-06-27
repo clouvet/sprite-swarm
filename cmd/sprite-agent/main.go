@@ -379,7 +379,7 @@ func main() {
 				"back to anyone; that would be misread as a new task. Just finish here.\n\n" + task
 			return h.InjectMessage(sessionID, framed)
 		}
-		fleetSvc.StartTaskPolling(context.Background(), inject)
+		fleetSvc.StartTaskPolling(context.Background(), inject, h.Generating)
 
 		// Reaper: on token-bearing agents, destroy reapable/dead workers and
 		// clean their brain entries. Home is never reaped (fleet.ReapTargets).

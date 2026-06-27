@@ -155,9 +155,10 @@ func (s *Service) Inbox(ctx context.Context, id string) ([]Task, error) {
 // once immediately (so a freshly-booted or just-nudged agent picks up tasks that
 // arrived while it was down), then keeps a slow backstop poll running. Seen task
 // ids persist so a restart never re-injects.
-func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, task, kind string) error) {
+func (s *Service) StartTaskPolling(ctx context.Context, inject func(sessionID, task, kind string) error, busy func() bool) {
 	s.taskMu.Lock()
 	s.injectFn = inject
+	s.busy = busy
 	s.seen = s.loadSeen(ctx)
 	s.taskMu.Unlock()
 
@@ -194,8 +195,15 @@ func (s *Service) DrainInbox(ctx context.Context) error {
 		return err
 	}
 	changed := false
+	injectedTask := false // at most one new executable task per drain → no backlog multi-fire
 	for _, t := range tasks {
 		if s.seen[t.ID] {
+			continue
+		}
+		// Serialize executable work: leave it unseen for the next drain if a dispatched
+		// task is already running, or we've already started one this pass. Notes are
+		// informational (non-executing), so they always deliver.
+		if t.Kind != KindNote && (injectedTask || (s.busy != nil && s.busy())) {
 			continue
 		}
 		if err := s.injectFn(t.SessionID, t.Task, t.Kind); err != nil {
@@ -205,6 +213,9 @@ func (s *Service) DrainInbox(ctx context.Context) error {
 		log.Printf("fleet: accepted %s %s from %s -> session %s", t.Kind, t.ID, t.From, t.SessionID)
 		s.seen[t.ID] = true
 		changed = true
+		if t.Kind != KindNote {
+			injectedTask = true
+		}
 	}
 	if changed {
 		s.saveSeen(ctx, s.seen)
