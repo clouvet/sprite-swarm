@@ -793,6 +793,10 @@ func (h *Hub) ListSessions() []SessionInfo {
 
 // IsIdle reports whether the agent has no connected clients and nothing
 // generating — used by the fleet to decide a worker is reapable after a while.
+// Generating reports whether any session is currently generating — used to
+// serialize dispatched work (don't start a new dispatched task while one runs).
+func (h *Hub) Generating() bool { return h.processMgr.GetActiveGeneratingCount() > 0 }
+
 func (h *Hub) IsIdle() bool {
 	if h.processMgr.GetActiveGeneratingCount() > 0 {
 		return false

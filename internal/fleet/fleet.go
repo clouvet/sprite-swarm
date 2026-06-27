@@ -42,6 +42,7 @@ type Service struct {
 	taskMu   sync.Mutex                                // serializes inbox drains (one at a time)
 	seen     map[string]bool                           // task ids already injected (loaded once, persisted on change)
 	injectFn func(sessionID, task, kind string) error // delivers a task/note into a local session
+	busy     func() bool                              // reports if a session is generating (serialize dispatched work)
 }
 
 // New builds a Service backed by the brain. Prefers the gateway connector
