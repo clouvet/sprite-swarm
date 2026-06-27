@@ -217,6 +217,9 @@ func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, 
 	boot := "set -e; mkdir -p /home/sprite/app; " +
 		"curl -fsSL " + shQuote(req.ArtifactURL) + " -o /tmp/app.tgz; " +
 		"tar xzf /tmp/app.tgz -C /home/sprite/app; cd /home/sprite/app; " +
+		// Tolerate a tarball that wraps everything in one top-level dir (a common
+		// `tar czf x.tgz mydir` mistake) — descend into it so the app root is right.
+		"if [ \"$(ls -1A | wc -l)\" -eq 1 ] && [ -d \"$(ls -1A)\" ]; then cd \"$(ls -1A)\"; fi; " +
 		"exec sh -c " + shQuote(req.Run)
 	body, err := json.Marshal(serviceSpec{
 		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", HTTPPort: req.HTTPPort,
