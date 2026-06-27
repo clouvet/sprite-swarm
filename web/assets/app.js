@@ -758,7 +758,8 @@
       autoGrow();
     };
     micBtn.addEventListener('click', () => {
-      if (!currentSession) return;
+      // No session needed — voice just transcribes into the composer; the session
+      // is created on send. (Previously this bailed in a new chat → mic dead there.)
       if (isRecording) { try { recognition.stop(); } catch (e) {} }
       else { try { recognition.start(); } catch (e) {} }
     });
