@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/status", s.serveStatus)
 	mux.HandleFunc("/api/fleet/result", s.serveFleetResult)
 	mux.HandleFunc("/api/fleet/update", s.serveUpdate)
+	mux.HandleFunc("/api/fleet/deploy-app", s.serveDeployApp)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -386,6 +387,39 @@ func (s *Server) serveFleetResult(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	res, err := s.fleet.PeerResult(r.Context(), q.Get("target"), q.Get("session"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
+// serveDeployApp hosts a user app on a fresh, dedicated BARE sprite (no agent), so
+// the app owns that sprite's http port / public URL. The worker builds the app,
+// stages a tarball in the brain, and POSTs {name_prefix?, artifact_url, run, http_port}.
+// Returns the created sprite (name + URL); the app comes up in the background.
+func (s *Server) serveDeployApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no spawn capability on this sprite", http.StatusNotImplemented)
+		return
+	}
+	var b struct {
+		NamePrefix  string `json:"name_prefix"`
+		ArtifactURL string `json:"artifact_url"`
+		Run         string `json:"run"`
+		HTTPPort    int    `json:"http_port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.ArtifactURL == "" || b.Run == "" || b.HTTPPort == 0 {
+		http.Error(w, "artifact_url, run, and http_port are required", http.StatusBadRequest)
+		return
+	}
+	res, err := s.spawner.DeployApp(r.Context(), spawn.DeployRequest{
+		NamePrefix: b.NamePrefix, ArtifactURL: b.ArtifactURL, Run: b.Run, HTTPPort: b.HTTPPort,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return

@@ -160,7 +160,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"To roll out a new build after this binary is updated: POST /api/fleet/update {\"target\":\"<id>\"|\"all\"} " +
 			"stages your current binary and tells that worker (or every other agent) to self-update in place — they " +
 			"re-exec, keeping their VM disk (repo/branch/uncommitted work). POST /api/fleet/update with no body updates " +
-			"only this node. The roster's \"build\" hash shows who's stale (marked in the fleet context). ")
+			"only this node. The roster's \"build\" hash shows who's stale (marked in the fleet context). " +
+			"To HOST A WEB APP on its own public URL, do NOT try to serve it on an agent sprite — the agent " +
+			"already owns the http port (you'll hit a 409). Instead: build the app, tar it, stage the tarball to " +
+			"the brain (PUT it via the s3 connector), then POST /api/fleet/deploy-app " +
+			"{\"artifact_url\":\"<brain url of the tarball>\",\"run\":\"<start command>\",\"http_port\":<port the app listens on>}. " +
+			"That creates a dedicated BARE sprite (no agent) which fetches + runs your app, so the app owns that " +
+			"sprite's URL (served behind org login). The response returns the app's URL. ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")

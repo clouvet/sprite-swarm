@@ -196,6 +196,61 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
+// DeployApp hosts a user app on a dedicated BARE sprite (no agent). It creates the
+// sprite, then in the background warms it and installs a service that fetches the
+// app tarball from req.ArtifactURL, extracts it, and runs req.Run on req.HTTPPort —
+// so the sprite's public URL serves the app (behind org auth) with nothing else
+// owning the port. Returns the created sprite (name + URL) immediately.
+func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, error) {
+	if req.ArtifactURL == "" || req.Run == "" || req.HTTPPort == 0 {
+		return Result{}, fmt.Errorf("deploy: artifact_url, run, and http_port are required")
+	}
+	prefix := req.NamePrefix
+	if prefix == "" {
+		prefix = "app-"
+	}
+	res, err := a.createSprite(ctx, createSpriteRequest{Name: prefix + a.newID()})
+	if err != nil {
+		return Result{}, err
+	}
+	name := res.Name
+	boot := "set -e; mkdir -p /home/sprite/app; " +
+		"curl -fsSL " + shQuote(req.ArtifactURL) + " -o /tmp/app.tgz; " +
+		"tar xzf /tmp/app.tgz -C /home/sprite/app; cd /home/sprite/app; " +
+		"exec sh -c " + shQuote(req.Run)
+	body, err := json.Marshal(serviceSpec{
+		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", HTTPPort: req.HTTPPort,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		var lastErr error
+		for attempt := 0; attempt < 2; attempt++ {
+			if err := a.warmSprite(bg, name); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := a.putService(bg, name, body); err != nil {
+				lastErr = err
+				continue
+			}
+			if a.serviceExists(bg, name) {
+				log.Printf("deploy: %s app service installed (port %d)", name, req.HTTPPort)
+				return
+			}
+			lastErr = fmt.Errorf("service did not persist")
+		}
+		log.Printf("deploy: %s app provisioning failed: %v", name, lastErr)
+	}()
+	return res, nil
+}
+
+// shQuote single-quotes a string for safe embedding in a /bin/sh -c command.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
 func (a *apiSpawner) createSprite(ctx context.Context, cr createSpriteRequest) (Result, error) {
 	body, err := json.Marshal(cr)
 	if err != nil {

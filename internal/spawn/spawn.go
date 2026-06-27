@@ -41,6 +41,18 @@ type Spawner interface {
 	Spawn(ctx context.Context, req Request) (Result, error)
 	Destroy(ctx context.Context, name string) error
 	Exists(ctx context.Context, name string) (bool, error)
+	DeployApp(ctx context.Context, req DeployRequest) (Result, error)
+}
+
+// DeployRequest hosts a user app on a dedicated BARE sprite (no agent), so the
+// app owns the sprite's http port / public URL (an agent sprite already owns it).
+// The new sprite fetches the app tarball from ArtifactURL (a brain URL the worker
+// staged, reachable token-free by sprite identity) and runs Run on HTTPPort.
+type DeployRequest struct {
+	NamePrefix  string
+	ArtifactURL string
+	Run         string
+	HTTPPort    int
 }
 
 // New returns a live spawner when a sprites token is set OR a gateway connector
