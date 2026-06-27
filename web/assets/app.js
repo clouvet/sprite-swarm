@@ -862,42 +862,9 @@
     if (e.changedTouches[0].clientX - sbStartX < -60) closeSidebar();
   });
 
-  // pull-to-refresh (item #8)
-  const PULL_THRESHOLD = 80;
-  let pullStartY = 0, pullDistance = 0, isPulling = false;
-  function canPull(target) {
-    if (sidebar.classList.contains('open')) return false;
-    if (document.querySelector('header').contains(target)) return true;
-    return messagesEl.scrollTop <= 0;
-  }
-  document.addEventListener('touchstart', e => {
-    if (!canPull(e.target)) { isPulling = false; return; }
-    pullStartY = e.touches[0].clientY; isPulling = true; pullDistance = 0;
-  }, { passive: true });
-  document.addEventListener('touchmove', e => {
-    if (!isPulling) return;
-    pullDistance = e.touches[0].clientY - pullStartY;
-    if (pullDistance > 0) {
-      const progress = Math.min(pullDistance / PULL_THRESHOLD, 1);
-      pullIndicator.style.transition = 'none';
-      pullIndicator.style.transform = `translateX(-50%) translateY(${-60 + progress * 80}px)`;
-      pullIndicator.classList.add('visible');
-      pullIndicator.classList.toggle('ready', pullDistance >= PULL_THRESHOLD);
-    }
-  }, { passive: true });
-  document.addEventListener('touchend', () => {
-    if (!isPulling) return;
-    isPulling = false;
-    if (pullDistance >= PULL_THRESHOLD) {
-      pullIndicator.classList.add('refreshing');
-      if (currentSession) { try { localStorage.setItem('lastSessionId', currentSession.id); } catch (e) {} }
-      setTimeout(() => window.location.reload(), 300);
-    } else {
-      pullIndicator.style.transition = '';
-      pullIndicator.style.transform = '';
-      pullIndicator.classList.remove('visible', 'ready');
-    }
-  });
+  // pull-to-refresh: DISABLED — too easy to trigger accidentally (it reloaded the
+  // page mid-session). The gesture handlers are intentionally not wired; the
+  // #pull-indicator stays hidden. Refresh the browser normally if needed.
 
   // Copy helpers (delegated; work on hover-click + touch).
   function fallbackCopy(text, done) {
