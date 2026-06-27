@@ -80,12 +80,62 @@ func (s *Service) dispatch(ctx context.Context, target, task, kind string) (Task
 	if err := s.brain.Put(ctx, taskKey(target, t.ID), data); err != nil {
 		return Task{}, err
 	}
-	// The brain holds the durable record; nudge the target so it drains NOW
-	// instead of waiting for its backstop poll. Best-effort, in the background:
-	// if the nudge fails (target down/suspended), the task still lands via the
-	// target's boot drain or next poll. A nudge to a suspended sprite wakes it.
-	go s.nudge(context.Background(), target)
+	// The brain holds the durable record; stay with the target until its turn is
+	// actually running — repeatedly nudge it (each wakes a paused sprite + drains
+	// the inbox) until it's generating, so a freshly-spawned or paused worker can't
+	// suspend in the gap before pickup. Falls back to the boot drain / backstop poll
+	// if it never comes up. Background; dispatch returns immediately.
+	go s.ensureStarted(context.Background(), target)
 	return t, nil
+}
+
+const (
+	// ensureStartedTimeout bounds how long the dispatcher stays with a target
+	// waiting for its dispatched turn to begin.
+	ensureStartedTimeout = 3 * time.Minute
+	// ensureStartedInterval is how often it re-nudges + checks while waiting.
+	ensureStartedInterval = 12 * time.Second
+)
+
+// ensureStarted keeps the target awake until its dispatched turn is generating.
+// keepalive only holds a sprite while it's generating (or a client is attached),
+// so a worker is idle — and the platform can suspend it — in the gap between boot/
+// wake and its turn starting. We nudge, wait, and check /health, looping until it's
+// generating or we time out.
+func (s *Service) ensureStarted(ctx context.Context, target string) {
+	ctx, cancel := context.WithTimeout(ctx, ensureStartedTimeout)
+	defer cancel()
+	for {
+		s.nudge(ctx, target)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(ensureStartedInterval):
+		}
+		if s.targetGenerating(ctx, target) {
+			log.Printf("fleet: %s picked up its task (generating)", target)
+			return
+		}
+	}
+}
+
+// targetGenerating reports whether the target currently has a generating session
+// (its dispatched turn is running), via an authenticated /health pull.
+func (s *Service) targetGenerating(ctx context.Context, target string) bool {
+	url := s.agentURL(ctx, target)
+	if url == "" {
+		return false
+	}
+	live, err := s.fetchHealth(ctx, url)
+	if err != nil {
+		return false
+	}
+	if m, ok := live.(map[string]interface{}); ok {
+		if g, ok := m["generating"].(float64); ok {
+			return g > 0
+		}
+	}
+	return false
 }
 
 // nudge tells target to drain its inbox immediately via a direct sprite-to-sprite
