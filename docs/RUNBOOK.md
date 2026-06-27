@@ -151,6 +151,27 @@ improvise):
 To *watch* a worker directly, click it in the fleet list — that opens its own URL in
 your browser, and durable turns mean its chat shows live progress on refresh.
 
+`status`/`result` report a **state**: `active` (in roster, reachable), `paused` (in
+roster but heartbeat stale — sprites pause when idle), `unreachable`, or `gone` (not
+in the roster — destroyed, or a bare app sprite that never registered). And a worker's
+inbox drains **one executable task at a time** (none while it's already generating),
+so an accumulated backlog can't fan out into concurrent sessions.
+
+## Hosting a web app (deploy-app)
+An agent sprite can't serve a *separate* web app on its own URL — the agent already
+owns the http port (port 8080), so registering an app there 409s. Instead, deploy the
+app to a **dedicated bare sprite** (no agent) that owns its URL:
+
+`POST /api/fleet/deploy-app {"name_prefix":"app-","artifact_url":"<brain url>","run":"<start cmd>","http_port":<port>}`
+
+It bare-creates a sprite, installs a service that fetches the app tarball from
+`artifact_url` (stage it in the brain via the s3 connector — reachable token-free by
+sprite identity), extracts it, and runs `run` on `http_port`. The sprite's public URL
+then serves the app behind org login. Returns `{name, url}`; the app comes up in the
+background. Worker flow: build the app → `tar czf` it → PUT the tarball to the brain →
+`deploy-app`. (Bare app sprites don't run the agent, so they're not in the roster and
+are torn down with `sprite destroy`, not `/api/fleet/destroy`.)
+
 ## Durable workers + reaping
 Workers are **durable workspaces, not one-shots.** A worker that finishes a feature
 goes idle and *suspends* (cheap; the keep-awake task releases) — its VM disk (repo +

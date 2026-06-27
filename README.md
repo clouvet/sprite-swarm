@@ -50,6 +50,11 @@ booted against the brain reconstitutes the whole fleet.
   fleet context marks them). Typical flow: rebuild + restart home, then ask it in chat to "update all
   workers." (A node must already run update-capable code; a pre-existing old worker needs one
   reap+respawn to adopt it.)
+- **Host an app** — `POST /api/fleet/deploy-app {artifact_url, run, http_port}` creates a **bare** sprite
+  (no agent) that fetches the app tarball (staged in the brain) and runs it on its `http_port`, so the
+  app owns that sprite's URL (behind org login). Agent sprites never host apps themselves — the agent
+  already owns port 8080 (you'd hit a 409) — they *deploy* to a dedicated sprite. Worker flow: build →
+  tar → stage tarball to the brain → `deploy-app` → get the URL.
 - **Reap** — the fleet UI's per-worker reap button, or `POST /api/fleet/destroy {target[,force]}`.
   Presence-aware: it refuses (409) if a human is attached, unless `force`.
 - **Memory** — sprites read/write `$HOME/.sprite-agent/memory/` (grouped by topic: `repos/`,
