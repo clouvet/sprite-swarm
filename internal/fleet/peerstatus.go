@@ -38,7 +38,10 @@ func (s *Service) PeerStatus(ctx context.Context, target string) (interface{}, e
 		}
 	}
 	if entry == nil {
-		return nil, fmt.Errorf("no such agent in the roster: %s", target)
+		// Not in the roster: destroyed, or a bare app sprite that never registered.
+		// A clear state, not an error — callers shouldn't have to parse "no such agent".
+		return map[string]interface{}{"id": target, "state": "gone",
+			"note": "not in the fleet roster (destroyed, or never registered)"}, nil
 	}
 
 	out := map[string]interface{}{
@@ -49,13 +52,25 @@ func (s *Service) PeerStatus(ctx context.Context, target string) (interface{}, e
 		"present":   entry.Present,
 		"url":       entry.URL,
 		"last_seen": entry.LastSeen,
+		"state":     "paused", // refined below once we know more
 	}
 	// Pull live state directly from the target (skip self — the caller already
 	// knows its own; and a sprite calling its own public URL is wasteful).
-	if entry.URL != "" && target != s.id {
+	switch {
+	case target == s.id:
+		out["state"] = "self"
+	case !entry.Alive:
+		// Stale heartbeat: suspended/paused (sprites pause when idle) or crashed.
+		out["state"] = "paused"
+		out["note"] = "heartbeat stale — sprite is paused/suspended (or down)"
+	case entry.URL == "":
+		out["state"] = "alive"
+	default:
 		if live, err := s.fetchHealth(ctx, entry.URL); err != nil {
-			out["live_error"] = err.Error() // suspended/gone/unreachable — phase+alive still answer
+			out["state"] = "unreachable" // in roster + recent heartbeat, but the live call failed
+			out["live_error"] = err.Error()
 		} else {
+			out["state"] = "active"
 			out["live"] = live
 		}
 	}
@@ -73,9 +88,16 @@ func (s *Service) PeerResult(ctx context.Context, target, session string) (inter
 	}
 	url := s.agentURL(ctx, target)
 	if url == "" {
-		return nil, fmt.Errorf("no such agent in the roster: %s", target)
+		return map[string]interface{}{"session": session, "ready": false, "state": "gone",
+			"note": "target not in the fleet roster (destroyed, or never registered)"}, nil
 	}
-	return s.authedGetJSON(ctx, strings.TrimRight(url, "/")+"/api/sessions/"+session+"/result")
+	res, err := s.authedGetJSON(ctx, strings.TrimRight(url, "/")+"/api/sessions/"+session+"/result")
+	if err != nil {
+		// Reachable in the roster but the live pull failed → paused/unreachable, not fatal.
+		return map[string]interface{}{"session": session, "ready": false, "state": "paused",
+			"note": "couldn't reach the worker (paused/suspended?): " + err.Error()}, nil
+	}
+	return res, nil
 }
 
 // fetchHealth does an authenticated GET of a peer's /health.
