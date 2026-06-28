@@ -87,6 +87,29 @@ func hasClaudeOAuth() bool {
 	return err == nil
 }
 
+// checkClaudeAuth runs one tiny Claude call at boot to verify auth works, and logs
+// a clear verdict. A misconfigured connector-only fleet otherwise fails invisibly
+// (a 502 in the UI on the first chat/title); this turns that into an obvious
+// startup line so the operator knows immediately what's wrong.
+func checkClaudeAuth() {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	// Cheap model, trivial prompt — just enough to exercise the auth path.
+	cmd := exec.CommandContext(ctx, "claude", "--model", "claude-haiku-4-5-20251001", "-p", "Reply with: ok")
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		hint := "set the Anthropic connector (ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY) or a Claude OAuth login"
+		snippet := strings.TrimSpace(string(out))
+		if len(snippet) > 300 {
+			snippet = snippet[:300]
+		}
+		log.Printf("claude: AUTH CHECK FAILED — chat & titles will 502. %s. (%v) %s", hint, err, snippet)
+		return
+	}
+	log.Printf("claude: auth check OK — chat will work")
+}
+
 // fleetMemoryDir is the local markdown fleet-memory directory (synced to the brain).
 func fleetMemoryDir() string {
 	home := os.Getenv("HOME")
@@ -252,6 +275,11 @@ func main() {
 		}
 		dcancel()
 	}
+
+	// Boot-time auth self-check: ping Claude so a misconfigured fleet says so LOUDLY
+	// in the logs at startup, instead of silently 502-ing in the UI later. Background
+	// (a real model call); doesn't gate boot.
+	go checkClaudeAuth()
 
 	// Fleet brain: create it first so operational secrets + policy rehydrate from
 	// it before anything that depends on them. nil when no brain (agent runs solo).
