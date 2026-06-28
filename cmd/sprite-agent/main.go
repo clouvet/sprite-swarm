@@ -241,6 +241,13 @@ func main() {
 		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
 		if base := gateway.AnthropicBaseURL(dctx); base != "" {
 			os.Setenv("ANTHROPIC_BASE_URL", base)
+			// Claude Code needs a key set when using a base URL without OAuth. The
+			// gateway injects the real one by sprite identity; this is just the
+			// placeholder so the CLI runs (mirrors the worker path in spawn/api.go).
+			// Without it, a fresh connector-only home 502s on every Claude call.
+			if os.Getenv("ANTHROPIC_API_KEY") == "" {
+				os.Setenv("ANTHROPIC_API_KEY", "sprite-gateway")
+			}
 			log.Printf("claude: using anthropic connector (token-free): %s", base)
 		}
 		dcancel()
