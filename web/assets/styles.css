@@ -275,12 +275,14 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 @keyframes pulse-recording { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
 
 /* image preview pill */
-#image-preview { display: none; max-width: 792px; margin: 0 auto 10px; }
-#image-preview.has-image { display: block; }
-#image-preview-inner { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; }
-#image-preview-img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
-#image-preview-name { font-size: 12px; color: var(--text-secondary); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#remove-image { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; }
+/* pending-attachment chips: a wrapping row, one chip per file (see renderAttachments) */
+#image-preview { display: none; max-width: 792px; margin: 0 auto 10px; flex-wrap: wrap; gap: 8px; }
+#image-preview.has-image { display: flex; }
+.attach-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; }
+.attach-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+.attach-name { font-size: 12px; color: var(--text-secondary); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attach-remove { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; padding: 0; }
+.attach-remove:hover { color: var(--text); }
 
 /* ---- pull-to-refresh ---- */
 #pull-indicator { position: fixed; top: var(--safe-top); left: 50%; transform: translateX(-50%) translateY(-60px); opacity: 0;
