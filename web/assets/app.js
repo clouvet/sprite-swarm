@@ -78,6 +78,10 @@
   let currentToolInput = '';
   let pendingAttachments = [];
   let currentModel = 'opus'; // chosen model for the active conversation; Opus when unspecified
+  let generating = false;    // a turn is in progress (send disabled, timer running)
+  let genStart = 0;          // turn start (ms) for the working-indicator elapsed timer
+  let genTimer = null;       // interval id for the elapsed timer
+  let thinkingText = '';     // accumulates streamed reasoning for the live preview
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -438,14 +442,20 @@
         break;
       case 'content_block_start':
         if (msg.content_block?.type === 'text') startAssistant();
+        else if (msg.content_block?.type === 'thinking') { thinkingText = ''; showThinking(); }
         else if (msg.content_block?.type === 'tool_use') addTool(msg.content_block.name, msg.content_block.input);
         break;
       case 'content_block_delta':
         if (msg.delta?.type === 'text_delta') appendAssistant(msg.delta.text);
+        else if (msg.delta?.type === 'thinking_delta') appendThinking(msg.delta.thinking);
         else if (msg.delta?.type === 'input_json_delta') accumulateToolInput(msg.delta.partial_json);
         break;
       case 'message_stop':
         finalizeAssistant();
+        // Between one assistant message and the next step (a tool running, or more
+        // thinking) there's a real gap — keep a live indicator so it never goes
+        // blank. 'result' clears it when the turn actually ends.
+        if (generating) showActivity('Working');
         break;
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
@@ -550,18 +560,51 @@
     }
   }
 
-  // ---- thinking indicator (three bouncing dots) ----
-  function showThinking() {
-    if ($('thinking')) return;
-    setGenerating(true);
-    const el = document.createElement('div');
-    el.id = 'thinking'; el.className = 'thinking-indicator';
-    el.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div>`;
-    messagesEl.appendChild(el); scrollDown();
+  // ---- working indicator: one persistent element for the whole turn ----
+  // Reflects the current phase (Thinking / Working / a specific tool) with a live
+  // elapsed timer, reused in place so it never flickers or goes blank between phases.
+  function fmtElapsed(ms) {
+    const s = Math.round(ms / 1000);
+    return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
   }
-  function removeThinking() { const t = $('thinking'); if (t) t.remove(); }
+  function tickElapsed() {
+    const el = $('activity'); if (!el || !genStart) return;
+    const e = el.querySelector('.activity-elapsed');
+    if (e) e.textContent = fmtElapsed(Date.now() - genStart);
+  }
+  function showActivity(action) {
+    setGenerating(true);
+    let el = $('activity');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'activity'; el.className = 'activity-indicator';
+      el.innerHTML = '<div class="activity-spinner"><span class="spinner-sprite">👾</span></div>' +
+        '<div class="activity-content"><div class="activity-action"></div><div class="activity-detail"></div></div>';
+      messagesEl.appendChild(el);
+    }
+    el.querySelector('.activity-action').innerHTML = escapeHtml(action) + '… <span class="activity-elapsed"></span>';
+    tickElapsed();
+    scrollDown();
+  }
+  function setActivityDetail(text) {
+    const el = $('activity'); if (!el) return;
+    const d = el.querySelector('.activity-detail');
+    d.textContent = text || '';
+    d.style.display = text ? '' : 'none';
+  }
+  function removeActivity() { const t = $('activity'); if (t) t.remove(); currentToolName = ''; currentToolInput = ''; }
+  // "Thinking" is the default phase of the same indicator (replaces the old dots).
+  function showThinking() { showActivity('Thinking'); setActivityDetail(''); }
+  function removeThinking() { /* unified into the working indicator */ }
+  // Stream a preview of Claude's reasoning into the detail line when thinking text
+  // is exposed, keeping the most recent words visible so a long think reads as live.
+  function appendThinking(text) {
+    thinkingText += text || '';
+    const t = thinkingText.replace(/\s+/g, ' ').trim();
+    if (t) setActivityDetail('… ' + t.slice(-140));
+  }
 
-  // ---- activity / tool indicator ----
+  // ---- tool indicator (a phase of the working indicator) ----
   const toolActions = {
     'Read':            { action: 'Reading',            getDetail: i => i?.file_path },
     'Write':           { action: 'Writing',            getDetail: i => i?.file_path },
@@ -587,15 +630,10 @@
   }
   function addTool(name, input) {
     currentToolName = name; currentToolInput = '';
-    removeThinking(); removeActivity();
-    setGenerating(true);
     const ta = getToolAction(name);
+    showActivity(ta.action);
     const detail = input ? ta.getDetail(input) : null;
-    const el = document.createElement('div');
-    el.id = 'activity'; el.className = 'activity-indicator';
-    el.innerHTML = `<div class="activity-spinner"><span class="spinner-sprite">👾</span></div>
-      <div class="activity-content"><div class="activity-action">${escapeHtml(ta.action)}…</div>${detail ? `<div class="activity-detail">${escapeHtml(truncatePath(detail))}</div>` : ''}</div>`;
-    messagesEl.appendChild(el); scrollDown();
+    setActivityDetail(detail ? truncatePath(detail) : '');
   }
   function accumulateToolInput(partial) {
     if (!currentToolName) return;
@@ -603,24 +641,20 @@
     try {
       const parsed = JSON.parse(currentToolInput);
       const detail = getToolAction(currentToolName).getDetail(parsed);
-      if (detail) updateActivity(detail);
+      if (detail) setActivityDetail(truncatePath(detail));
     } catch (e) { /* incomplete JSON; wait for more deltas */ }
   }
-  function updateActivity(detail) {
-    const el = $('activity'); if (!el) return;
-    let d = el.querySelector('.activity-detail');
-    if (!d) {
-      d = document.createElement('div'); d.className = 'activity-detail';
-      el.querySelector('.activity-content').appendChild(d);
-    }
-    d.textContent = truncatePath(detail);
-  }
-  function removeActivity() { const t = $('activity'); if (t) t.remove(); currentToolName = null; currentToolInput = ''; }
 
-  // ---- generating state (drives send/stop button swap) ----
+  // ---- generating state (drives the send/stop button swap + the turn timer) ----
   function setGenerating(on) {
-    inputArea.classList.toggle('generating', !!on);
-    stopBtn.disabled = !on;
+    generating = !!on;
+    inputArea.classList.toggle('generating', generating);
+    stopBtn.disabled = !generating;
+    if (generating) {
+      if (!genTimer) { genStart = Date.now(); genTimer = setInterval(tickElapsed, 1000); }
+    } else {
+      clearInterval(genTimer); genTimer = null; genStart = 0; thinkingText = '';
+    }
   }
 
   // Stick-to-bottom: auto-scroll while streaming ONLY if you're already at the
