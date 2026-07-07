@@ -34,6 +34,7 @@ type Session struct {
 	LastActivity     time.Time
 	ConnectedClients int
 	Streaming        StreamingState
+	Model            string // chosen model for this session's turns ("" = CLI default)
 
 	mu sync.RWMutex
 }
@@ -71,6 +72,18 @@ func (s *Session) SetClaudeUUID(uuid string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ClaudeUUID = uuid
+}
+
+func (s *Session) GetModel() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Model
+}
+
+func (s *Session) SetModel(model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Model = model
 }
 
 func (s *Session) IncrementClients() {

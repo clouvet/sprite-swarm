@@ -156,6 +156,10 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		log.Printf("[%s] mkdir chat workdir failed: %v", sessionID, err)
 	}
+	model := ""
+	if sess := h.GetSession(sessionID); sess != nil {
+		model = sess.GetModel()
+	}
 	return process.Options{
 		SessionID:      sessionID,
 		CWD:            cwd,
@@ -165,6 +169,7 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 		SettingsPath:   h.cfg.settingsPath,
 		MCPConfigPath:  h.cfg.mcpConfigPath,
 		AppendSystem:   h.cfg.appendSystem,
+		Model:          model,
 	}
 }
 
@@ -302,6 +307,20 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	}
 
 	sess := h.GetSession(client.sessionID)
+
+	// Model selection: the turn carries the chosen model. Record it so (re)spawns
+	// use it, and if a process is already running under a different model, drop it
+	// so the block below respawns with the new --model (the transcript resumes, so
+	// context carries over). Idempotent when the model is unchanged.
+	if sess != nil && msg.Model != sess.GetModel() {
+		sess.SetModel(msg.Model)
+		if hp, err := h.processMgr.Get(client.sessionID); err == nil && hp.Model != msg.Model {
+			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)
+			_ = h.processMgr.Kill(client.sessionID)
+			sess.SetState(session.StateIdle)
+		}
+	}
+
 	if sess != nil && sess.GetState() == session.StateIdle {
 		log.Printf("[%s] no process, spawning before send", client.sessionID)
 		h.spawnClaudeForSession(client.sessionID, sess)

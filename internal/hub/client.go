@@ -38,6 +38,9 @@ type Attachment struct {
 type ClientMessage struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
+	// Model the client wants for this session ("" = CLI default). Carried on each
+	// user turn; a change from the running process's model triggers a respawn.
+	Model string `json:"model,omitempty"`
 	// Attachments the client sends with this turn (may be several files at once).
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// Deprecated single-attachment fields, still read for backward compatibility
