@@ -53,6 +53,7 @@
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
   const modelLabel = $('model-label');
+  const repoBar = $('repo-bar');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -132,6 +133,7 @@
     messagesEl.innerHTML = '';
     inputEl.value = ''; autoGrow();
     clearAttachments();
+    renderRepos([]);
     showBaselineTitle();
     renderSessions();
     updateComposing();
@@ -215,6 +217,7 @@
     currentAssistantEl = null;
     assistantText = '';
     applySessionModel(s.model);
+    fetchRepos();
     clearAttachments();
     restoreDraft();
     assistantTurns = 0;
@@ -444,6 +447,7 @@
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
         onAssistantTurnComplete();
+        fetchRepos(); // the turn may have cloned/removed a repo — remirror the workspace
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -648,6 +652,52 @@
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: currentModel }),
     }).catch(() => {});
+  }
+
+  // ---- repos: on-disk mirror of the chat's workspace (~/chats/<id>) ----
+  async function fetchRepos() {
+    if (!currentSession) { renderRepos([]); return; }
+    const id = currentSession.id;
+    try {
+      const res = await fetch('/api/sessions/' + id + '/repos');
+      if (!res.ok) return;
+      const list = await res.json();
+      if (currentSession && currentSession.id === id) renderRepos(list); // ignore if switched away
+    } catch (e) {}
+  }
+  // Render one chip per repo; the bar hides itself when there are none.
+  function renderRepos(list) {
+    const repos = Array.isArray(list) ? list : [];
+    repoBar.innerHTML = '';
+    repoBar.classList.toggle('has-repos', repos.length > 0);
+    for (const r of repos) {
+      const chip = document.createElement('span');
+      chip.className = 'repo-chip';
+      chip.title = [r.remote, r.branch ? 'branch: ' + r.branch : '', r.dirty ? 'uncommitted changes' : '']
+        .filter(Boolean).join('\n');
+      chip.innerHTML =
+        (r.dirty ? '<span class="repo-dirty"></span>' : '') +
+        escapeHtml(r.name) +
+        (r.branch ? ' <span class="repo-branch">' + escapeHtml(r.branch) + '</span>' : '');
+      repoBar.appendChild(chip);
+    }
+    if (repos.length) {
+      const add = document.createElement('button');
+      add.className = 'repo-add';
+      add.textContent = '+ repo';
+      add.title = 'Clone another repo into this workspace';
+      add.addEventListener('click', addRepo);
+      repoBar.appendChild(add);
+    }
+  }
+  // Adding a repo just asks the agent to clone it — reuses its git/gh auth, and the
+  // bar refreshes from disk when the turn completes.
+  function addRepo() {
+    const url = (prompt('Repo to clone (URL or owner/name):') || '').trim();
+    if (!url) return;
+    inputEl.value = 'Clone this repo into my workspace: ' + url;
+    autoGrow();
+    send();
   }
 
   // ---- attachments (images + documents), multiple at a time ----
