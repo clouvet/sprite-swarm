@@ -83,6 +83,21 @@
       </div>
     </div>
 
+    <!-- Add-a-repo: clone a repo into this chat's workspace (the agent does the clone). -->
+    <div id="repo-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="repo-modal-title">
+        <h3 id="repo-modal-title">Add a repo</h3>
+        <p>Clone a repository into this conversation's workspace. The agent runs the
+           clone with its own GitHub access, so private repos work too.</p>
+        <input id="repo-modal-input" type="text" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" placeholder="URL or owner/name">
+        <div class="modal-actions">
+          <button id="repo-modal-cancel" class="modal-btn">Cancel</button>
+          <button id="repo-modal-confirm" class="modal-btn primary" disabled>Clone</button>
+        </div>
+      </div>
+    </div>
+
     <main id="main">
       <header>
         <h1 id="chat-title"></h1>

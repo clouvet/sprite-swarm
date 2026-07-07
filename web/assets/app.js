@@ -701,14 +701,31 @@
     }
   }
   // Adding a repo just asks the agent to clone it — reuses its git/gh auth, and the
-  // bar refreshes from disk when the turn completes.
+  // bar refreshes from disk when the turn completes. The URL is collected in a modal.
+  const repoModal = $('repo-modal');
+  const repoModalInput = $('repo-modal-input');
+  const repoModalConfirm = $('repo-modal-confirm');
   function addRepo() {
-    const url = (prompt('Repo to clone (URL or owner/name):') || '').trim();
+    repoModalInput.value = '';
+    repoModalConfirm.disabled = true;
+    repoModal.hidden = false;
+    repoModalInput.focus();
+  }
+  function closeRepoModal() { repoModal.hidden = true; }
+  function submitRepoModal() {
+    const url = repoModalInput.value.trim();
     if (!url) return;
+    closeRepoModal();
     inputEl.value = 'Clone this repo into my workspace: ' + url;
     autoGrow();
     send();
   }
+  repoModalInput.addEventListener('input', () => { repoModalConfirm.disabled = !repoModalInput.value.trim(); });
+  repoModalInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !repoModalConfirm.disabled) submitRepoModal(); });
+  repoModalConfirm.addEventListener('click', submitRepoModal);
+  $('repo-modal-cancel').addEventListener('click', closeRepoModal);
+  repoModal.addEventListener('click', (e) => { if (e.target === repoModal) closeRepoModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !repoModal.hidden) closeRepoModal(); });
 
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
