@@ -196,8 +196,8 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.serveSessionResult(w, r, strings.TrimSuffix(rest, "/result"))
 		return
 	}
-	if strings.HasSuffix(rest, "/repos") {
-		s.serveSessionRepos(w, r, strings.TrimSuffix(rest, "/repos"))
+	if strings.HasSuffix(rest, "/context") {
+		s.serveSessionContext(w, r, strings.TrimSuffix(rest, "/context"))
 		return
 	}
 	id := rest

@@ -53,7 +53,7 @@
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
   const modelLabel = $('model-label');
-  const repoBar = $('repo-bar');
+  const contextBar = $('context-bar');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -133,7 +133,7 @@
     messagesEl.innerHTML = '';
     inputEl.value = ''; autoGrow();
     clearAttachments();
-    renderRepos([]);
+    renderContext(null);
     showBaselineTitle();
     renderSessions();
     updateComposing();
@@ -217,7 +217,7 @@
     currentAssistantEl = null;
     assistantText = '';
     applySessionModel(s.model);
-    fetchRepos();
+    fetchContext();
     clearAttachments();
     restoreDraft();
     assistantTurns = 0;
@@ -447,7 +447,7 @@
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
         onAssistantTurnComplete();
-        fetchRepos(); // the turn may have cloned/removed a repo — remirror the workspace
+        fetchContext(); // the turn may have cloned/removed a repo — remirror the workspace
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -654,22 +654,24 @@
     }).catch(() => {});
   }
 
-  // ---- repos: on-disk mirror of the chat's workspace (~/chats/<id>) ----
-  async function fetchRepos() {
-    if (!currentSession) { renderRepos([]); return; }
+  // ---- context: on-disk mirror of what's been added to the chat ----
+  // (git repos in ~/chats/<id> plus files uploaded to it)
+  async function fetchContext() {
+    if (!currentSession) { renderContext(null); return; }
     const id = currentSession.id;
     try {
-      const res = await fetch('/api/sessions/' + id + '/repos');
+      const res = await fetch('/api/sessions/' + id + '/context');
       if (!res.ok) return;
-      const list = await res.json();
-      if (currentSession && currentSession.id === id) renderRepos(list); // ignore if switched away
+      const ctx = await res.json();
+      if (currentSession && currentSession.id === id) renderContext(ctx); // ignore if switched away
     } catch (e) {}
   }
-  // Render one chip per repo; the bar hides itself when there are none.
-  function renderRepos(list) {
-    const repos = Array.isArray(list) ? list : [];
-    repoBar.innerHTML = '';
-    repoBar.classList.toggle('has-repos', repos.length > 0);
+  // Render a chip per repo and per uploaded file; the bar hides itself when empty.
+  function renderContext(ctx) {
+    const repos = (ctx && ctx.repos) || [];
+    const files = (ctx && ctx.files) || [];
+    contextBar.innerHTML = '';
+    contextBar.classList.toggle('has-items', repos.length + files.length > 0);
     for (const r of repos) {
       const chip = document.createElement('span');
       chip.className = 'repo-chip';
@@ -679,15 +681,23 @@
         (r.dirty ? '<span class="repo-dirty"></span>' : '') +
         escapeHtml(r.name) +
         (r.branch ? ' <span class="repo-branch">' + escapeHtml(r.branch) + '</span>' : '');
-      repoBar.appendChild(chip);
+      contextBar.appendChild(chip);
     }
-    if (repos.length) {
+    for (const f of files) {
+      const chip = document.createElement('a');
+      chip.className = 'upload-chip';
+      chip.href = f.url; chip.target = '_blank'; chip.rel = 'noopener';
+      chip.title = f.name;
+      chip.textContent = (f.image ? '🖼 ' : '📎 ') + f.name;
+      contextBar.appendChild(chip);
+    }
+    if (repos.length + files.length) {
       const add = document.createElement('button');
       add.className = 'repo-add';
       add.textContent = '+ repo';
       add.title = 'Clone another repo into this workspace';
       add.addEventListener('click', addRepo);
-      repoBar.appendChild(add);
+      contextBar.appendChild(add);
     }
   }
   // Adding a repo just asks the agent to clone it — reuses its git/gh auth, and the
@@ -763,6 +773,7 @@
       const localUrl = img ? URL.createObjectURL(file) : null;
       pendingAttachments.push({ id: data.id, filename: data.filename, name: data.name, mediaType: data.mediaType, isImage: img, localUrl });
       renderAttachments();
+      fetchContext(); // the file is now in the workspace — reflect it in the context bar
     } catch (e) { addSystem('Upload error: ' + e.message); }
   }
 
