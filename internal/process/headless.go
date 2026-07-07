@@ -27,6 +27,7 @@ type Options struct {
 	SettingsPath   string // --settings <file> when non-empty
 	MCPConfigPath  string // --mcp-config <file> when non-empty
 	AppendSystem   string // --append-system-prompt when non-empty (fleet affordance, DESIGN §5)
+	Model          string // --model <model> when non-empty; "" uses the CLI default
 }
 
 // HeadlessProcess is a supervised, long-lived `claude` process driven over
@@ -34,6 +35,7 @@ type Options struct {
 type HeadlessProcess struct {
 	SessionID    string
 	CWD          string
+	Model        string // model this process was launched with ("" = CLI default)
 	Cmd          *exec.Cmd
 	Stdin        io.WriteCloser
 	StartedAt    time.Time
@@ -81,6 +83,9 @@ func buildArgs(opts Options) []string {
 	}
 	if opts.AppendSystem != "" {
 		args = append(args, "--append-system-prompt", opts.AppendSystem)
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
 	}
 
 	transcript := opts.ProjectsDir + "/" + opts.SessionID + ".jsonl"
@@ -130,6 +135,7 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 	hp := &HeadlessProcess{
 		SessionID:  opts.SessionID,
 		CWD:        cwd,
+		Model:      opts.Model,
 		Cmd:        execCmd,
 		Stdin:      stdin,
 		StartedAt:  time.Now(),

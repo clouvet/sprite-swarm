@@ -29,3 +29,16 @@ func TestBuildArgsScopedWhenSkipOff(t *testing.T) {
 		t.Fatalf("expected scoped --permission-mode plan: %s", a)
 	}
 }
+
+func TestBuildArgsModel(t *testing.T) {
+	// A chosen model is passed through as --model.
+	a := argsString(Options{SessionID: "s1", ProjectsDir: "/nonexistent", DangerousSkip: true, Model: "opus"})
+	if !strings.Contains(a, "--model opus") {
+		t.Fatalf("expected --model opus, got: %s", a)
+	}
+	// The default (empty) omits the flag entirely so the CLI picks the default.
+	b := argsString(Options{SessionID: "s1", ProjectsDir: "/nonexistent", DangerousSkip: true})
+	if strings.Contains(b, "--model") {
+		t.Fatalf("empty model should omit --model, got: %s", b)
+	}
+}

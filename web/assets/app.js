@@ -51,6 +51,8 @@
   const micBtn = $('mic-btn');
   const fileInput = $('file-input');
   const imagePreview = $('image-preview');
+  const modelSelect = $('model-select');
+  const modelLabel = $('model-label');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -71,6 +73,7 @@
   let currentToolName = null;
   let currentToolInput = '';
   let pendingAttachments = [];
+  let currentModel = 'opus'; // chosen model for the active conversation; Opus when unspecified
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -149,6 +152,7 @@
       sessions.unshift(s);
       currentSession = s;
       chatTitle.textContent = s.name || 'Chat';
+      if (currentModel) persistModel(); // carry the picker's choice onto the new session
       assistantTurns = 0;
       renderSessions();
       connectWs(s.id);
@@ -210,6 +214,7 @@
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
+    applySessionModel(s.model);
     clearAttachments();
     restoreDraft();
     assistantTurns = 0;
@@ -622,6 +627,29 @@
   function scrollDown() { if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight; }
   function forceScrollDown() { stickToBottom = true; messagesEl.scrollTop = messagesEl.scrollHeight; }
 
+  // ---- model selection ----
+  // Reflect a session's stored model in the picker (called when opening a chat).
+  // No model stored → Opus.
+  function applySessionModel(model) {
+    currentModel = model || 'opus';
+    if (modelSelect) modelSelect.value = currentModel;
+    syncModelLabel();
+  }
+  // Show the selected model's name next to the chevron.
+  function syncModelLabel() {
+    if (modelLabel && modelSelect) modelLabel.textContent = (modelSelect.selectedOptions[0] || {}).text || 'Opus';
+  }
+  // Persist the picker's choice so it survives reloads. The turn itself also
+  // carries `model`, so the hub applies it (respawning if it changed) on send.
+  function persistModel() {
+    if (currentSession) currentSession.model = currentModel;
+    if (!currentSession) return;
+    fetch('/api/sessions/' + currentSession.id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: currentModel }),
+    }).catch(() => {});
+  }
+
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
     for (const a of pendingAttachments) if (a.localUrl) URL.revokeObjectURL(a.localUrl);
@@ -708,7 +736,7 @@
     maybeAutoTitle(text);
     addUser(text, attachmentRender(atts));
     showThinking();
-    const payload = { type: 'user', content: text };
+    const payload = { type: 'user', content: text, model: currentModel };
     if (atts.length) {
       payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
     }
@@ -944,6 +972,8 @@
     const btn = e.target.closest('.attach-remove');
     if (btn) removeAttachment(btn.dataset.id);
   });
+  modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; syncModelLabel(); persistModel(); });
+  applySessionModel(currentModel); // initialize the picker (defaults to Opus until a session sets it)
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }

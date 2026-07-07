@@ -114,6 +114,16 @@
                 <line x1="8" y1="23" x2="16" y2="23"></line>
               </svg>
             </button>
+            <label id="model-picker" title="Model for this conversation">
+              <span id="model-label">Opus</span>
+              <svg id="model-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <select id="model-select" aria-label="Model for this conversation">
+                <option value="claude-fable-5">Fable</option>
+                <option value="opus">Opus</option>
+                <option value="sonnet">Sonnet</option>
+                <option value="haiku">Haiku</option>
+              </select>
+            </label>
             <button id="send" title="Send">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
