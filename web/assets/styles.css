@@ -170,15 +170,17 @@ html[data-theme="light"] #theme-toggle .icon-deathstar { display: block; }
 /* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
 @media (min-width: 769px) { #status::before { font-size: 21px; } }
 
-/* repo bar: git repos checked out in this chat's workspace. Hidden when empty, so
-   it stays out of the way when you're just chatting. z-index above the header's
-   scroll-blur strip so the chips aren't softened. */
-#repo-bar { display: none; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 16px;
+/* context bar: what's been added to this chat — git repos in its workspace and
+   uploaded files. Hidden when empty, so it stays out of the way when you're just
+   chatting. z-index above the header's scroll-blur strip so chips aren't softened. */
+#context-bar { display: none; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 16px;
   border-bottom: 1px solid var(--border); background: var(--bg); position: relative; z-index: 3; }
-#repo-bar.has-repos { display: flex; }
-.repo-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);
-  background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px;
-  white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+#context-bar.has-items { display: flex; }
+.repo-chip, .upload-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 12px; padding: 3px 10px; white-space: nowrap; max-width: 260px; overflow: hidden;
+  text-overflow: ellipsis; text-decoration: none; }
+.upload-chip:hover { color: var(--text); }
 .repo-chip .repo-branch { color: var(--text-muted); }
 .repo-chip .repo-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .repo-add { cursor: pointer; font-size: 12px; color: var(--text-muted); background: none;
