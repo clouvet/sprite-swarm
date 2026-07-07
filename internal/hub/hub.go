@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -275,12 +276,15 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	content := h.buildContent(client.sessionID, msg)
 
 	// Echo to other clients so co-present viewers see the user's turn (including
-	// the attachment reference, so they can render the thumbnail / file chip).
+	// the attachment references, so they can render thumbnails / file chips).
+	atts := msg.allAttachments()
 	echo := map[string]interface{}{"role": "user", "content": msg.Content}
-	if msg.AttachmentFile != "" {
-		echo["attachment"] = map[string]string{
-			"id": msg.AttachmentID, "file": msg.AttachmentFile, "name": msg.AttachmentName, "type": msg.AttachmentType,
+	if len(atts) > 0 {
+		refs := make([]map[string]string, 0, len(atts))
+		for _, a := range atts {
+			refs = append(refs, map[string]string{"id": a.ID, "file": a.File, "name": a.Name, "type": a.Type})
 		}
+		echo["attachments"] = refs
 	}
 	data, _ := json.Marshal(map[string]interface{}{"type": "user_message", "message": echo})
 	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: data, Exclude: client}
@@ -288,8 +292,11 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	// Keep the session list's preview/timestamp current.
 	if h.onActivity != nil {
 		preview := msg.Content
-		if preview == "" && msg.AttachmentFile != "" {
-			preview = "📎 " + msg.AttachmentName
+		if preview == "" && len(atts) > 0 {
+			preview = "📎 " + atts[0].Name
+			if len(atts) > 1 {
+				preview += fmt.Sprintf(" (+%d)", len(atts)-1)
+			}
 		}
 		h.onActivity(client.sessionID, preview)
 	}
@@ -320,51 +327,72 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 // maxInlineFile caps how much of a text attachment we inline into the turn.
 const maxInlineFile = 256 * 1024
 
-// buildContent returns what to feed Claude as the user turn:
-//   - no attachment        → the plain text string
-//   - image                → content-block array: image (base64) + text
-//   - text-like (text/*)   → text with the file's contents inlined
-//   - other (binary docs)  → text noting the saved path; the agent reads/converts it
+// buildContent returns what to feed Claude as the user turn, combining any number
+// of attachments with the text:
+//   - no attachments       → the plain text string
+//   - any image present    → content-block array: one image block per image, then a
+//                            trailing text block (message text + any inlined/saved files)
+//   - no images            → text string: message text + inlined text files + saved paths
 //
-// Files are read from uploadsDir/<session>/<file>. Falls back to plain text on error.
+// Per attachment: images become base64 image blocks; text/* files are inlined; other
+// (binary docs) contribute a note pointing at the saved path for the agent to read.
+// Files are read from uploadsDir/<session>/<file>. A file that fails to read is skipped.
 func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
-	if msg.AttachmentFile == "" || h.cfg.uploadsDir == "" {
+	atts := msg.allAttachments()
+	if len(atts) == 0 || h.cfg.uploadsDir == "" {
 		return msg.Content
 	}
-	path := filepath.Join(h.cfg.uploadsDir, sessionID, filepath.Base(msg.AttachmentFile))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Printf("[%s] attachment read failed (%v); sending text only", sessionID, err)
-		return msg.Content
-	}
-	name := msg.AttachmentName
-	if name == "" {
-		name = msg.AttachmentFile
-	}
-	media := msg.AttachmentType
 
-	// Image → native image content block.
-	if strings.HasPrefix(media, "image/") {
-		blocks := []map[string]interface{}{{
-			"type": "image",
-			"source": map[string]interface{}{
-				"type": "base64", "media_type": media, "data": base64.StdEncoding.EncodeToString(data),
-			},
-		}}
-		if msg.Content != "" {
-			blocks = append(blocks, map[string]interface{}{"type": "text", "text": msg.Content})
+	var imageBlocks []map[string]interface{}
+	textParts := []string{}
+	if msg.Content != "" {
+		textParts = append(textParts, msg.Content)
+	}
+
+	for _, att := range atts {
+		path := filepath.Join(h.cfg.uploadsDir, sessionID, filepath.Base(att.File))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("[%s] attachment read failed (%v); skipping %s", sessionID, err, att.File)
+			continue
 		}
-		return blocks
+		name := att.Name
+		if name == "" {
+			name = att.File
+		}
+
+		switch {
+		case strings.HasPrefix(att.Type, "image/"):
+			imageBlocks = append(imageBlocks, map[string]interface{}{
+				"type": "image",
+				"source": map[string]interface{}{
+					"type": "base64", "media_type": att.Type, "data": base64.StdEncoding.EncodeToString(data),
+				},
+			})
+		case strings.HasPrefix(att.Type, "text/") && len(data) <= maxInlineFile:
+			textParts = append(textParts, "--- Attached file: "+name+" ---\n"+string(data))
+		default:
+			textParts = append(textParts, "[Attached file \""+name+"\" saved at "+path+
+				" — read or convert it with your tools to use its contents.]")
+		}
 	}
 
-	// Text-like → inline the contents directly.
-	if strings.HasPrefix(media, "text/") && len(data) <= maxInlineFile {
-		return msg.Content + "\n\n--- Attached file: " + name + " ---\n" + string(data)
+	text := strings.Join(textParts, "\n\n")
+
+	// No images → a plain text turn (nothing to attach as blocks).
+	if len(imageBlocks) == 0 {
+		if text == "" {
+			return msg.Content
+		}
+		return text
 	}
 
-	// Binary docs → point at the saved file; the agent (full tools) reads/converts it.
-	return msg.Content + "\n\n[Attached file \"" + name + "\" saved at " + path +
-		" — read or convert it with your tools to use its contents.]"
+	// Images present → content-block array: image blocks + a trailing text block.
+	blocks := imageBlocks
+	if text != "" {
+		blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
+	}
+	return blocks
 }
 
 func (h *Hub) handleInterrupt(client *Client) {

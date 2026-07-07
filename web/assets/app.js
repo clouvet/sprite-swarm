@@ -51,8 +51,6 @@
   const micBtn = $('mic-btn');
   const fileInput = $('file-input');
   const imagePreview = $('image-preview');
-  const imagePreviewImg = $('image-preview-img');
-  const imagePreviewName = $('image-preview-name');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -72,7 +70,7 @@
   let assistantText = '';
   let currentToolName = null;
   let currentToolInput = '';
-  let pendingAttachment = null;
+  let pendingAttachments = [];
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -130,7 +128,7 @@
     currentAssistantEl = null; assistantText = ''; assistantTurns = 0;
     messagesEl.innerHTML = '';
     inputEl.value = ''; autoGrow();
-    clearAttachment();
+    clearAttachments();
     showBaselineTitle();
     renderSessions();
     updateComposing();
@@ -212,7 +210,7 @@
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
-    clearAttachment();
+    clearAttachments();
     restoreDraft();
     assistantTurns = 0;
     renderSessions();
@@ -410,12 +408,15 @@
         break;
       case 'user_message':
         if (msg.message) {
-          const a = msg.message.attachment;
+          // New shape: attachments[]. Fall back to the old singular attachment.
+          const atts = msg.message.attachments || (msg.message.attachment ? [msg.message.attachment] : []);
           let opts = null;
-          if (a && a.file) {
-            opts = (a.type || '').startsWith('image/')
-              ? { images: [uploadUrl(a.file)] }
-              : { file: { name: a.name || a.file, url: uploadUrl(a.file) } };
+          if (atts.length) {
+            const isImg = a => (a.type || '').startsWith('image/');
+            opts = {
+              images: atts.filter(isImg).map(a => uploadUrl(a.file)),
+              files: atts.filter(a => !isImg(a)).map(a => ({ name: a.name || a.file, url: uploadUrl(a.file) })),
+            };
           }
           addUser(msg.message.content, opts);
           showThinking();
@@ -468,12 +469,12 @@
     removeThinking();
     const imgs = (opts.images || []).filter(Boolean)
       .map(s => `<img class="message-image" src="${s}" alt="attachment">`).join('');
-    const chip = opts.file
-      ? `<a class="file-chip" href="${opts.file.url}" target="_blank" rel="noopener">📎 ${escapeHtml(opts.file.name)}</a>`
-      : '';
+    const files = opts.files || (opts.file ? [opts.file] : []);
+    const chips = files
+      .map(f => `<a class="file-chip" href="${f.url}" target="_blank" rel="noopener">📎 ${escapeHtml(f.name)}</a>`).join('');
     const el = document.createElement('div');
     el.className = 'message user';
-    el.innerHTML = `<div class="message-content">${imgs}${chip}${escapeHtml(text || '')}</div>`;
+    el.innerHTML = `<div class="message-content">${imgs}${chips}${escapeHtml(text || '')}</div>`;
     messagesEl.appendChild(el);
     updateComposing(); // first message → dock the composer to the bottom
     forceScrollDown(); // your own turn always jumps to the bottom and re-pins
@@ -621,13 +622,34 @@
   function scrollDown() { if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight; }
   function forceScrollDown() { stickToBottom = true; messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-  // ---- attachments (images + documents) ----
-  function clearAttachment() {
-    if (pendingAttachment && pendingAttachment.localUrl) URL.revokeObjectURL(pendingAttachment.localUrl);
-    pendingAttachment = null;
-    imagePreview.classList.remove('has-image', 'is-file');
-    imagePreviewImg.src = '';
-    imagePreviewName.textContent = '';
+  // ---- attachments (images + documents), multiple at a time ----
+  function clearAttachments() {
+    for (const a of pendingAttachments) if (a.localUrl) URL.revokeObjectURL(a.localUrl);
+    pendingAttachments = [];
+    renderAttachments();
+  }
+  function removeAttachment(id) {
+    const i = pendingAttachments.findIndex(a => a.id === id);
+    if (i < 0) return;
+    if (pendingAttachments[i].localUrl) URL.revokeObjectURL(pendingAttachments[i].localUrl);
+    pendingAttachments.splice(i, 1);
+    renderAttachments();
+  }
+  // Rebuild the preview row: one chip per pending attachment (thumbnail for
+  // images, 📎 name for files), each with its own × remove button.
+  function renderAttachments() {
+    imagePreview.innerHTML = '';
+    imagePreview.classList.toggle('has-image', pendingAttachments.length > 0);
+    for (const a of pendingAttachments) {
+      const chip = document.createElement('div');
+      chip.className = 'attach-chip';
+      const label = a.name || a.filename;
+      chip.innerHTML =
+        (a.isImage ? `<img class="attach-thumb" src="${a.localUrl}" alt="">` : '') +
+        `<span class="attach-name">${a.isImage ? '' : '📎 '}${escapeHtml(label)}</span>` +
+        `<button class="attach-remove" title="Remove" data-id="${escapeHtml(a.id)}">×</button>`;
+      imagePreview.appendChild(chip);
+    }
   }
   function resizeImage(file, maxSize = 2048) {
     return new Promise(resolve => {
@@ -661,24 +683,16 @@
       const data = await res.json();
       const img = data.kind === 'image';
       const localUrl = img ? URL.createObjectURL(file) : null;
-      pendingAttachment = { id: data.id, filename: data.filename, name: data.name, mediaType: data.mediaType, isImage: img, localUrl };
-      if (img) {
-        imagePreviewImg.src = localUrl; imagePreviewImg.style.display = '';
-        imagePreviewName.textContent = data.name || data.filename;
-      } else {
-        imagePreviewImg.style.display = 'none';
-        imagePreviewName.textContent = '📎 ' + (data.name || data.filename);
-        imagePreview.classList.add('is-file');
-      }
-      imagePreview.classList.add('has-image');
+      pendingAttachments.push({ id: data.id, filename: data.filename, name: data.name, mediaType: data.mediaType, isImage: img, localUrl });
+      renderAttachments();
     } catch (e) { addSystem('Upload error: ' + e.message); }
   }
 
   // ---- send ----
   async function send() {
     const text = inputEl.value.trim();
-    const att = pendingAttachment;
-    if (!text && !att) return;
+    const atts = pendingAttachments.slice();
+    if (!text && !atts.length) return;
     if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
 
     // Composing a brand-new chat: create + connect the session first (text/attachment
@@ -692,27 +706,26 @@
     }
 
     maybeAutoTitle(text);
-    addUser(text, attachmentRender(att));
+    addUser(text, attachmentRender(atts));
     showThinking();
     const payload = { type: 'user', content: text };
-    if (att) {
-      payload.attachmentId = att.id;
-      payload.attachmentFile = att.filename;
-      payload.attachmentName = att.name;
-      payload.attachmentType = att.mediaType;
+    if (atts.length) {
+      payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
     }
     ws.send(JSON.stringify(payload));
     inputEl.value = ''; autoGrow();
     clearDraft();
-    clearAttachment();
+    clearAttachments();
     setGenerating(true);
   }
-  // attachmentRender turns an attachment into addUser opts (image vs file chip).
-  function attachmentRender(att) {
-    if (!att) return null;
-    return att.isImage
-      ? { images: [uploadUrl(att.filename)] }
-      : { file: { name: att.name || att.filename, url: uploadUrl(att.filename) } };
+  // attachmentRender turns pending attachments into addUser opts: images render as
+  // thumbnails, everything else as file chips.
+  function attachmentRender(atts) {
+    if (!atts || !atts.length) return null;
+    return {
+      images: atts.filter(a => a.isImage).map(a => uploadUrl(a.filename)),
+      files: atts.filter(a => !a.isImage).map(a => ({ name: a.name || a.filename, url: uploadUrl(a.filename) })),
+    };
   }
   function interrupt() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'interrupt' }));
@@ -923,10 +936,14 @@
     setTimeout(() => { isOpeningFilePicker = false; }, 400);
   });
   fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) uploadAttachment(fileInput.files[0]);
+    for (const f of Array.from(fileInput.files || [])) uploadAttachment(f);
     fileInput.value = '';
   });
-  $('remove-image').addEventListener('click', clearAttachment);
+  // Per-chip remove (delegated: chips are rebuilt on every change).
+  imagePreview.addEventListener('click', e => {
+    const btn = e.target.closest('.attach-remove');
+    if (btn) removeAttachment(btn.dataset.id);
+  });
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
