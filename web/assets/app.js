@@ -52,6 +52,7 @@
   const fileInput = $('file-input');
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
+  const modelLabel = $('model-label');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -72,7 +73,7 @@
   let currentToolName = null;
   let currentToolInput = '';
   let pendingAttachments = [];
-  let currentModel = ''; // chosen model for the active conversation ("" = default)
+  let currentModel = 'opus'; // chosen model for the active conversation; Opus when unspecified
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -628,9 +629,15 @@
 
   // ---- model selection ----
   // Reflect a session's stored model in the picker (called when opening a chat).
+  // No model stored → Opus.
   function applySessionModel(model) {
-    currentModel = model || '';
+    currentModel = model || 'opus';
     if (modelSelect) modelSelect.value = currentModel;
+    syncModelLabel();
+  }
+  // Show the selected model's name next to the chevron.
+  function syncModelLabel() {
+    if (modelLabel && modelSelect) modelLabel.textContent = (modelSelect.selectedOptions[0] || {}).text || 'Opus';
   }
   // Persist the picker's choice so it survives reloads. The turn itself also
   // carries `model`, so the hub applies it (respawning if it changed) on send.
@@ -965,7 +972,8 @@
     const btn = e.target.closest('.attach-remove');
     if (btn) removeAttachment(btn.dataset.id);
   });
-  modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; persistModel(); });
+  modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; syncModelLabel(); persistModel(); });
+  applySessionModel(currentModel); // initialize the picker (defaults to Opus until a session sets it)
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
