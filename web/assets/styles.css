@@ -287,7 +287,7 @@ html[data-theme="light"] .message-content pre code { background: none; }
 /* desktop: a little breathing room below the composer */
 @media (min-width: 769px) { #input-wrapper { margin-bottom: 12px; } }
 #input { width: 100%; min-height: 26px; max-height: 200px; padding: 6px 6px 0; background: transparent; border: none;
-  color: var(--text); font-size: 16px; line-height: 1.4; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
+  color: var(--text); font-size: 16px; line-height: 1.55; resize: none; outline: none; -webkit-appearance: none; font-family: inherit; }
 
 #input-toolbar { display: flex; align-items: center; gap: 8px; }
 #input-toolbar svg { width: 17px; height: 17px; }
