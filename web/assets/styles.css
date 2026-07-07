@@ -109,10 +109,10 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .copy-name:hover { filter: brightness(1.2); }
 .copy-name::after { content: ' ⧉'; opacity: .6; font-family: initial; }
 .copy-name.copied::after { content: ' ✓ copied'; color: var(--on); opacity: 1; }
-#reap-modal-input { width: 100%; box-sizing: border-box; background: var(--input-bg); color: var(--text);
+#reap-modal-input, #repo-modal-input { width: 100%; box-sizing: border-box; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
   font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; }
-#reap-modal-input:focus { outline: none; border-color: var(--accent); }
+#reap-modal-input:focus, #repo-modal-input:focus { outline: none; border-color: var(--accent); }
 .modal-msg { min-height: 0; margin: 10px 0 0; font-size: 13px; color: #f0a; }
 .modal-msg:empty { display: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
