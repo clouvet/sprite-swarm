@@ -99,6 +99,9 @@ func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 	if origName == "" || origName == "." {
 		origName = filename
 	}
+	// Sidecar the original name so the context bar can mirror a readable name
+	// (the stored file is <uuid><ext>; the original name lives only here on disk).
+	_ = os.WriteFile(filepath.Join(dir, filename+".name"), []byte(origName), 0o644)
 	writeJSON(w, map[string]string{
 		"id": id, "filename": filename, "name": origName, "mediaType": media, "kind": kind,
 		"url": "/api/uploads/" + session + "/" + filename,

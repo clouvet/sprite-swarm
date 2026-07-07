@@ -53,6 +53,10 @@
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
   const modelLabel = $('model-label');
+  const contextPill = $('context-pill');
+  const contextPopover = $('context-popover');
+  const contextCount = $('context-count');
+  const contextList = $('context-list');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -132,6 +136,7 @@
     messagesEl.innerHTML = '';
     inputEl.value = ''; autoGrow();
     clearAttachments();
+    renderContext(null);
     showBaselineTitle();
     renderSessions();
     updateComposing();
@@ -215,6 +220,7 @@
     currentAssistantEl = null;
     assistantText = '';
     applySessionModel(s.model);
+    fetchContext();
     clearAttachments();
     restoreDraft();
     assistantTurns = 0;
@@ -444,6 +450,7 @@
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
         onAssistantTurnComplete();
+        fetchContext(); // the turn may have cloned/removed a repo — remirror the workspace
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -650,6 +657,91 @@
     }).catch(() => {});
   }
 
+  // ---- context: on-disk mirror of what's been added to the chat ----
+  // (git repos in ~/chats/<id> plus files uploaded to it)
+  async function fetchContext() {
+    if (!currentSession) { renderContext(null); return; }
+    const id = currentSession.id;
+    try {
+      const res = await fetch('/api/sessions/' + id + '/context');
+      if (!res.ok) return;
+      const ctx = await res.json();
+      if (currentSession && currentSession.id === id) renderContext(ctx); // ignore if switched away
+    } catch (e) {}
+  }
+  // Update the count pill and (re)build the popover list. Pill hides when empty.
+  function renderContext(ctx) {
+    const repos = (ctx && ctx.repos) || [];
+    const files = (ctx && ctx.files) || [];
+    const total = repos.length + files.length;
+    contextCount.textContent = String(total);
+    contextPill.hidden = total === 0;
+    if (total === 0) closeContextPopover();
+
+    contextList.innerHTML = '';
+    if (repos.length) {
+      contextList.appendChild(ctxGroup('Repos'));
+      for (const r of repos) {
+        const row = document.createElement('span');
+        row.className = 'ctx-row';
+        row.title = [r.remote, r.branch ? 'branch: ' + r.branch : '', r.dirty ? 'uncommitted changes' : '']
+          .filter(Boolean).join('\n');
+        if (r.dirty) { const d = document.createElement('span'); d.className = 'repo-dirty'; row.appendChild(d); }
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = r.name; row.appendChild(n);
+        if (r.branch) { const b = document.createElement('span'); b.className = 'repo-branch'; b.textContent = r.branch; row.appendChild(b); }
+        contextList.appendChild(row);
+      }
+    }
+    if (files.length) {
+      contextList.appendChild(ctxGroup('Files'));
+      for (const f of files) {
+        const a = document.createElement('a');
+        a.className = 'ctx-row'; a.href = f.url; a.target = '_blank'; a.rel = 'noopener'; a.title = f.name;
+        const ic = document.createElement('span'); ic.textContent = f.image ? '🖼' : '📎'; a.appendChild(ic);
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = f.name; a.appendChild(n);
+        contextList.appendChild(a);
+      }
+    }
+  }
+  function ctxGroup(text) { const d = document.createElement('div'); d.className = 'ctx-group'; d.textContent = text; return d; }
+  function openContextPopover() { contextPopover.hidden = false; contextPill.setAttribute('aria-expanded', 'true'); }
+  function closeContextPopover() { contextPopover.hidden = true; contextPill.setAttribute('aria-expanded', 'false'); }
+  contextPill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    contextPopover.hidden ? openContextPopover() : closeContextPopover();
+  });
+  document.addEventListener('click', (e) => {
+    if (!contextPopover.hidden && !contextPopover.contains(e.target) && !contextPill.contains(e.target)) closeContextPopover();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !contextPopover.hidden) closeContextPopover(); });
+  $('context-add').addEventListener('click', () => { closeContextPopover(); addRepo(); });
+  // Adding a repo just asks the agent to clone it — reuses its git/gh auth, and the
+  // bar refreshes from disk when the turn completes. The URL is collected in a modal.
+  const repoModal = $('repo-modal');
+  const repoModalInput = $('repo-modal-input');
+  const repoModalConfirm = $('repo-modal-confirm');
+  function addRepo() {
+    repoModalInput.value = '';
+    repoModalConfirm.disabled = true;
+    repoModal.hidden = false;
+    repoModalInput.focus();
+  }
+  function closeRepoModal() { repoModal.hidden = true; }
+  function submitRepoModal() {
+    const url = repoModalInput.value.trim();
+    if (!url) return;
+    closeRepoModal();
+    inputEl.value = 'Clone this repo into my workspace: ' + url;
+    autoGrow();
+    send();
+  }
+  repoModalInput.addEventListener('input', () => { repoModalConfirm.disabled = !repoModalInput.value.trim(); });
+  repoModalInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !repoModalConfirm.disabled) submitRepoModal(); });
+  repoModalConfirm.addEventListener('click', submitRepoModal);
+  $('repo-modal-cancel').addEventListener('click', closeRepoModal);
+  repoModal.addEventListener('click', (e) => { if (e.target === repoModal) closeRepoModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !repoModal.hidden) closeRepoModal(); });
+
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
     for (const a of pendingAttachments) if (a.localUrl) URL.revokeObjectURL(a.localUrl);
@@ -713,6 +805,7 @@
       const localUrl = img ? URL.createObjectURL(file) : null;
       pendingAttachments.push({ id: data.id, filename: data.filename, name: data.name, mediaType: data.mediaType, isImage: img, localUrl });
       renderAttachments();
+      fetchContext(); // the file is now in the workspace — reflect it in the context bar
     } catch (e) { addSystem('Upload error: ' + e.message); }
   }
 
