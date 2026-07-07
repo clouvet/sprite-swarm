@@ -24,17 +24,40 @@ type Client struct {
 	clientID  string
 }
 
+// Attachment references one uploaded file. The client uploads the bytes to
+// /api/upload first and sends only these references; the hub reads the file and
+// feeds it to Claude (image block, inlined text, or a saved path for binary docs).
+type Attachment struct {
+	ID   string `json:"id,omitempty"`
+	File string `json:"file,omitempty"` // stored filename
+	Name string `json:"name,omitempty"` // original filename
+	Type string `json:"type,omitempty"` // media type
+}
+
 // ClientMessage is an inbound message from a web client.
 type ClientMessage struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
-	// Attachment: the client uploads the bytes to /api/upload first and sends only
-	// these references; the hub reads the file and feeds it to Claude (image block,
-	// inlined text, or a saved path for binary docs).
+	// Attachments the client sends with this turn (may be several files at once).
+	Attachments []Attachment `json:"attachments,omitempty"`
+	// Deprecated single-attachment fields, still read for backward compatibility
+	// with older clients. Prefer Attachments; see allAttachments.
 	AttachmentID   string `json:"attachmentId,omitempty"`
-	AttachmentFile string `json:"attachmentFile,omitempty"` // stored filename
-	AttachmentName string `json:"attachmentName,omitempty"` // original filename
-	AttachmentType string `json:"attachmentType,omitempty"` // media type
+	AttachmentFile string `json:"attachmentFile,omitempty"`
+	AttachmentName string `json:"attachmentName,omitempty"`
+	AttachmentType string `json:"attachmentType,omitempty"`
+}
+
+// allAttachments returns the turn's attachments, normalizing the legacy single
+// fields into the slice form so callers only handle one shape.
+func (m *ClientMessage) allAttachments() []Attachment {
+	if len(m.Attachments) > 0 {
+		return m.Attachments
+	}
+	if m.AttachmentFile != "" {
+		return []Attachment{{ID: m.AttachmentID, File: m.AttachmentFile, Name: m.AttachmentName, Type: m.AttachmentType}}
+	}
+	return nil
 }
 
 // ReadPump pumps client messages into the hub.
