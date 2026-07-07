@@ -18,6 +18,7 @@ type SessionMeta struct {
 	LastMessage   string `json:"lastMessage"`
 	CreatedAt     int64  `json:"createdAt"`
 	LastMessageAt int64  `json:"lastMessageAt"`
+	Model         string `json:"model,omitempty"` // chosen model ("" = CLI default)
 }
 
 // metaStore is an in-memory, JSON-file-backed session metadata store.
@@ -104,6 +105,21 @@ func (s *metaStore) Rename(id, name string) {
 	if name != "" {
 		m.Name = name
 	}
+	s.saveLocked()
+}
+
+// SetModel records the chosen model for a session (creating the entry if
+// missing), so the UI's selector re-initializes correctly across reloads.
+func (s *metaStore) SetModel(id, model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.byID[id]
+	if m == nil {
+		now := time.Now().UnixMilli()
+		m = &SessionMeta{ID: id, CreatedAt: now, LastMessageAt: now}
+		s.byID[id] = m
+	}
+	m.Model = model
 	s.saveLocked()
 }
 
