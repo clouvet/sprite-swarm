@@ -102,11 +102,17 @@
       <header>
         <h1 id="chat-title"></h1>
         <script>try{var n=localStorage.getItem('spriteName');if(n)document.getElementById('chat-title').textContent=n}catch(e){}</script>
+        <button id="context-pill" hidden aria-haspopup="true" aria-expanded="false" title="What's in this conversation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          <span id="context-count">0</span>
+        </button>
         <button id="menu-btn">☰</button>
+        <!-- context contents: repos + files in this conversation; filled in app.js -->
+        <div id="context-popover" hidden>
+          <div id="context-list"></div>
+          <button id="context-add" class="repo-add">+ add repo</button>
+        </div>
       </header>
-
-      <!-- what's been added to this chat: repos + uploaded files; hidden when empty (built in app.js) -->
-      <div id="context-bar"></div>
 
       <div id="stage">
       <div id="messages"></div>

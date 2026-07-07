@@ -173,22 +173,35 @@ html[data-theme="light"] #theme-toggle .icon-deathstar { display: block; }
 /* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
 @media (min-width: 769px) { #status::before { font-size: 21px; } }
 
-/* context bar: what's been added to this chat — git repos in its workspace and
-   uploaded files. Hidden when empty, so it stays out of the way when you're just
-   chatting. z-index above the header's scroll-blur strip so chips aren't softened. */
-#context-bar { display: none; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 16px;
-  border-bottom: 1px solid var(--border); background: var(--bg); position: relative; z-index: 3; }
-#context-bar.has-items { display: flex; }
-.repo-chip, .upload-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--border);
-  border-radius: 12px; padding: 3px 10px; white-space: nowrap; max-width: 260px; overflow: hidden;
-  text-overflow: ellipsis; text-decoration: none; }
-.upload-chip:hover { color: var(--text); }
-.repo-chip .repo-branch { color: var(--text-muted); }
-.repo-chip .repo-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+/* context: everything added to this chat (repos + uploaded files). A compact count
+   pill in the header opens a popover list — constant footprint no matter how many
+   items, so it scales and stays mobile-friendly. Hidden entirely when empty. */
+#context-pill { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; cursor: pointer;
+  background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-secondary);
+  border-radius: 14px; padding: 3px 9px; font-size: 12px; }
+#context-pill[hidden] { display: none; }
+#context-pill:hover { color: var(--text); }
+#context-pill svg { width: 13px; height: 13px; }
+
+#context-popover { position: absolute; top: calc(100% + 6px); right: 12px; z-index: 20; width: 280px;
+  max-width: calc(100vw - 24px); max-height: 60vh; overflow-y: auto; padding: 8px;
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+#context-popover[hidden] { display: none; }
+.ctx-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
+  padding: 6px 8px 2px; }
+.ctx-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  font-size: 13px; color: var(--text-secondary); text-decoration: none; }
+.ctx-row .ctx-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.ctx-row:hover { background: var(--bg-tertiary); color: var(--text); }
+.ctx-row .repo-branch { color: var(--text-muted); margin-left: auto; font-size: 12px; flex-shrink: 0; }
+.ctx-row .repo-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .repo-add { cursor: pointer; font-size: 12px; color: var(--text-muted); background: none;
   border: 1px dashed var(--border); border-radius: 12px; padding: 3px 10px; }
 .repo-add:hover { color: var(--text); border-color: var(--text-muted); }
+#context-add { width: 100%; margin-top: 6px; }
+/* mobile: let the popover span the width so long names/lists read comfortably */
+@media (max-width: 768px) { #context-popover { left: 8px; right: 8px; width: auto; max-width: none; } }
 
 /* stage = everything below the header (empty-state, messages, input). Lets the
    composer center for a new chat and dock to the bottom once it's active. */

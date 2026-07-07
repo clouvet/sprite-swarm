@@ -53,7 +53,10 @@
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
   const modelLabel = $('model-label');
-  const contextBar = $('context-bar');
+  const contextPill = $('context-pill');
+  const contextPopover = $('context-popover');
+  const contextCount = $('context-count');
+  const contextList = $('context-list');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -666,40 +669,52 @@
       if (currentSession && currentSession.id === id) renderContext(ctx); // ignore if switched away
     } catch (e) {}
   }
-  // Render a chip per repo and per uploaded file; the bar hides itself when empty.
+  // Update the count pill and (re)build the popover list. Pill hides when empty.
   function renderContext(ctx) {
     const repos = (ctx && ctx.repos) || [];
     const files = (ctx && ctx.files) || [];
-    contextBar.innerHTML = '';
-    contextBar.classList.toggle('has-items', repos.length + files.length > 0);
-    for (const r of repos) {
-      const chip = document.createElement('span');
-      chip.className = 'repo-chip';
-      chip.title = [r.remote, r.branch ? 'branch: ' + r.branch : '', r.dirty ? 'uncommitted changes' : '']
-        .filter(Boolean).join('\n');
-      chip.innerHTML =
-        (r.dirty ? '<span class="repo-dirty"></span>' : '') +
-        escapeHtml(r.name) +
-        (r.branch ? ' <span class="repo-branch">' + escapeHtml(r.branch) + '</span>' : '');
-      contextBar.appendChild(chip);
+    const total = repos.length + files.length;
+    contextCount.textContent = String(total);
+    contextPill.hidden = total === 0;
+    if (total === 0) closeContextPopover();
+
+    contextList.innerHTML = '';
+    if (repos.length) {
+      contextList.appendChild(ctxGroup('Repos'));
+      for (const r of repos) {
+        const row = document.createElement('span');
+        row.className = 'ctx-row';
+        row.title = [r.remote, r.branch ? 'branch: ' + r.branch : '', r.dirty ? 'uncommitted changes' : '']
+          .filter(Boolean).join('\n');
+        if (r.dirty) { const d = document.createElement('span'); d.className = 'repo-dirty'; row.appendChild(d); }
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = r.name; row.appendChild(n);
+        if (r.branch) { const b = document.createElement('span'); b.className = 'repo-branch'; b.textContent = r.branch; row.appendChild(b); }
+        contextList.appendChild(row);
+      }
     }
-    for (const f of files) {
-      const chip = document.createElement('a');
-      chip.className = 'upload-chip';
-      chip.href = f.url; chip.target = '_blank'; chip.rel = 'noopener';
-      chip.title = f.name;
-      chip.textContent = (f.image ? '🖼 ' : '📎 ') + f.name;
-      contextBar.appendChild(chip);
-    }
-    if (repos.length + files.length) {
-      const add = document.createElement('button');
-      add.className = 'repo-add';
-      add.textContent = '+ repo';
-      add.title = 'Clone another repo into this workspace';
-      add.addEventListener('click', addRepo);
-      contextBar.appendChild(add);
+    if (files.length) {
+      contextList.appendChild(ctxGroup('Files'));
+      for (const f of files) {
+        const a = document.createElement('a');
+        a.className = 'ctx-row'; a.href = f.url; a.target = '_blank'; a.rel = 'noopener'; a.title = f.name;
+        const ic = document.createElement('span'); ic.textContent = f.image ? '🖼' : '📎'; a.appendChild(ic);
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = f.name; a.appendChild(n);
+        contextList.appendChild(a);
+      }
     }
   }
+  function ctxGroup(text) { const d = document.createElement('div'); d.className = 'ctx-group'; d.textContent = text; return d; }
+  function openContextPopover() { contextPopover.hidden = false; contextPill.setAttribute('aria-expanded', 'true'); }
+  function closeContextPopover() { contextPopover.hidden = true; contextPill.setAttribute('aria-expanded', 'false'); }
+  contextPill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    contextPopover.hidden ? openContextPopover() : closeContextPopover();
+  });
+  document.addEventListener('click', (e) => {
+    if (!contextPopover.hidden && !contextPopover.contains(e.target) && !contextPill.contains(e.target)) closeContextPopover();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !contextPopover.hidden) closeContextPopover(); });
+  $('context-add').addEventListener('click', () => { closeContextPopover(); addRepo(); });
   // Adding a repo just asks the agent to clone it — reuses its git/gh auth, and the
   // bar refreshes from disk when the turn completes. The URL is collected in a modal.
   const repoModal = $('repo-modal');
