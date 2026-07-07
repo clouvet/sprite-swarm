@@ -74,7 +74,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 #fleet-section { border-top: 1px solid var(--border); padding: 8px; max-height: 38%; overflow-y: auto; }
 #fleet-header { display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 4px 8px; }
 /* Footer row: theme toggle on the left, connection indicator on the right. */
-#sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
+#sidebar-footer { display: flex; align-items: center; justify-content: flex-end; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
 #spawn-btn { background: var(--bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 #spawn-btn:hover { border-color: var(--accent); }
 #spawn-btn:disabled { opacity: .5; cursor: default; }
