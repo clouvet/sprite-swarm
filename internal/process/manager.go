@@ -170,3 +170,14 @@ func (m *Manager) GetProcessCount() int {
 	defer m.mu.RUnlock()
 	return len(m.processes)
 }
+
+// ActiveSessionIDs returns the session ids that currently have a live process.
+func (m *Manager) ActiveSessionIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.processes))
+	for id := range m.processes {
+		ids = append(ids, id)
+	}
+	return ids
+}

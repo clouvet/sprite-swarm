@@ -776,6 +776,84 @@
   repoModal.addEventListener('click', (e) => { if (e.target === repoModal) closeRepoModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !repoModal.hidden) closeRepoModal(); });
 
+  // ---- worker env vars (in-memory secrets) ----
+  const envModal = $('env-modal');
+  const envList = $('env-list');
+  const envName = $('env-name');
+  const envValue = $('env-value');
+  const envMsg = $('env-msg');
+  async function openEnvModal() {
+    closeSidebar();
+    envMsg.textContent = '';
+    envName.value = ''; envValue.value = '';
+    renderEnvList([]);
+    envModal.hidden = false;
+    await refreshEnv();
+    envName.focus();
+  }
+  function closeEnvModal() { envModal.hidden = true; }
+  async function refreshEnv() {
+    try {
+      const res = await fetch('/api/env');
+      if (!res.ok) return;
+      const data = await res.json();
+      renderEnvList(data.names || []);
+    } catch (e) {}
+  }
+  function renderEnvList(names) {
+    envList.innerHTML = '';
+    if (!names.length) {
+      const p = document.createElement('p');
+      p.className = 'env-empty';
+      p.textContent = 'No variables set on this worker.';
+      envList.appendChild(p);
+      return;
+    }
+    for (const name of names) {
+      const row = document.createElement('div');
+      row.className = 'env-row';
+      row.innerHTML =
+        `<span class="env-name">${escapeHtml(name)}</span>` +
+        `<span class="env-mask">••••••</span>` +
+        `<button class="env-del" title="Remove" data-name="${escapeHtml(name)}">×</button>`;
+      envList.appendChild(row);
+    }
+  }
+  async function setEnv() {
+    const name = envName.value.trim();
+    const value = envValue.value;
+    if (!name || !value) { envMsg.textContent = 'Name and value are both required.'; return; }
+    try {
+      const res = await fetch('/api/env', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, value }),
+      });
+      if (!res.ok) { envMsg.textContent = await res.text(); return; }
+      const data = await res.json();
+      renderEnvList(data.names || []);
+      envMsg.textContent = '';
+      envName.value = ''; envValue.value = '';
+      envName.focus();
+    } catch (e) { envMsg.textContent = 'Failed: ' + e.message; }
+  }
+  async function deleteEnv(name) {
+    try {
+      await fetch('/api/env/' + encodeURIComponent(name), { method: 'DELETE' });
+      await refreshEnv();
+    } catch (e) {}
+  }
+  $('env-btn').addEventListener('click', openEnvModal);
+  $('env-add-btn').addEventListener('click', setEnv);
+  $('env-close').addEventListener('click', closeEnvModal);
+  envValue.addEventListener('keydown', (e) => { if (e.key === 'Enter') setEnv(); });
+  envName.addEventListener('keydown', (e) => { if (e.key === 'Enter') envValue.focus(); });
+  envList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.env-del');
+    if (btn) deleteEnv(btn.dataset.name);
+  });
+  envModal.addEventListener('click', (e) => { if (e.target === envModal) closeEnvModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !envModal.hidden) closeEnvModal(); });
+
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
     for (const a of pendingAttachments) if (a.localUrl) URL.revokeObjectURL(a.localUrl);
