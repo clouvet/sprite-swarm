@@ -23,6 +23,7 @@ import (
 	"github.com/clouvet/sprite-agent/internal/keepalive"
 	"github.com/clouvet/sprite-agent/internal/memsync"
 	"github.com/clouvet/sprite-agent/internal/reaper"
+	"github.com/clouvet/sprite-agent/internal/secret"
 	"github.com/clouvet/sprite-agent/internal/server"
 	"github.com/clouvet/sprite-agent/internal/spawn"
 )
@@ -347,6 +348,9 @@ func main() {
 	}
 
 	log.Printf("permissions: dangerous-skip=%v (fleet-wide; scoped mode=%s when off)", cfg.DangerousSkip, permissionMode)
+	// Worker-scoped env secrets: in-memory only (never disk/brain), injected into
+	// each Claude process and shared by the hub (inject) and the server (manage).
+	secrets := secret.NewStore()
 	h := hub.NewHub(hub.Config{
 		WorkDir:        cfg.WorkDir,
 		ProjectsDir:    cfg.ClaudeProjectsDir,
@@ -356,6 +360,7 @@ func main() {
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
 		AppendSystem:   fleetAffordance(cfg, spawner.Available(), os.Getenv("GH_TOKEN") != ""),
+		Secrets:        secrets,
 	})
 	go h.Run()
 
@@ -370,7 +375,7 @@ func main() {
 	if fleetSvc != nil {
 		roster = fleetSvc
 	}
-	srv := server.New(cfg, h, roster, spawner)
+	srv := server.New(cfg, h, roster, spawner, secrets)
 
 	if fleetSvc != nil {
 		// Idle-based self-reaping (DESIGN §2.3, disabled by default).

@@ -73,8 +73,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 /* ---- fleet section (sprite-agent) ---- */
 #fleet-section { border-top: 1px solid var(--border); padding: 8px; max-height: 38%; overflow-y: auto; }
 #fleet-header { display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 4px 8px; }
-/* Footer row: theme toggle on the left, connection indicator on the right. */
-#sidebar-footer { display: flex; align-items: center; justify-content: flex-end; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
+/* Footer row: env-vars button on the left, theme toggle on the right. */
+#sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
+#env-btn { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; }
+#env-btn:hover { color: var(--accent); }
+#env-btn svg { width: 18px; height: 18px; display: block; }
 #spawn-btn { background: var(--bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 #spawn-btn:hover { border-color: var(--accent); }
 #spawn-btn:disabled { opacity: .5; cursor: default; }
@@ -113,6 +116,24 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
   font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; }
 #reap-modal-input:focus, #repo-modal-input:focus { outline: none; border-color: var(--accent); }
+/* env modal: rows of NAME ••••• [×], plus a name/value add row */
+#env-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+#env-list:empty { display: none; }
+.env-row { display: flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; }
+.env-row .env-name { font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.env-row .env-mask { color: var(--text-muted); letter-spacing: 1px; margin-left: auto; }
+.env-row .env-del { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; }
+.env-row .env-del:hover { color: #ff6b6b; }
+.env-empty { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
+.env-add { display: flex; gap: 8px; }
+.env-add input { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 14px; font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; }
+.env-add input:focus { outline: none; border-color: var(--accent); }
+.env-add #env-name { flex: 0 0 40%; }
+.env-add #env-value { flex: 1; }
+.env-add #env-add-btn { flex-shrink: 0; }
 .modal-msg { min-height: 0; margin: 10px 0 0; font-size: 13px; color: #f0a; }
 .modal-msg:empty { display: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }

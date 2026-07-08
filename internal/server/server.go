@@ -15,6 +15,7 @@ import (
 
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/hub"
+	"github.com/clouvet/sprite-agent/internal/secret"
 	"github.com/clouvet/sprite-agent/internal/spawn"
 	"github.com/clouvet/sprite-agent/web"
 
@@ -53,12 +54,13 @@ type Server struct {
 	store    *metaStore
 	fleet    Fleet
 	spawner  spawn.Spawner
+	secrets  *secret.Store
 	upgrader websocket.Upgrader
 }
 
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
 // spawner is always non-nil (a stub when no sprites token is available).
-func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner) *Server {
+func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner, secrets *secret.Store) *Server {
 	store := newMetaStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "sessions.json"))
 	// Keep the session list's preview/timestamp fresh as turns happen.
 	h.SetActivityHook(func(sessionID, preview string) {
@@ -73,6 +75,7 @@ func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner) *
 		store:   store,
 		fleet:   fleetSvc,
 		spawner: spawner,
+		secrets: secrets,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -109,6 +112,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.serveConfig)
 	mux.HandleFunc("/api/upload", s.serveUpload)
 	mux.HandleFunc("/api/uploads/", s.serveUploadFile)
+	mux.HandleFunc("/api/env", s.serveEnv)
+	mux.HandleFunc("/api/env/", s.serveEnvByName)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
