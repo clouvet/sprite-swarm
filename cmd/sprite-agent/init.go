@@ -28,6 +28,7 @@ func runInit(args []string) {
 	spritesToken := fs.String("sprites-token", "", "Sprites API token (required)")
 	githubToken := fs.String("github-token", "", "GitHub token (optional)")
 	flyToken := fs.String("fly-token", "", "Fly token (optional)")
+	claudeToken := fs.String("claude-oauth-token", "", "Claude subscription OAuth token from `claude setup-token` (optional; the fleet defaults to it over the API connector)")
 	name := fs.String("name", "", "home sprite name (required)")
 	artifact := fs.String("artifact", "", "path to a linux/amd64 sprite-agent binary to stage (required)")
 	_ = fs.Parse(args)
@@ -74,6 +75,9 @@ func runInit(args []string) {
 	}
 	if *flyToken != "" {
 		_ = svc.PutSecret(ctx, fleet.SecretFlyToken, *flyToken)
+	}
+	if *claudeToken != "" {
+		_ = svc.PutSecret(ctx, fleet.SecretClaudeOAuthToken, *claudeToken)
 	}
 	log.Printf("init: secrets written to brain (s3://%s)", *bucket)
 
