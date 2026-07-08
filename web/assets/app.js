@@ -1258,13 +1258,18 @@
   // Esc interrupts Claude while it's generating (item #26).
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
 
-  // ---- theme (light/dark) ----
-  // data-theme is set pre-paint: an explicit saved choice, else the system
-  // preference (prefers-color-scheme). The toggle writes an explicit per-device
-  // override; with no saved choice we track the system live. Keeps the mobile
-  // status-bar color (theme-color meta) in sync either way.
-  function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  // ---- theme (light / dark / system) ----
+  // The toggle cycles a preference: system (follow the OS — the default for a fresh
+  // sprite), light, or dark. data-theme-pref holds the preference; data-theme holds
+  // the resolved light/dark the CSS uses. Under "system" we track the OS live and
+  // keep the mobile status-bar color (theme-color meta) in sync.
+  const THEME_ORDER = ['system', 'light', 'dark'];
+  function currentPref() {
+    const p = document.documentElement.getAttribute('data-theme-pref');
+    return p === 'light' || p === 'dark' || p === 'system' ? p : 'system';
+  }
+  function systemTheme() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
   function syncThemeColor() {
     const m = document.querySelector('meta[name="theme-color"]');
@@ -1272,24 +1277,24 @@
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     if (bg) m.setAttribute('content', bg);
   }
-  function savedTheme() {
-    try { const t = localStorage.getItem('theme'); return t === 'light' || t === 'dark' ? t : ''; } catch (e) { return ''; }
-  }
-  function applyTheme(t) { // set the active theme WITHOUT persisting (used to follow the system)
-    document.documentElement.setAttribute('data-theme', t);
+  function applyPref(pref) { // resolve + apply to the DOM (no persistence)
+    document.documentElement.setAttribute('data-theme-pref', pref);
+    document.documentElement.setAttribute('data-theme', pref === 'system' ? systemTheme() : pref);
+    const btn = $('theme-toggle');
+    if (btn) btn.title = 'Theme: ' + pref + (pref === 'system' ? ' (following OS)' : '');
     syncThemeColor();
   }
-  function setTheme(t) { // explicit user choice: apply + remember on this device
-    applyTheme(t);
-    try { localStorage.setItem('theme', t); } catch (e) {}
+  function setPref(pref) { // explicit user choice: apply + remember on this device
+    applyPref(pref);
+    try { localStorage.setItem('theme', pref); } catch (e) {}
   }
   function setupTheme() {
-    syncThemeColor();
+    applyPref(currentPref()); // sync button title + status-bar color to the pre-painted state
     const btn = $('theme-toggle');
-    if (btn) btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
-    // Track the OS preference live while there's no explicit override.
+    if (btn) btn.addEventListener('click', () => setPref(THEME_ORDER[(THEME_ORDER.indexOf(currentPref()) + 1) % THEME_ORDER.length]));
+    // Follow the OS live while the preference is "system".
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const onSys = (e) => { if (!savedTheme()) applyTheme(e.matches ? 'dark' : 'light'); };
+    const onSys = () => { if (currentPref() === 'system') applyPref('system'); };
     if (mq.addEventListener) mq.addEventListener('change', onSys);
     else if (mq.addListener) mq.addListener(onSys);
   }
