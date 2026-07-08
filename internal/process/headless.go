@@ -28,6 +28,9 @@ type Options struct {
 	MCPConfigPath  string // --mcp-config <file> when non-empty
 	AppendSystem   string // --append-system-prompt when non-empty (fleet affordance, DESIGN §5)
 	Model          string // --model <model> when non-empty; "" uses the CLI default
+	// ExtraEnv is "NAME=VALUE" pairs injected into the Claude process environment
+	// (worker-scoped secrets), so tools/apps the agent runs inherit them.
+	ExtraEnv []string
 }
 
 // HeadlessProcess is a supervised, long-lived `claude` process driven over
@@ -109,7 +112,7 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 	args := buildArgs(opts)
 	execCmd := exec.CommandContext(ctx, "claude", args...)
 	execCmd.Dir = cwd
-	execCmd.Env = os.Environ()
+	execCmd.Env = append(os.Environ(), opts.ExtraEnv...)
 
 	stdin, err := execCmd.StdinPipe()
 	if err != nil {

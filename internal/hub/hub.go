@@ -19,6 +19,7 @@ import (
 
 	"github.com/clouvet/sprite-agent/internal/config"
 	"github.com/clouvet/sprite-agent/internal/process"
+	"github.com/clouvet/sprite-agent/internal/secret"
 	"github.com/clouvet/sprite-agent/internal/session"
 	"github.com/clouvet/sprite-agent/internal/watcher"
 
@@ -36,6 +37,7 @@ type Config struct {
 	SettingsPath   string
 	MCPConfigPath  string
 	AppendSystem   string
+	Secrets        *secret.Store // worker-scoped env vars injected into Claude processes
 }
 
 // Hub maintains active clients and broadcasts per-session.
@@ -74,6 +76,7 @@ type providers struct {
 	settingsPath   string
 	mcpConfigPath  string
 	appendSystem   string
+	secrets        *secret.Store
 }
 
 // BroadcastMessage is a message to deliver to all clients of a session.
@@ -95,6 +98,7 @@ func NewHub(cfg Config) *Hub {
 			settingsPath:   cfg.SettingsPath,
 			mcpConfigPath:  cfg.MCPConfigPath,
 			appendSystem:   cfg.AppendSystem,
+			secrets:        cfg.Secrets,
 		},
 		sessions:   make(map[string]*session.Session),
 		clients:    make(map[string]map[*Client]bool),
@@ -160,6 +164,10 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 	if sess := h.GetSession(sessionID); sess != nil {
 		model = sess.GetModel()
 	}
+	var extraEnv []string
+	if h.cfg.secrets != nil {
+		extraEnv = h.cfg.secrets.Env()
+	}
 	return process.Options{
 		SessionID:      sessionID,
 		CWD:            cwd,
@@ -170,6 +178,7 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 		MCPConfigPath:  h.cfg.mcpConfigPath,
 		AppendSystem:   h.cfg.appendSystem,
 		Model:          model,
+		ExtraEnv:       extraEnv,
 	}
 }
 
@@ -248,12 +257,18 @@ func (h *Hub) broadcastToSession(message *BroadcastMessage) {
 	clients := h.clients[message.SessionID]
 	h.mu.RUnlock()
 
+	// Redact worker-secret values before they reach any client (best-effort).
+	data := message.Data
+	if h.cfg.secrets != nil {
+		data = h.cfg.secrets.Mask(data)
+	}
+
 	for client := range clients {
 		if message.Exclude != nil && client == message.Exclude {
 			continue
 		}
 		select {
-		case client.send <- message.Data:
+		case client.send <- data:
 		default:
 			close(client.send)
 			h.mu.Lock()
@@ -412,6 +427,21 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 		blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
 	}
 	return blocks
+}
+
+// RestartActiveSessions kills and respawns every session with a live Claude
+// process, so the current worker environment takes effect immediately (used when
+// env vars change). In-flight generations are interrupted, mirroring an interrupt.
+func (h *Hub) RestartActiveSessions() {
+	for _, sid := range h.processMgr.ActiveSessionIDs() {
+		log.Printf("[%s] env changed; restarting session", sid)
+		_ = h.processMgr.Kill(sid)
+		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
+		h.broadcast <- &BroadcastMessage{SessionID: sid, Data: resultMsg}
+		if sess := h.GetSession(sid); sess != nil {
+			go h.spawnClaudeForSession(sid, sess)
+		}
+	}
 }
 
 func (h *Hub) handleInterrupt(client *Client) {
