@@ -282,6 +282,12 @@ func main() {
 		runInit(os.Args[2:])
 		return
 	}
+	// `put-secret` writes one operational secret into the brain (via the token-free
+	// s3 connector on a sprite, or S3 keys off it) — e.g. rotating the Claude token.
+	if len(os.Args) > 1 && os.Args[1] == "put-secret" {
+		runPutSecret(os.Args[2:])
+		return
+	}
 
 	cfg := config.FromEnv()
 	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
