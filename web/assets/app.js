@@ -1259,8 +1259,10 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
 
   // ---- theme (light/dark) ----
-  // data-theme is set pre-paint from localStorage; this wires the toggle and keeps
-  // the mobile status-bar color in sync. Dark is the default (no attribute / :root).
+  // data-theme is set pre-paint: an explicit saved choice, else the system
+  // preference (prefers-color-scheme). The toggle writes an explicit per-device
+  // override; with no saved choice we track the system live. Keeps the mobile
+  // status-bar color (theme-color meta) in sync either way.
   function currentTheme() {
     return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
   }
@@ -1270,15 +1272,26 @@
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     if (bg) m.setAttribute('content', bg);
   }
-  function setTheme(t) {
+  function savedTheme() {
+    try { const t = localStorage.getItem('theme'); return t === 'light' || t === 'dark' ? t : ''; } catch (e) { return ''; }
+  }
+  function applyTheme(t) { // set the active theme WITHOUT persisting (used to follow the system)
     document.documentElement.setAttribute('data-theme', t);
-    try { localStorage.setItem('theme', t); } catch (e) {}
     syncThemeColor();
+  }
+  function setTheme(t) { // explicit user choice: apply + remember on this device
+    applyTheme(t);
+    try { localStorage.setItem('theme', t); } catch (e) {}
   }
   function setupTheme() {
     syncThemeColor();
     const btn = $('theme-toggle');
     if (btn) btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
+    // Track the OS preference live while there's no explicit override.
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSys = (e) => { if (!savedTheme()) applyTheme(e.matches ? 'dark' : 'light'); };
+    if (mq.addEventListener) mq.addEventListener('change', onSys);
+    else if (mq.addListener) mq.addListener(onSys);
   }
 
   // ---- boot ----
