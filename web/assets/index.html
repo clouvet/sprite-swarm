@@ -43,6 +43,12 @@
         <div id="fleet-list"></div>
       </div>
       <div id="sidebar-footer">
+        <button id="env-btn" title="Environment variables (this worker)" aria-label="Environment variables">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </button>
         <button id="theme-toggle" title="Toggle light/dark" aria-label="Toggle light/dark">
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="5"></circle>
@@ -93,6 +99,30 @@
         <div class="modal-actions">
           <button id="repo-modal-cancel" class="modal-btn">Cancel</button>
           <button id="repo-modal-confirm" class="modal-btn primary" disabled>Clone</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Worker env vars: in-memory secrets injected into the agent's processes. -->
+    <div id="env-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="env-modal-title">
+        <h3 id="env-modal-title">Environment variables</h3>
+        <p>Set on <strong>this worker</strong> and injected into the environment of
+           processes the agent runs (e.g. an app that needs <code>DISCOURSE_API_KEY</code>).
+           Held in memory only — never written to disk or the fleet brain — so they're
+           cleared if the worker restarts. Values can't be read back here. A change
+           applies when a chat next starts (a new chat, or your next message).</p>
+        <div id="env-list"></div>
+        <div class="env-add">
+          <input id="env-name" type="text" placeholder="NAME" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <input id="env-value" type="text" placeholder="value" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <button id="env-add-btn" class="modal-btn primary">Set</button>
+        </div>
+        <p id="env-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button id="env-close" class="modal-btn">Close</button>
         </div>
       </div>
     </div>
