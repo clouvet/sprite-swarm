@@ -88,6 +88,63 @@ func hasClaudeOAuth() bool {
 	return err == nil
 }
 
+// claudeAuthPlan is the pure decision of how Claude should authenticate.
+type claudeAuthPlan struct {
+	subscription bool // use CLAUDE_CODE_OAUTH_TOKEN; clear the connector env (it outranks the token)
+	tryConnector bool // discover + set the Anthropic connector env
+	// (neither set ⇒ leave the environment as-is: an explicit key or a /login credential)
+}
+
+// decideClaudeAuth resolves auth from the observable facts. Subscription is the
+// default when a token is present; the connector is the fallback; and
+// SPRITE_AGENT_CLAUDE_AUTH=connector forces the connector even when a token exists.
+func decideClaudeAuth(hasToken, forceConnector, hasBaseURL, hasLogin bool) claudeAuthPlan {
+	if hasToken && !forceConnector {
+		return claudeAuthPlan{subscription: true}
+	}
+	if !forceConnector && (hasBaseURL || hasLogin) {
+		return claudeAuthPlan{} // respect an explicit base URL / interactive login
+	}
+	return claudeAuthPlan{tryConnector: true}
+}
+
+// setupClaudeAuth applies the decision to the environment: the subscription
+// (CLAUDE_CODE_OAUTH_TOKEN, billed to the plan) by default, else the Anthropic
+// API-Gateway connector (billed per token, authed by sprite identity).
+func setupClaudeAuth() {
+	forceConnector := strings.EqualFold(os.Getenv("SPRITE_AGENT_CLAUDE_AUTH"), "connector")
+	plan := decideClaudeAuth(
+		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "",
+		forceConnector,
+		os.Getenv("ANTHROPIC_BASE_URL") != "",
+		hasClaudeOAuth(),
+	)
+	if plan.subscription {
+		// The token is outranked by ANTHROPIC_API_KEY in Claude Code's precedence,
+		// so clear any connector env (e.g. one baked into a worker at spawn).
+		os.Unsetenv("ANTHROPIC_API_KEY")
+		os.Unsetenv("ANTHROPIC_BASE_URL")
+		log.Printf("claude: subscription auth (CLAUDE_CODE_OAUTH_TOKEN)")
+		return
+	}
+	if !plan.tryConnector {
+		return // leave as-is
+	}
+	dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer dcancel()
+	if base := gateway.AnthropicBaseURL(dctx); base != "" {
+		os.Setenv("ANTHROPIC_BASE_URL", base)
+		// Claude Code needs a key set when using a base URL without OAuth; the
+		// gateway injects the real one by sprite identity, so this is a placeholder.
+		if os.Getenv("ANTHROPIC_API_KEY") == "" {
+			os.Setenv("ANTHROPIC_API_KEY", "sprite-gateway")
+		}
+		log.Printf("claude: connector auth (token-free): %s", base)
+	} else if forceConnector {
+		log.Printf("claude: SPRITE_AGENT_CLAUDE_AUTH=connector set but no Anthropic connector found")
+	}
+}
+
 // checkClaudeAuth runs one tiny Claude call at boot to verify auth works, and logs
 // a clear verdict. A misconfigured connector-only fleet otherwise fails invisibly
 // (a 502 in the UI on the first chat/title); this turns that into an obvious
@@ -225,6 +282,12 @@ func main() {
 		runInit(os.Args[2:])
 		return
 	}
+	// `put-secret` writes one operational secret into the brain (via the token-free
+	// s3 connector on a sprite, or S3 keys off it) — e.g. rotating the Claude token.
+	if len(os.Args) > 1 && os.Args[1] == "put-secret" {
+		runPutSecret(os.Args[2:])
+		return
+	}
 
 	cfg := config.FromEnv()
 	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
@@ -257,30 +320,9 @@ func main() {
 		dcancel()
 	}
 
-	// Claude auth: a freshly-ignited home (and any worker) has no OAuth credential,
-	// so route Claude through the Anthropic connector by self-discovering it — the
-	// same identity-authed path as the brain. Skipped when ANTHROPIC_BASE_URL is
-	// already set or this sprite has an OAuth login (don't override it).
-	if os.Getenv("ANTHROPIC_BASE_URL") == "" && !hasClaudeOAuth() {
-		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if base := gateway.AnthropicBaseURL(dctx); base != "" {
-			os.Setenv("ANTHROPIC_BASE_URL", base)
-			// Claude Code needs a key set when using a base URL without OAuth. The
-			// gateway injects the real one by sprite identity; this is just the
-			// placeholder so the CLI runs (mirrors the worker path in spawn/api.go).
-			// Without it, a fresh connector-only home 502s on every Claude call.
-			if os.Getenv("ANTHROPIC_API_KEY") == "" {
-				os.Setenv("ANTHROPIC_API_KEY", "sprite-gateway")
-			}
-			log.Printf("claude: using anthropic connector (token-free): %s", base)
-		}
-		dcancel()
-	}
-
-	// Boot-time auth self-check: ping Claude so a misconfigured fleet says so LOUDLY
-	// in the logs at startup, instead of silently 502-ing in the UI later. Background
-	// (a real model call); doesn't gate boot.
-	go checkClaudeAuth()
+	// Claude auth (subscription vs connector) is resolved after the brain's secrets
+	// rehydrate below — a Claude subscription token stored in the brain should win
+	// over the API connector, so the decision has to wait until it's loaded.
 
 	// Fleet brain: create it first so operational secrets + policy rehydrate from
 	// it before anything that depends on them. nil when no brain (agent runs solo).
@@ -315,8 +357,20 @@ func main() {
 			setupFlyAuth(fly) // FLY_API_TOKEN + ensure flyctl installed/on PATH
 			log.Printf("secrets: loaded fly token from brain (flyctl enabled)")
 		}
+		if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" {
+			if tok := fleetSvc.GetSecret(sctx, fleet.SecretClaudeOAuthToken); tok != "" {
+				os.Setenv("CLAUDE_CODE_OAUTH_TOKEN", tok)
+				log.Printf("secrets: loaded claude oauth token from brain (subscription auth)")
+			}
+		}
 		scancel()
 	}
+
+	// Resolve Claude auth now that any brain secrets are loaded: prefer the
+	// subscription (CLAUDE_CODE_OAUTH_TOKEN) over the API connector; then a
+	// boot-time self-check so a misconfigured fleet says so loudly in the logs.
+	setupClaudeAuth()
+	go checkClaudeAuth()
 
 	// No sprites token (env or brain)? Fall back to a custom_api connector fronting
 	// the Sprites API — spawn/reap then route through the gateway, authed by sprite
