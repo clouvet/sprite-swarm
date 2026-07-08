@@ -429,6 +429,21 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 	return blocks
 }
 
+// RestartActiveSessions kills and respawns every session with a live Claude
+// process, so the current worker environment takes effect immediately (used when
+// env vars change). In-flight generations are interrupted, mirroring an interrupt.
+func (h *Hub) RestartActiveSessions() {
+	for _, sid := range h.processMgr.ActiveSessionIDs() {
+		log.Printf("[%s] env changed; restarting session", sid)
+		_ = h.processMgr.Kill(sid)
+		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
+		h.broadcast <- &BroadcastMessage{SessionID: sid, Data: resultMsg}
+		if sess := h.GetSession(sid); sess != nil {
+			go h.spawnClaudeForSession(sid, sess)
+		}
+	}
+}
+
 func (h *Hub) handleInterrupt(client *Client) {
 	log.Printf("[%s] interrupt", client.sessionID)
 	if err := h.processMgr.Kill(client.sessionID); err != nil {
