@@ -82,6 +82,7 @@
   let genStart = 0;          // turn start (ms) for the working-indicator elapsed timer
   let genTimer = null;       // interval id for the elapsed timer
   let thinkingText = '';     // accumulates streamed reasoning for the live preview
+  let pendingFork = null;    // set while "summarize & continue" awaits the summary turn
   let isOpeningFilePicker = false;
   let spriteName = 'sprite-agent';
 
@@ -461,6 +462,7 @@
         removeActivity(); finalizeAssistant(); setGenerating(false);
         onAssistantTurnComplete();
         fetchContext(); // the turn may have cloned/removed a repo — remirror the workspace
+        if (pendingFork) { const fn = pendingFork; pendingFork = null; fn(); }
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
@@ -486,7 +488,31 @@
   }
   // addUser renders the user turn. opts: { images: [<img src>...], file: {name,url} }.
   // images use upload URLs live / data URLs in history; file renders a chip.
+  // Claude Code writes its context-compaction summary into the transcript as a
+  // user-role turn; detect it so we can render a marker instead of a fake message.
+  function isCompactionSummary(text) {
+    return typeof text === 'string' &&
+      text.startsWith('This session is being continued from a previous conversation that ran out of context');
+  }
+  function addCompactionMarker(text) {
+    removeThinking();
+    const el = document.createElement('div');
+    el.className = 'compaction-marker';
+    el.innerHTML =
+      '<span class="compaction-label">✦ Context compacted — continued from a summary</span>' +
+      '<button class="compaction-toggle">show summary</button>' +
+      '<div class="compaction-summary" hidden></div>';
+    el.querySelector('.compaction-summary').textContent = text;
+    const btn = el.querySelector('.compaction-toggle');
+    btn.addEventListener('click', () => {
+      const s = el.querySelector('.compaction-summary');
+      s.hidden = !s.hidden;
+      btn.textContent = s.hidden ? 'show summary' : 'hide summary';
+    });
+    messagesEl.appendChild(el);
+  }
   function addUser(text, opts) {
+    if (isCompactionSummary(text)) { addCompactionMarker(text); return; }
     opts = opts || {};
     removeThinking();
     const imgs = (opts.images || []).filter(Boolean)
@@ -853,6 +879,52 @@
   });
   envModal.addEventListener('click', (e) => { if (e.target === envModal) closeEnvModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !envModal.hidden) closeEnvModal(); });
+
+  // ---- summarize & continue in a new chat (escape context-compaction thrash) ----
+  // A long thread eventually fills the context window; Claude Code compacts and the
+  // interruptions recur. This asks the current chat for a concise handoff summary,
+  // then seeds a fresh session with it and switches over — the old chat is preserved.
+  const continueBtn = $('continue-btn');
+  const SUMMARY_PROMPT =
+    'Write a concise handoff summary (under ~350 words) so a brand-new chat can continue this ' +
+    'work with no other context. Cover: the goal, what is done, what is in progress, key decisions ' +
+    'and gotchas, the current state, and the concrete next steps. Output ONLY the summary — no ' +
+    'preamble, no sign-off.';
+  function summarizeAndContinue() {
+    if (!currentSession || pendingFork || generating) return;
+    continueBtn.disabled = true;
+    pendingFork = forkFromSummary; // fires on the next 'result'
+    inputEl.value = SUMMARY_PROMPT;
+    autoGrow();
+    send();
+  }
+  function lastAssistantText() {
+    const els = messagesEl.querySelectorAll('.message.assistant');
+    const el = els[els.length - 1];
+    return el && el._raw ? el._raw : '';
+  }
+  async function forkFromSummary() {
+    continueBtn.disabled = false;
+    const summary = lastAssistantText().trim(); // read before selectSession clears the view
+    const prevName = ((currentSession && currentSession.name) || 'Chat').replace(/ \(cont\.\)$/, '');
+    const seed = summary
+      ? 'Continuing from a previous chat that got long. Handoff summary:\n\n' + summary +
+        '\n\nRead your fleet memory (repos/, how-to/, decisions/) for deeper context, then continue.'
+      : 'Continuing from a previous chat that got long. Read your fleet memory (repos/, how-to/, ' +
+        'decisions/) and the recent git log to reconstruct context, then continue the work.';
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: prevName + ' (cont.)' }),
+      });
+      const s = await res.json();
+      sessions.unshift(s);
+      selectSession(s);          // switch to the fresh chat (connects WS, clears the view)
+      inputEl.value = seed; autoGrow();
+      send();                    // seed it; send() waits for the WS to open
+    } catch (e) { addSystem('Could not start the continued chat: ' + e.message); }
+  }
+  continueBtn.addEventListener('click', summarizeAndContinue);
 
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
