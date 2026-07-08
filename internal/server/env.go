@@ -37,6 +37,7 @@ func (s *Server) serveEnv(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.secrets.Set(name, body.Value) // upsert — overwriting is allowed
+		s.hub.RestartActiveSessions()   // apply immediately (running sessions respawn)
 		writeJSON(w, map[string][]string{"names": s.secrets.Names()})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -55,5 +56,6 @@ func (s *Server) serveEnvByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.secrets.Delete(name)
+	s.hub.RestartActiveSessions() // apply immediately (running sessions respawn)
 	w.WriteHeader(http.StatusNoContent)
 }

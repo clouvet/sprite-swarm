@@ -110,8 +110,8 @@
         <p>Set on <strong>this worker</strong> and injected into the environment of
            processes the agent runs (e.g. an app that needs <code>DISCOURSE_API_KEY</code>).
            Held in memory only — never written to disk or the fleet brain — so they're
-           cleared if the worker restarts. Values can't be read back here. A change
-           applies when a chat next starts (a new chat, or your next message).</p>
+           cleared if the worker restarts. Values can't be read back here. Changes
+           apply immediately: active chats restart to pick them up.</p>
         <div id="env-list"></div>
         <div class="env-add">
           <input id="env-name" type="text" placeholder="NAME" autocomplete="off"
