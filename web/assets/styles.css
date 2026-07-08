@@ -183,9 +183,12 @@ header h1 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: 
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 #theme-toggle:hover { color: var(--accent); }
 #theme-toggle svg { width: 18px; height: 18px; display: block; }
-#theme-toggle .icon-deathstar { display: none; }
-html[data-theme="light"] #theme-toggle .icon-sun { display: none; }
-html[data-theme="light"] #theme-toggle .icon-deathstar { display: block; }
+/* the toggle cycles light → dark → system; the shown icon reflects the current
+   preference (sun / death-star / monitor). */
+#theme-toggle .icon-sun, #theme-toggle .icon-deathstar, #theme-toggle .icon-system { display: none; }
+html[data-theme-pref="light"] #theme-toggle .icon-sun { display: block; }
+html[data-theme-pref="dark"] #theme-toggle .icon-deathstar { display: block; }
+html[data-theme-pref="system"] #theme-toggle .icon-system { display: block; }
 
 #status { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 #status::before { content: "👾"; font-size: 14px; filter: grayscale(100%) brightness(0.8); }

@@ -1258,11 +1258,18 @@
   // Esc interrupts Claude while it's generating (item #26).
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
 
-  // ---- theme (light/dark) ----
-  // data-theme is set pre-paint from localStorage; this wires the toggle and keeps
-  // the mobile status-bar color in sync. Dark is the default (no attribute / :root).
-  function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  // ---- theme (light / dark / system) ----
+  // The toggle cycles a preference: system (follow the OS — the default for a fresh
+  // sprite), light, or dark. data-theme-pref holds the preference; data-theme holds
+  // the resolved light/dark the CSS uses. Under "system" we track the OS live and
+  // keep the mobile status-bar color (theme-color meta) in sync.
+  const THEME_ORDER = ['system', 'light', 'dark'];
+  function currentPref() {
+    const p = document.documentElement.getAttribute('data-theme-pref');
+    return p === 'light' || p === 'dark' || p === 'system' ? p : 'system';
+  }
+  function systemTheme() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
   function syncThemeColor() {
     const m = document.querySelector('meta[name="theme-color"]');
@@ -1270,15 +1277,26 @@
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     if (bg) m.setAttribute('content', bg);
   }
-  function setTheme(t) {
-    document.documentElement.setAttribute('data-theme', t);
-    try { localStorage.setItem('theme', t); } catch (e) {}
+  function applyPref(pref) { // resolve + apply to the DOM (no persistence)
+    document.documentElement.setAttribute('data-theme-pref', pref);
+    document.documentElement.setAttribute('data-theme', pref === 'system' ? systemTheme() : pref);
+    const btn = $('theme-toggle');
+    if (btn) btn.title = 'Theme: ' + pref + (pref === 'system' ? ' (following OS)' : '');
     syncThemeColor();
   }
+  function setPref(pref) { // explicit user choice: apply + remember on this device
+    applyPref(pref);
+    try { localStorage.setItem('theme', pref); } catch (e) {}
+  }
   function setupTheme() {
-    syncThemeColor();
+    applyPref(currentPref()); // sync button title + status-bar color to the pre-painted state
     const btn = $('theme-toggle');
-    if (btn) btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
+    if (btn) btn.addEventListener('click', () => setPref(THEME_ORDER[(THEME_ORDER.indexOf(currentPref()) + 1) % THEME_ORDER.length]));
+    // Follow the OS live while the preference is "system".
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSys = () => { if (currentPref() === 'system') applyPref('system'); };
+    if (mq.addEventListener) mq.addEventListener('change', onSys);
+    else if (mq.addListener) mq.addListener(onSys);
   }
 
   // ---- boot ----
