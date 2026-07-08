@@ -13,14 +13,25 @@ booted against the brain reconstitutes the whole fleet.
 ## What each sprite does
 
 - **Session service** — a web chat UI (PWA) driving the sprite's Claude Code: token-by-token
-  streaming (scroll up to read mid-stream without the view yanking back), a rich activity indicator,
-  syntax highlighting, evolving chat titles, copy buttons, voice input, and **attachments** (images +
-  `doc/docx/xls/xlsx/csv/txt/md`). **Background turns survive disconnect** — close the tab or lock your
-  phone mid-task and the work keeps running, replaying in full when you return. Terminal co-presence:
-  the web UI and a `claude --resume` terminal share one transcript.
+  streaming (scroll up to read mid-stream without the view yanking back), a persistent **working
+  indicator** with elapsed time (thinking / running a tool / phase), syntax highlighting, evolving chat
+  titles, copy buttons, voice input, a **per-conversation model picker** (Fable / Opus / Sonnet /
+  Haiku, switchable mid-thread — the transcript resumes so context carries over), and **multi-file
+  attachments** (images + `doc/docx/xls/xlsx/csv/txt/md`). A **context view** — a count pill in the
+  header that opens a popover — mirrors what a conversation is working with: the git repos in its
+  workspace and the files uploaded to it. **Background turns survive disconnect** — close the tab or
+  lock your phone mid-task and the work keeps running, replaying in full when you return. Terminal
+  co-presence: the web UI and a `claude --resume` terminal share one transcript.
 - **GitHub** — its Claude can clone, branch, commit, and open PRs (token from the brain; no creds on
   disk).
 - **flyctl** — `fly`/`flyctl` is installed and authenticated on every sprite (token from the brain).
+- **Worker env vars** — set in-memory environment variables on a worker (e.g. a `DISCOURSE_API_KEY` a
+  dev app needs) from the UI; the harness injects them into every Claude process it spawns, so the
+  tools/apps the agent runs inherit them. **RAM-only** — never written to disk or the brain, cleared
+  on restart, values can't be read back, and redacted from the chat stream. Changes force-restart
+  active sessions so they apply at once. (An in-memory `.env.local` for a dev session — not a secret
+  vault; the value still lives in an environment the agent can read, so pair it with scoped/read-only
+  credentials.)
 - **Spawn + dispatch** — create another sprite running this same artifact and assign it work; it runs
   in the worker's own session (attach to watch, ask for its status, or pull its result back when done —
   the worker never pushes results at you).
@@ -103,7 +114,8 @@ capability is simply off (the agent is told so).
 | `internal/watcher/` | `.jsonl` transcript watcher / history parsing |
 | `internal/session/` | per-session state machine |
 | `internal/hub/` | WebSocket hub: fan one Claude session out to N clients; attachments |
-| `internal/server/` | HTTP server, REST API, uploads, embedded web UI |
+| `internal/server/` | HTTP server, REST API, uploads, per-chat context, embedded web UI |
+| `internal/secret/` | worker-scoped in-memory env vars injected into Claude processes |
 | `internal/fleet/` | brain client + roster + secrets + memory + dispatch + policy |
 | `internal/spawn/` | sprite spawn/provision + teardown + `LaunchHome` |
 | `internal/reaper/` | destroy done workers; clean orphaned brain entries (keep suspended) |
