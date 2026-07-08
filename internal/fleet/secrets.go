@@ -17,9 +17,10 @@ import (
 // Brain access == fleet-wide trust by design, so guarding the brain + scoping the
 // stored tokens is what bounds blast radius.
 const (
-	SecretSpritesAPIToken = "sprites-api-token"
-	SecretGitHubToken     = "github"
-	SecretFlyToken        = "fly"
+	SecretSpritesAPIToken  = "sprites-api-token"
+	SecretGitHubToken      = "github"
+	SecretFlyToken         = "fly"
+	SecretClaudeOAuthToken = "claude-oauth-token" // Claude subscription (from `claude setup-token`)
 )
 
 func secretKey(name string) string { return path.Join("fleet", "config", "secrets", name) }

@@ -146,8 +146,15 @@ for token-free spawn (then skip `--sprites-token`). Then, from anywhere with Go:
 ```sh
 scripts/launch-fleet.sh --name my-fleet \
   --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
-  --sprites-token <token> [--github-token <token>] [--fly-token <token>]
+  --sprites-token <token> [--github-token <token>] [--fly-token <token>] \
+  [--claude-oauth-token <token>]
 ```
+
+**Claude auth:** by default the fleet drives Claude through the **Anthropic connector** (metered API,
+authed by sprite identity, no key copied). Pass `--claude-oauth-token` (from `claude setup-token`, run
+once on a machine with a browser) and the whole fleet instead uses your **Claude subscription** —
+cheaper for a light, single-user fleet. The token is stored in the brain and rehydrated by every
+sprite; fall back to the API on any sprite with `SPRITE_AGENT_CLAUDE_AUTH=connector`.
 
 It cross-compiles the binary, primes the brain (stages the artifact + writes the secrets via direct
 Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores those
