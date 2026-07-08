@@ -194,6 +194,27 @@ html[data-theme="light"] #theme-toggle .icon-deathstar { display: block; }
 /* desktop: a bigger sprite indicator (placed after the base rule to win the tie) */
 @media (min-width: 769px) { #status::before { font-size: 21px; } }
 
+/* "summarize & continue in a new chat" — header action for long threads that are
+   hitting context compaction. Hidden on the empty/new-chat view. */
+#continue-btn { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-secondary);
+  display: flex; align-items: center; flex-shrink: 0; }
+#continue-btn:hover { color: var(--accent); }
+#continue-btn svg { width: 16px; height: 16px; display: block; }
+#continue-btn:disabled { opacity: .5; cursor: default; }
+html[data-view="new"] #continue-btn { display: none; }
+
+/* compaction marker: Claude Code writes its context-compaction summary as a
+   user-role turn; render it as a distinct collapsible marker, not a fake message. */
+.compaction-marker { align-self: center; max-width: 760px; width: 100%; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 8px; padding: 8px 14px; color: var(--text-muted); font-size: 12px; }
+.compaction-label { font-style: italic; }
+.compaction-toggle { background: none; border: 1px solid var(--border); color: var(--text-muted);
+  border-radius: 10px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+.compaction-toggle:hover { color: var(--text); }
+.compaction-summary { flex-basis: 100%; margin-top: 6px; padding: 10px 12px; background: var(--bg-tertiary);
+  border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap; font-size: 12px;
+  color: var(--text-secondary); max-height: 300px; overflow-y: auto; }
+
 /* context: everything added to this chat (repos + uploaded files). A compact count
    pill in the header opens a popover list — constant footprint no matter how many
    items, so it scales and stays mobile-friendly. Hidden entirely when empty. */
