@@ -924,7 +924,18 @@
       send();                    // seed it; send() waits for the WS to open
     } catch (e) { addSystem('Could not start the continued chat: ' + e.message); }
   }
-  continueBtn.addEventListener('click', summarizeAndContinue);
+  // The header "compact" action confirms via a modal before running.
+  const continueModal = $('continue-modal');
+  function openContinueModal() {
+    if (!currentSession || pendingFork || generating) return;
+    continueModal.hidden = false;
+  }
+  function closeContinueModal() { continueModal.hidden = true; }
+  continueBtn.addEventListener('click', openContinueModal);
+  $('continue-modal-confirm').addEventListener('click', () => { closeContinueModal(); summarizeAndContinue(); });
+  $('continue-modal-cancel').addEventListener('click', closeContinueModal);
+  continueModal.addEventListener('click', (e) => { if (e.target === continueModal) closeContinueModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !continueModal.hidden) closeContinueModal(); });
 
   // ---- attachments (images + documents), multiple at a time ----
   function clearAttachments() {
