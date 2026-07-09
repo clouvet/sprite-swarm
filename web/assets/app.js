@@ -1258,6 +1258,32 @@
     for (const f of Array.from(fileInput.files || [])) uploadAttachment(f);
     fileInput.value = '';
   });
+
+  // ---- drag & drop file attach ----
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') !== -1;
+  let dragDepth = 0; // dragenter/leave fire on child elements too — count to avoid flicker
+  mainEl.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    mainEl.classList.add('dragging');
+  });
+  mainEl.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  mainEl.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) mainEl.classList.remove('dragging');
+  });
+  mainEl.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    mainEl.classList.remove('dragging');
+    for (const f of Array.from(e.dataTransfer.files || [])) uploadAttachment(f);
+  });
+  // A file dropped outside the chat would otherwise navigate the tab to it — swallow it.
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); });
   // Per-chip remove (delegated: chips are rebuilt on every change).
   imagePreview.addEventListener('click', e => {
     const btn = e.target.closest('.attach-remove');
