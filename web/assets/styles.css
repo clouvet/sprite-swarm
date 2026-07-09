@@ -310,6 +310,10 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 /* code + syntax highlight */
 .message-content pre { position: relative; background: #0d0d0d; border-radius: 8px; padding: 12px; overflow-x: auto; }
 .message-content pre code { background: none; padding: 0; font-size: 13px; line-height: 1.4; }
+/* The pre background is always dark; when highlight.js hasn't run (CDN blocked,
+   unknown language) the code has no .hljs class and would fall back to --text —
+   dark on dark in light mode. Force a light default for un-highlighted code. */
+.message-content pre code:not(.hljs) { color: #e5e5e5; }
 .message-content code { font-family: "MonoLisaCode", "SF Mono", Monaco, Consolas, monospace; font-size: 14px; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
 /* light mode: the 0.3 black reads as a heavy grey on a light page — lighten it
    for inline code (code blocks keep their own dark background). */
