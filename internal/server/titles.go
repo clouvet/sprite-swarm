@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -75,14 +76,21 @@ func (s *Server) readConversation(id string, maxChars int) string {
 	return out
 }
 
+// titleSystemPrompt frames the one-shot strictly as a title generator. Feeding a
+// raw transcript to `claude -p` otherwise sometimes makes it *answer* or *continue*
+// the conversation instead of titling it (that reply then became the "title").
+const titleSystemPrompt = "You generate short chat titles. Given a conversation " +
+	"transcript, reply with ONLY a concise 3-5 word title naming its topic. Never answer, " +
+	"continue, or comment on the conversation, and never ask a question. Output just the " +
+	"title — no quotes, no ending punctuation, no preamble."
+
 // generateTitle runs a cheap one-shot Claude to summarize a conversation into a
 // short title. Inherits the process env (Anthropic gateway on workers / OAuth on home).
 func generateTitle(ctx context.Context, convo string) (string, error) {
-	prompt := "Summarize the following chat as a concise 3-5 word title. " +
-		"Reply with ONLY the title — no quotes, no trailing punctuation, no preamble.\n\n" + convo
+	prompt := "Title this conversation:\n\n<conversation>\n" + convo + "\n</conversation>"
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "claude", "--model", titleModel, "-p")
+	cmd := exec.CommandContext(cctx, "claude", "--model", titleModel, "--append-system-prompt", titleSystemPrompt, "-p")
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
@@ -92,9 +100,30 @@ func generateTitle(ctx context.Context, convo string) (string, error) {
 	if i := strings.IndexByte(title, '\n'); i >= 0 {
 		title = title[:i]
 	}
-	title = strings.Trim(strings.TrimSpace(title), "\"'")
+	title = strings.TrimSpace(strings.Trim(strings.TrimSpace(title), "\"'"))
+	// Reject a conversational reply (the model answered instead of titling): keep
+	// the existing title rather than letting a sentence become the title.
+	if !looksLikeTitle(title) {
+		return "", fmt.Errorf("title generation returned a non-title response")
+	}
 	if len(title) > 60 {
 		title = title[:60]
 	}
 	return title, nil
+}
+
+// looksLikeTitle rejects output that reads as the model answering/continuing the
+// chat rather than titling it: real titles are short and don't trail off as a
+// sentence or a question.
+func looksLikeTitle(t string) bool {
+	if t == "" {
+		return false
+	}
+	if strings.HasSuffix(t, "?") || strings.HasSuffix(t, ":") {
+		return false
+	}
+	if len(strings.Fields(t)) > 8 {
+		return false
+	}
+	return true
 }

@@ -1164,6 +1164,9 @@
     } catch (e) {}
   }
   function onAssistantTurnComplete() {
+    // Don't retitle off the "summarize & continue" handoff turn — it's a meta prompt,
+    // not real conversation, and would skew the title. The fork switches away anyway.
+    if (pendingFork) return;
     assistantTurns++;
     // Evolve quickly at first, then periodically.
     if (assistantTurns <= 2 || assistantTurns % 3 === 0) retitle();
