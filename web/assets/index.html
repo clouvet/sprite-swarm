@@ -132,6 +132,20 @@
       </div>
     </div>
 
+    <!-- Confirm summarize & continue (the header "compact" action). -->
+    <div id="continue-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="continue-modal-title">
+        <h3 id="continue-modal-title">Summarize &amp; continue in a new chat</h3>
+        <p>This asks the current chat for a concise handoff summary, then opens a fresh
+           chat seeded with it and switches you there. This chat is preserved — you just
+           stop growing it. Useful when a long thread starts hitting context limits.</p>
+        <div class="modal-actions">
+          <button id="continue-modal-cancel" class="modal-btn">Cancel</button>
+          <button id="continue-modal-confirm" class="modal-btn primary">Summarize &amp; continue</button>
+        </div>
+      </div>
+    </div>
+
     <main id="main">
       <header>
         <div id="status" title="Connection status"></div>
