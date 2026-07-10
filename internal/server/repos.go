@@ -12,10 +12,12 @@ import (
 )
 
 // contextInfo is everything added to a conversation, mirrored from disk: the git
-// repos in its workspace and the files uploaded to it.
+// repos in its workspace, the files uploaded to it, and the Discourse topics it
+// pulled in (when the Discourse integration is set up).
 type contextInfo struct {
-	Repos []repoInfo `json:"repos"`
-	Files []fileInfo `json:"files"`
+	Repos     []repoInfo     `json:"repos"`
+	Files     []fileInfo     `json:"files"`
+	Discourse []discourseRef `json:"discourse"`
 }
 
 // repoInfo is one git repo checked out in a chat's workspace.
@@ -44,8 +46,9 @@ func (s *Server) serveSessionContext(w http.ResponseWriter, r *http.Request, id 
 	}
 	id = sessionIDRe.ReplaceAllString(id, "") // defend the path joins below
 	writeJSON(w, contextInfo{
-		Repos: s.sessionRepos(id),
-		Files: s.sessionFiles(id),
+		Repos:     s.sessionRepos(id),
+		Files:     s.sessionFiles(id),
+		Discourse: s.sessionDiscourse(id),
 	})
 }
 
