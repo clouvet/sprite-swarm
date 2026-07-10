@@ -271,16 +271,12 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name       string            `json:"name"`
+		Label      string            `json:"label"`
 		NamePrefix string            `json:"name_prefix"`
 		Role       string            `json:"role"`
 		Labels     map[string]string `json:"labels"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	// Default the worker name prefix so spawned sprites are clearly "wk-…" rather
-	// than a bare random id.
-	if body.Name == "" && body.NamePrefix == "" {
-		body.NamePrefix = "wk-"
-	}
 	if !s.spawner.Available() {
 		http.Error(w, spawn.ErrNotConfigured.Error(), http.StatusNotImplemented)
 		return
@@ -291,6 +287,18 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "policy: "+reason, http.StatusForbidden)
 			return
 		}
+	}
+	// A descriptive label becomes the worker name: "spawn a worker for the posthog
+	// integration" -> wk-posthog-integration (deduped if taken). The prefix is added
+	// server-side because the restricted spawn token caps names to it. Falls back to
+	// the random wk-<hex> scheme when no explicit name and no usable label is given.
+	if body.Name == "" {
+		if slug := workerSlug(body.Label); slug != "" {
+			body.Name = s.uniqueWorkerName("wk-" + slug)
+		}
+	}
+	if body.Name == "" && body.NamePrefix == "" {
+		body.NamePrefix = "wk-"
 	}
 	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
 		Name: body.Name, NamePrefix: body.NamePrefix, Role: body.Role, Labels: body.Labels,
