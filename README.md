@@ -156,6 +156,19 @@ once on a machine with a browser) and the whole fleet instead uses your **Claude
 cheaper for a light, single-user fleet. The token is stored in the brain and rehydrated by every
 sprite; fall back to the API on any sprite with `SPRITE_AGENT_CLAUDE_AUTH=connector`.
 
+**Discourse (optional):** store a `discourse` secret and the fleet gains read-only access to your
+Discourse forums via the [official `@discourse/mcp`](https://github.com/discourse/discourse-mcp)
+server — paste a topic link and Claude pulls the thread in as context. The secret is the MCP
+profile, an `auth_pairs` array so one server serves several sites (e.g. a private + a public forum):
+
+```
+sprite-agent put-secret --name discourse --file profile.json   # {"auth_pairs":[{"site":..,"api_key":..,"api_username":..}]}
+```
+
+On boot each sprite writes a `0600` profile + an `mcp.json` and points Claude's `--mcp-config` at it
+(read-only; no writes). Skipped when `SPRITE_AGENT_MCP_CONFIG` is set, so an operator-supplied MCP
+config wins. Optional by construction: fleets without the secret get no Discourse server.
+
 It cross-compiles the binary, primes the brain (stages the artifact + writes the secrets via direct
 Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores those
 tokens** so every worker reconstitutes from it — guard the bucket's keys + connector; that's the trust

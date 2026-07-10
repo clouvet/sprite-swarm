@@ -363,6 +363,19 @@ func main() {
 				log.Printf("secrets: loaded claude oauth token from brain (subscription auth)")
 			}
 		}
+		// Discourse MCP (optional): if forum creds are in the brain and the operator
+		// hasn't supplied their own MCP config, generate the @discourse/mcp server so
+		// pasting a Discourse link lets Claude pull the thread in. One server serves
+		// every site in the profile (e.g. a private + a public forum).
+		if cfg.MCPConfigPath == "" {
+			if prof := fleetSvc.GetSecret(sctx, fleet.SecretDiscourse); prof != "" {
+				if p, err := setupDiscourseMCP(filepath.Join(cfg.WorkDir, ".sprite-agent"), prof); err != nil {
+					log.Printf("secrets: discourse mcp setup failed: %v", err)
+				} else {
+					cfg.MCPConfigPath = p
+				}
+			}
+		}
 		scancel()
 	}
 
