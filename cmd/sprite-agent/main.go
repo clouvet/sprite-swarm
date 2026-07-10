@@ -217,7 +217,9 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		b.WriteString("Do ALL fleet operations through these /api/fleet endpoints — do NOT shell out to the " +
 			"`sprite` CLI or curl api.sprites.dev directly: that auth path may not exist on this fleet (the " +
 			"endpoints route through the gateway connector, which works token-free), so the CLI will just fail. " +
-			"To create a worker, POST /api/fleet/spawn; the new " +
+			"To create a worker, POST /api/fleet/spawn — include a short \"label\" summarizing its task " +
+			"(e.g. {\"label\":\"posthog integration\"}) so it is named wk-posthog-integration; omit the label " +
+			"for a generic worker (a random wk-… id). The new " +
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
 			"DELEGATING WORK follows ONE fixed protocol — use it exactly, never improvise a way to get " +
 			"results: " +
