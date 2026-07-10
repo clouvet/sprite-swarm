@@ -19,15 +19,21 @@
 #     --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
 #     [--s3-endpoint https://fly.storage.tigris.dev] [--s3-region auto] \
 #     --sprites-token <token> [--github-token <token>] [--fly-token <token>] \
-#     [--claude-oauth-token <token>]
+#     [--claude-oauth-token <token>] [--discourse-profile <file.json>]
 #
 # --claude-oauth-token: a Claude subscription token from `claude setup-token` (run
 # once on a machine with a browser). When set, the fleet drives Claude through your
 # subscription instead of the metered API connector. Override per sprite with the
 # env var SPRITE_AGENT_CLAUDE_AUTH=connector to fall back to the API.
 #
-# Note: the brain bucket will STORE your Sprites/GitHub/Fly/Claude tokens so every
-# worker reconstitutes from it — guard the bucket's keys + connector.
+# --discourse-profile: a @discourse/mcp profile JSON — {"auth_pairs":[{"site":..,
+# "api_key":..,"api_username":..}]}. When set, the fleet gains read-only access to
+# those Discourse forums (paste a topic link and Claude pulls the thread in). One
+# profile can list several sites. Seed/rotate later with `sprite-agent put-secret
+# --name discourse --file <file>`.
+#
+# Note: the brain bucket will STORE your Sprites/GitHub/Fly/Claude/Discourse tokens
+# so every worker reconstitutes from it — guard the bucket's keys + connector.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
