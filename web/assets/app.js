@@ -733,7 +733,8 @@
   function renderContext(ctx) {
     const repos = (ctx && ctx.repos) || [];
     const files = (ctx && ctx.files) || [];
-    const total = repos.length + files.length;
+    const discourse = (ctx && ctx.discourse) || [];
+    const total = repos.length + files.length + discourse.length;
     contextCount.textContent = String(total);
     contextPill.hidden = total === 0;
     if (total === 0) closeContextPopover();
@@ -760,6 +761,18 @@
         const ic = document.createElement('span'); ic.textContent = f.image ? '🖼' : '📎'; a.appendChild(ic);
         const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = f.name; a.appendChild(n);
         contextList.appendChild(a);
+      }
+    }
+    if (discourse.length) {
+      contextList.appendChild(ctxGroup('Discourse'));
+      for (const d of discourse) {
+        // A linked title when we could build the URL; plain text otherwise.
+        const row = document.createElement(d.url ? 'a' : 'span');
+        row.className = 'ctx-row'; row.title = d.title;
+        if (d.url) { row.href = d.url; row.target = '_blank'; row.rel = 'noopener'; }
+        const ic = document.createElement('span'); ic.textContent = '🗨'; row.appendChild(ic);
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = d.title; row.appendChild(n);
+        contextList.appendChild(row);
       }
     }
   }
