@@ -29,6 +29,7 @@ func runInit(args []string) {
 	githubToken := fs.String("github-token", "", "GitHub token (optional)")
 	flyToken := fs.String("fly-token", "", "Fly token (optional)")
 	claudeToken := fs.String("claude-oauth-token", "", "Claude subscription OAuth token from `claude setup-token` (optional; the fleet defaults to it over the API connector)")
+	discourseProfile := fs.String("discourse-profile", "", "path to a @discourse/mcp profile JSON (optional; enables read-only Discourse forum access fleet-wide)")
 	name := fs.String("name", "", "home sprite name (required)")
 	artifact := fs.String("artifact", "", "path to a linux/amd64 sprite-agent binary to stage (required)")
 	_ = fs.Parse(args)
@@ -78,6 +79,15 @@ func runInit(args []string) {
 	}
 	if *claudeToken != "" {
 		_ = svc.PutSecret(ctx, fleet.SecretClaudeOAuthToken, *claudeToken)
+	}
+	if *discourseProfile != "" {
+		prof, err := os.ReadFile(*discourseProfile)
+		if err != nil {
+			log.Fatalf("init: read discourse profile %s: %v", *discourseProfile, err)
+		}
+		if err := svc.PutSecret(ctx, fleet.SecretDiscourse, string(prof)); err != nil {
+			log.Fatalf("init: write discourse profile: %v", err)
+		}
 	}
 	log.Printf("init: secrets written to brain (s3://%s)", *bucket)
 
