@@ -21,6 +21,7 @@ const (
 	SecretGitHubToken      = "github"
 	SecretFlyToken         = "fly"
 	SecretClaudeOAuthToken = "claude-oauth-token" // Claude subscription (from `claude setup-token`)
+	SecretDiscourse        = "discourse"          // @discourse/mcp profile (auth_pairs: site/api_key/api_username)
 )
 
 func secretKey(name string) string { return path.Join("fleet", "config", "secrets", name) }
