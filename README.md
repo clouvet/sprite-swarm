@@ -180,24 +180,15 @@ Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket
 tokens** so every worker reconstitutes from it — guard the bucket's keys + connector; that's the trust
 boundary.
 
-See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations, and
-[`docs/sprite-agent-V2-plan.md`](docs/sprite-agent-V2-plan.md) for the design (incl. §0.5 as-built).
+See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations.
 
 ## Status
 
-**In daily use.** Phase 1 (the per-sprite session service) and Phase 2 (fleet coordination) are built
-and running a live fleet. The surface has grown well beyond the initial cut — a per-conversation model
-picker, the context view, worker env vars, Claude-subscription auth, optional Discourse integration,
-summarize-&-continue, and task-descriptive worker names, among others.
+**In active daily use.** The per-sprite session service and fleet coordination are built and running a
+live fleet — spawn, dispatch, pull-result, reap, shared memory, in-place upgrade, the web chat UI, and
+everything in the capabilities above works today.
 
-**Phase 3 — *insertion* — is not started.** That's the interactive layer: **take the wheel** (attaching
-to a worker is read-only today; Phase 3 would let you steer it live) and a **needs-human** signal (a
-blocked worker badges the fleet view and notifies you when the app is backgrounded). Everything else —
-spawn, dispatch, pull-result, reap, memory, in-place upgrade — works today.
-
-Known remaining hardening: fleet policy and memory integrity are enforced at the app layer but not yet
-at the storage layer (physically-enforced per-prefix scoping is future work).
-
-`BUILD_REPORT.md` and `DECISIONS.md` capture the initial Phase 1–2 cut (June 2026) — useful history and
-the rationale for choices made under ambiguity, but this README and [`docs/`](docs/) are the current
-source of truth.
+Not yet built: interactive **take-the-wheel** steering (attaching to a worker is read-only) and a
+**needs-human** signal that notifies you when a backgrounded worker is blocked. Known remaining
+hardening: fleet policy and memory integrity are enforced at the app layer, not yet the storage layer
+(physically-enforced per-prefix scoping).

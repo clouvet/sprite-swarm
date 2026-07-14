@@ -13,8 +13,8 @@ import (
 //
 // Guardrail (DESIGN §6.2): can-modify-policy is human-held. Agents only READ
 // fleet/config/*; no agent code writes it. The storage-permission hardening
-// (per-prefix-scoped creds so it's enforced, not merely convention) is the
-// remaining Phase-2 refinement — see BUILD_REPORT.
+// (per-prefix-scoped creds so it's enforced, not merely convention) is
+// remaining hardening.
 
 const policyConfigKey = "fleet/config/policy.json"
 

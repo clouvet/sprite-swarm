@@ -112,7 +112,7 @@ func (b BrainConfig) Enabled() bool { return b.GatewayURL != "" || b.Bucket != "
 func (b BrainConfig) UsesGateway() bool { return b.GatewayURL != "" }
 
 // FromEnv builds a Config from environment variables, applying documented
-// defaults (DECISIONS.md) for anything unset.
+// defaults for anything unset.
 func FromEnv() Config {
 	workDir := getenv("SPRITE_AGENT_WORKDIR", "/home/sprite")
 
