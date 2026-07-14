@@ -257,7 +257,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 	}
 	if githubAvailable {
 		b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
-			"and open PRs directly. ")
+			"and open PRs directly. When asked to clone a repo, ALWAYS clone it into your current working " +
+			"directory — a plain `git clone <url>` with NO target path. Never clone into /tmp, a subdirectory " +
+			"(repos/, work/, etc.), or anywhere else. Your cwd is this chat's own workspace, and the UI's " +
+			"cloned-repos view mirrors exactly the repos sitting directly in it — cloning elsewhere hides them " +
+			"from the human and breaks that view. ")
 	} else {
 		b.WriteString("This fleet has NO GitHub access (no token configured) — git push / gh / opening PRs " +
 			"will fail, so don't attempt them; work on the local filesystem and tell the human if a task " +
