@@ -16,16 +16,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/fleet"
-	"github.com/clouvet/sprite-agent/internal/gateway"
-	"github.com/clouvet/sprite-agent/internal/hub"
-	"github.com/clouvet/sprite-agent/internal/keepalive"
-	"github.com/clouvet/sprite-agent/internal/memsync"
-	"github.com/clouvet/sprite-agent/internal/reaper"
-	"github.com/clouvet/sprite-agent/internal/secret"
-	"github.com/clouvet/sprite-agent/internal/server"
-	"github.com/clouvet/sprite-agent/internal/spawn"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/fleet"
+	"github.com/clouvet/sprite-swarm/internal/gateway"
+	"github.com/clouvet/sprite-swarm/internal/hub"
+	"github.com/clouvet/sprite-swarm/internal/keepalive"
+	"github.com/clouvet/sprite-swarm/internal/memsync"
+	"github.com/clouvet/sprite-swarm/internal/reaper"
+	"github.com/clouvet/sprite-swarm/internal/secret"
+	"github.com/clouvet/sprite-swarm/internal/server"
+	"github.com/clouvet/sprite-swarm/internal/spawn"
 )
 
 // setupGitHubAuth wires git + gh to use the brain-sourced GitHub token. It does

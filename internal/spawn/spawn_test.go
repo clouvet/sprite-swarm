@@ -5,13 +5,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 func testConfig() config.Config {
 	return config.Config{
 		AgentID:     "agent-a",
-		ArtifactRef: "github.com/clouvet/sprite-agent@main",
+		ArtifactRef: "github.com/clouvet/sprite-swarm@main",
 		Brain: config.BrainConfig{
 			Bucket: "sprite-agent", Region: "auto",
 			Endpoint: "https://fly.storage.tigris.dev",
@@ -45,7 +45,7 @@ func TestBootstrapEnvHandsBrainPointer(t *testing.T) {
 	want := map[string]string{
 		"SPRITE_AGENT_ID":       "wk-1",
 		"SPRITE_AGENT_ROLE":     "worker",
-		"SPRITE_AGENT_ARTIFACT": "github.com/clouvet/sprite-agent@main",
+		"SPRITE_AGENT_ARTIFACT": "github.com/clouvet/sprite-swarm@main",
 		"S3_BUCKET":             "sprite-agent",
 		"S3_ENDPOINT":           "https://fly.storage.tigris.dev",
 		"S3_ACCESS_KEY":         "AK",

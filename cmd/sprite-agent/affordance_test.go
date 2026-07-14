@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // The affordance must tell the truth about GitHub: claim access only when a token

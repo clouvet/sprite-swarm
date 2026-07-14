@@ -11,8 +11,9 @@ brain reconstitutes the whole fleet.
 > **Positioning:** connective tissue around Claude Code, not a new framework. It wraps the `claude` CLI
 > with a session service, fleet brain, spawning, shared memory, and transports.
 
-_The Go package, binary, and env vars keep the name `sprite-agent` / `SPRITE_AGENT_*` — that's the one
-program every sprite runs; "Sprite Swarm" is the fleet they form._
+_The binary and env vars keep the name `sprite-agent` / `SPRITE_AGENT_*` (built from `cmd/sprite-agent/`) —
+that's the one program every sprite runs; "Sprite Swarm" is the fleet they form, and the Go module + repo
+are `sprite-swarm`._
 
 ## What each sprite does
 

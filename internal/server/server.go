@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/hub"
-	"github.com/clouvet/sprite-agent/internal/secret"
-	"github.com/clouvet/sprite-agent/internal/spawn"
-	"github.com/clouvet/sprite-agent/web"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/hub"
+	"github.com/clouvet/sprite-swarm/internal/secret"
+	"github.com/clouvet/sprite-swarm/internal/spawn"
+	"github.com/clouvet/sprite-swarm/web"
 
 	"github.com/gorilla/websocket"
 )

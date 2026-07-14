@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/watcher"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/watcher"
 )
 
 // titleModel is the cheap/fast model used for generating chat titles, so titling
