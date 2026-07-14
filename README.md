@@ -17,14 +17,19 @@ booted against the brain reconstitutes the whole fleet.
   indicator** with elapsed time (thinking / running a tool / phase), syntax highlighting, evolving chat
   titles, copy buttons, voice input, a **per-conversation model picker** (Fable / Opus / Sonnet /
   Haiku, switchable mid-thread — the transcript resumes so context carries over), and **multi-file
-  attachments** (images + `doc/docx/xls/xlsx/csv/txt/md`). A **context view** — a count pill in the
-  header that opens a popover — mirrors what a conversation is working with: the git repos in its
-  workspace and the files uploaded to it. **Background turns survive disconnect** — close the tab or
+  attachments** (drag-and-drop or the attach button; images + `doc/docx/xls/xlsx/csv/txt/md`). A
+  **context view** — a count pill in the header that opens a popover — mirrors what a conversation is
+  working with: the git repos in its workspace, the files uploaded to it, and any Discourse topics it
+  pulled in (linked back to the posts). **Background turns survive disconnect** — close the tab or
   lock your phone mid-task and the work keeps running, replaying in full when you return. Terminal
   co-presence: the web UI and a `claude --resume` terminal share one transcript.
 - **GitHub** — its Claude can clone, branch, commit, and open PRs (token from the brain; no creds on
   disk).
 - **flyctl** — `fly`/`flyctl` is installed and authenticated on every sprite (token from the brain).
+- **Discourse** (optional) — with a `discourse` secret configured, its Claude reads your Discourse
+  forums **read-only** (paste a topic link → it pulls the thread in) via the official
+  [`@discourse/mcp`](https://github.com/discourse/discourse-mcp) server; one profile can serve several
+  sites. Absent ⇒ off. See *Launching a fleet* below.
 - **Worker env vars** — set in-memory environment variables on a worker (e.g. a `DISCOURSE_API_KEY` a
   dev app needs) from the UI; the harness injects them into every Claude process it spawns, so the
   tools/apps the agent runs inherit them. **RAM-only** — never written to disk or the brain, cleared
@@ -32,9 +37,10 @@ booted against the brain reconstitutes the whole fleet.
   active sessions so they apply at once. (An in-memory `.env.local` for a dev session — not a secret
   vault; the value still lives in an environment the agent can read, so pair it with scoped/read-only
   credentials.)
-- **Spawn + dispatch** — create another sprite running this same artifact and assign it work; it runs
-  in the worker's own session (attach to watch, ask for its status, or pull its result back when done —
-  the worker never pushes results at you).
+- **Spawn + dispatch** — create another sprite (named after its task when you describe one, e.g.
+  `wk-posthog-integration`) running this same artifact and assign it work; it runs in the worker's own
+  session (attach to watch, ask for its status, or pull its result back when done — the worker never
+  pushes results at you).
 - **Durable workers** — a worker that finishes a feature *persists* (it suspends, cheaply, but isn't
   destroyed); re-attach to it later to iterate on its PR with full context, then **Reap** it.
 - **Shared brain** — an S3/Tigris bucket holding the roster, operational secrets, policy, and
@@ -82,7 +88,7 @@ booted against the brain reconstitutes the whole fleet.
 
   Fleet brain (S3/Tigris), reached via the s3 connector (token-free, by sprite identity):
     fleet/<id>/{status,heartbeat}.json   per-sprite keys → roster = ListObjects("fleet/")
-    fleet/config/secrets/{sprites-api-token?,github?,fly?}  rehydrated on boot (all optional)
+    fleet/config/secrets/{sprites-api-token?,github?,fly?,claude-oauth-token?,discourse?}  rehydrated on boot (all optional)
     fleet/config/policy.json             capability/policy control plane
     fleet/memory-fs/<id>/…               frictionless shared memory (synced markdown)
     fleet/tasks/<id>/…                   dispatch inboxes
@@ -147,7 +153,7 @@ for token-free spawn (then skip `--sprites-token`). Then, from anywhere with Go:
 scripts/launch-fleet.sh --name my-fleet \
   --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
   --sprites-token <token> [--github-token <token>] [--fly-token <token>] \
-  [--claude-oauth-token <token>]
+  [--claude-oauth-token <token>] [--discourse-profile <file.json>]
 ```
 
 **Claude auth:** by default the fleet drives Claude through the **Anthropic connector** (metered API,
@@ -179,6 +185,19 @@ See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations, and
 
 ## Status
 
-Phases 1 and 2 are built and in daily use. Phase 3 (insertion: take-the-wheel / needs-human) is not
-started. See `BUILD_REPORT.md` for what is built-and-verified and `DECISIONS.md` for choices made under
-ambiguity.
+**In daily use.** Phase 1 (the per-sprite session service) and Phase 2 (fleet coordination) are built
+and running a live fleet. The surface has grown well beyond the initial cut — a per-conversation model
+picker, the context view, worker env vars, Claude-subscription auth, optional Discourse integration,
+summarize-&-continue, and task-descriptive worker names, among others.
+
+**Phase 3 — *insertion* — is not started.** That's the interactive layer: **take the wheel** (attaching
+to a worker is read-only today; Phase 3 would let you steer it live) and a **needs-human** signal (a
+blocked worker badges the fleet view and notifies you when the app is backgrounded). Everything else —
+spawn, dispatch, pull-result, reap, memory, in-place upgrade — works today.
+
+Known remaining hardening: fleet policy and memory integrity are enforced at the app layer but not yet
+at the storage layer (physically-enforced per-prefix scoping is future work).
+
+`BUILD_REPORT.md` and `DECISIONS.md` capture the initial Phase 1–2 cut (June 2026) — useful history and
+the rationale for choices made under ambiguity, but this README and [`docs/`](docs/) are the current
+source of truth.
