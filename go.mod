@@ -1,4 +1,4 @@
-module github.com/clouvet/sprite-agent
+module github.com/clouvet/sprite-swarm
 
 go 1.25
 

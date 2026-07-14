@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/gateway"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/gateway"
 )
 
 // apiSpawner creates sprites via the sprites REST API (POST /v1/sprites, Bearer

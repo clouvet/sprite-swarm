@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 const updateCallTimeout = 20 * time.Second

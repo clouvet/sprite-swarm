@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // writeTranscript lays down the profile (so the integration reads as enabled) and

@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // ErrNotConfigured means no sprites API token is available to spawn with.

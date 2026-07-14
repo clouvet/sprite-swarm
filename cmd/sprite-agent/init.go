@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/fleet"
-	"github.com/clouvet/sprite-agent/internal/spawn"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/fleet"
+	"github.com/clouvet/sprite-swarm/internal/spawn"
 )
 
 // runInit stands up a brand-new fleet: prime the brain (stage the artifact + write

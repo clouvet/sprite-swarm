@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/fleet"
-	"github.com/clouvet/sprite-agent/internal/gateway"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/fleet"
+	"github.com/clouvet/sprite-swarm/internal/gateway"
 )
 
 // runPutSecret writes one operational secret to the brain and exits — e.g. seeding

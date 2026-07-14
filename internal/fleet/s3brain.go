@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // ErrNotFound is returned by Brain.Get when a key does not exist.

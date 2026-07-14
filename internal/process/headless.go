@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clouvet/sprite-agent/pkg/claude"
+	"github.com/clouvet/sprite-swarm/pkg/claude"
 )
 
 // Options configures how a headless Claude process is launched: deterministic

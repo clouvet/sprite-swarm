@@ -17,11 +17,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
-	"github.com/clouvet/sprite-agent/internal/process"
-	"github.com/clouvet/sprite-agent/internal/secret"
-	"github.com/clouvet/sprite-agent/internal/session"
-	"github.com/clouvet/sprite-agent/internal/watcher"
+	"github.com/clouvet/sprite-swarm/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/process"
+	"github.com/clouvet/sprite-swarm/internal/secret"
+	"github.com/clouvet/sprite-swarm/internal/session"
+	"github.com/clouvet/sprite-swarm/internal/watcher"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
