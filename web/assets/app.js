@@ -804,7 +804,7 @@
     const url = repoModalInput.value.trim();
     if (!url) return;
     closeRepoModal();
-    inputEl.value = 'Clone this repo into my workspace: ' + url;
+    inputEl.value = 'Clone this repo into your current working directory (a plain "git clone <url>" with no target path — not /tmp or a subfolder): ' + url;
     autoGrow();
     send();
   }
