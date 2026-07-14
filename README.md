@@ -28,6 +28,11 @@ are `sprite-swarm`._
   pulled in (linked back to the posts). **Background turns survive disconnect** — close the tab or
   lock your phone mid-task and the work keeps running, replaying in full when you return. Terminal
   co-presence: the web UI and a `claude --resume` terminal share one transcript.
+- **Claude auth** — when a subscription token is configured (from `claude setup-token`, stored in the
+  brain and rehydrated fleet-wide), the whole fleet runs Claude Code on your **Claude subscription**, not
+  the metered API — the sensible default for a light, single-user fleet. Without a token it falls back to
+  the Anthropic API through an identity-authed connector (no key copied), and you can force that per
+  sprite with `SPRITE_AGENT_CLAUDE_AUTH=connector`.
 - **GitHub** — its Claude can clone, branch, commit, and open PRs (token from the brain; no creds on
   disk).
 - **flyctl** — `fly`/`flyctl` is installed and authenticated on every sprite (token from the brain).
