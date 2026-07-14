@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // heartbeatInterval is how often a running agent refreshes its heartbeat + status.

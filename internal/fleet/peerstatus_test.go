@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 func TestPeerStatusMergesLiveHealth(t *testing.T) {

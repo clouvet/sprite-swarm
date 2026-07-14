@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 // discourseRef is one Discourse topic the agent pulled into a conversation. It

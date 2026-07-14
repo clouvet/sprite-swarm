@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clouvet/sprite-agent/internal/spawn"
+	"github.com/clouvet/sprite-swarm/internal/spawn"
 )
 
 func TestWorkerSlug(t *testing.T) {

@@ -32,7 +32,7 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_AGENT_SETTINGS` | _(unset)_ | path passed to `--settings`. |
 | `SPRITE_AGENT_MCP_CONFIG` | _(unset)_ | path passed to `--mcp-config`. |
 | `SPRITE_AGENT_ROLE` | `worker` | `home` or `worker`, advertised in the roster. |
-| `SPRITE_AGENT_ARTIFACT` | `github.com/clouvet/sprite-agent@main` | bootstrap pointer handed to spawned sprites. |
+| `SPRITE_AGENT_ARTIFACT` | `github.com/clouvet/sprite-swarm@main` | bootstrap pointer handed to spawned sprites. |
 | `S3_BUCKET` `S3_REGION` `S3_ENDPOINT` `S3_ACCESS_KEY` `S3_SECRET_KEY` | _(unset)_ | fleet brain (Tigris/S3). Brain disabled if `S3_BUCKET` is empty. |
 | `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. If unset, spawn falls back to a `custom_api` connector; stubbed only if neither is available. |
 | `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL (token mode). |
