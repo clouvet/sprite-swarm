@@ -27,7 +27,7 @@ import (
 // What this does NOT do: provision the sprite-agent artifact onto the new sprite.
 // A bare create yields a base-environment sprite; making it boot sprite-agent and
 // register into the brain needs a follow-up provisioning step (push/build the
-// binary + run it as a service) — see BUILD_REPORT.
+// binary + run it as a service).
 type apiSpawner struct {
 	cfg          config.Config
 	token        tokenParts
