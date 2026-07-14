@@ -39,10 +39,8 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_API_GATEWAY` | _(unset)_ | gateway base URL of a `custom_api` connector fronting the Sprites API (token-free spawn). Auto-discovered when no token; set to override. |
 | `SPRITE_API_CONNECTOR_ID` | _(unset)_ | pin which `custom_api` connector to use for the Sprites API (since `custom_api` is generic); empty = first discovered. |
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
-| `SPRITE_AGENT_IDLE_REAP_MINUTES` | `0` | This agent self-declares reapable after idle this long (0 = never). Home ignores it. |
-| `SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES` | `0` (off) | Idle-reap threshold baked into spawned workers. Off by default — the reaper is not PR-aware, so an idle worker may be awaiting review of an open PR. Enable only for fire-and-forget workers. |
-| `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans (token-bearing agents only). |
-| `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Reap a worker whose heartbeat has been stale beyond this (crashed sprite cleanup). |
+| `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans for explicitly-done workers + dead-sprite cleanup (token-bearing agents only). |
+| `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Clean the brain entry of a worker whose heartbeat has been stale beyond this AND whose sprite is gone (crashed-sprite cleanup; suspended workers are kept). |
 
 ## Smoke test (M2 acceptance)
 ```sh
@@ -192,8 +190,9 @@ Token-bearing agents run a **reaper** that:
 human is attached unless `force`. Reaping never deletes the PR/branch (those live on
 GitHub) nor the durable shared memory (a separate brain prefix).
 
-Optional idle-reap (`SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES`) is **off by default** — the
-reaper isn't PR-aware, so leave it off for workers awaiting review.
+There is **no idle-based auto-reaping** — a worker is torn down only on explicit request
+(the **Reap** button / `POST /api/fleet/destroy`) or when it declares its own work done
+(`POST /api/fleet/done`). An idle worker sits there until you reap it.
 
 ## Upgrading running workers (in-place self-update)
 A worker runs the binary it booted with — spawn hands it home's binary at spawn time,

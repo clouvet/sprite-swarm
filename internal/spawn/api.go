@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -299,10 +298,6 @@ func (a *apiSpawner) stageSelf(ctx context.Context) (string, error) {
 func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv map[string]string, artifactURL string) error {
 	url := artifactURL
 	env := map[string]string{"SPRITE_AGENT_ADDR": ":8080", "SPRITE_AGENT_WORKDIR": "/home/sprite"}
-	// Bake an idle-reap threshold into the worker so it self-cleans when idle.
-	if a.cfg.WorkerIdleReapAfter > 0 {
-		env["SPRITE_AGENT_IDLE_REAP_MINUTES"] = strconv.Itoa(int(a.cfg.WorkerIdleReapAfter.Minutes()))
-	}
 
 	// Anthropic auth via the API Gateway connector (DESIGN §3.2): point the
 	// worker's Claude at the gateway base URL so it authenticates by the sprite's

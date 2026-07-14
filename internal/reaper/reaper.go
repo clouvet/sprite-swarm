@@ -1,7 +1,9 @@
-// Package reaper destroys spawned workers that are done or idle and cleans up
-// their brain entries, so the fleet doesn't accumulate zombie sprites. It runs
-// only on agents that can spawn (i.e. hold a sprites token); home is never
-// reaped (the policy lives in fleet.ReapTargets).
+// Package reaper destroys spawned workers that have been explicitly marked done
+// and cleans up the brain entries of workers whose sprite is actually gone, so the
+// fleet doesn't accumulate zombie sprites. There is no idle-based auto-reaping —
+// teardown is explicit (POST /api/fleet/destroy, or a worker's own /api/fleet/done);
+// a suspended/idle worker is left alone. It runs only on agents that can spawn
+// (i.e. hold a sprites token); home is never reaped (policy in fleet.ReapTargets).
 package reaper
 
 import (
