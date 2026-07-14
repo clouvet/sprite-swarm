@@ -1,4 +1,4 @@
-# sprite-agent
+# Sprite Swarm
 
 **Run Claude Code on Sprites from anywhere.** An opinionated harness that runs Claude Code on a
 [Sprite](https://fly.io/sprites) microVM behind a web chat UI — then lets one sprite spawn others into
@@ -10,6 +10,9 @@ brain reconstitutes the whole fleet.
 
 > **Positioning:** connective tissue around Claude Code, not a new framework. It wraps the `claude` CLI
 > with a session service, fleet brain, spawning, shared memory, and transports.
+
+_The Go package, binary, and env vars keep the name `sprite-agent` / `SPRITE_AGENT_*` — that's the one
+program every sprite runs; "Sprite Swarm" is the fleet they form._
 
 ## What each sprite does
 
