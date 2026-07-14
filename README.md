@@ -1,14 +1,15 @@
 # sprite-agent
 
-An opinionated harness for a fleet of **symmetric** Claude Code agents, each running on a
-[Sprite](https://fly.io/sprites) microVM. Every instance is identical and fully capable — there is no
-special "home" and no "leader" (those are only *hats*: home is a pinned URL; the leader is wherever
-your attention is). If home goes away, any worker becomes home; if everything goes away, a new sprite
-booted against the brain reconstitutes the whole fleet.
+**Run Claude Code on Sprites from anywhere.** An opinionated harness that runs Claude Code on a
+[Sprite](https://fly.io/sprites) microVM behind a web chat UI — then lets one sprite spawn others into
+a **symmetric** fleet backed by a shared brain. Drive it from your phone or laptop; leave, and the work
+keeps running on the Sprite. Every sprite is identical and fully capable — there is no special "home"
+and no "leader" (those are only *hats*: home is a pinned URL; the leader is wherever your attention is).
+If home goes away, any worker becomes home; if everything goes away, a new sprite booted against the
+brain reconstitutes the whole fleet.
 
-> **Positioning:** this is connective tissue around Claude Code, not a new agent framework. Claude
-> Code *is* the agent; sprite-agent provides the session service, fleet brain, spawning, memory, and
-> transports.
+> **Positioning:** connective tissue around Claude Code, not a new framework. It wraps the `claude` CLI
+> with a session service, fleet brain, spawning, shared memory, and transports.
 
 ## What each sprite does
 
