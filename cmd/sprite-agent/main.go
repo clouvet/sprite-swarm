@@ -451,15 +451,13 @@ func main() {
 	srv := server.New(cfg, h, roster, spawner, secrets)
 
 	if fleetSvc != nil {
-		// Idle-based self-reaping (DESIGN §2.3, disabled by default).
-		fleetSvc.SetIdleReaping(h.IsIdle, cfg.IdleReapAfter)
 		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
 		fleetSvc.SetAttendanceProbe(h.Attendance)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		if err := fleetSvc.Register(ctx); err != nil {
 			log.Printf("fleet: registration failed: %v", err)
 		} else {
-			log.Printf("fleet: registered %s into brain s3://%s (idle-reap=%s)", cfg.AgentID, cfg.Brain.Bucket, cfg.IdleReapAfter)
+			log.Printf("fleet: registered %s into brain s3://%s", cfg.AgentID, cfg.Brain.Bucket)
 		}
 		cancel()
 		fleetSvc.StartHeartbeat(context.Background())
