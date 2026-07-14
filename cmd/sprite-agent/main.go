@@ -1,6 +1,6 @@
 // Command sprite-agent is the single symmetric agent that runs on a sprite:
 // a session service (web chat UI driving Claude Code), with GitHub, spawn, and
-// minimal-fleet-brain capabilities. See README.md and docs/sprite-agent-V2-plan.md.
+// minimal-fleet-brain capabilities. See README.md.
 package main
 
 import (
