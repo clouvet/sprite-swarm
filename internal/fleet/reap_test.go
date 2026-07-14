@@ -36,37 +36,17 @@ func TestStaleWorkers(t *testing.T) {
 	}
 }
 
-func TestComputeReapableIdleTransition(t *testing.T) {
-	now := time.Unix(20_000_000, 0)
+func TestComputeReapableExplicitOnly(t *testing.T) {
 	svc := newService(newFakeBrain(), config.Config{AgentID: "w1"}) // role defaults to worker
-	idle := true
-	svc.SetIdleReaping(func() bool { return idle }, 60*time.Second)
-
-	// Idle for less than the threshold → not yet reapable.
-	if svc.computeReapable(now) {
-		t.Fatal("should not be reapable at the start of an idle stretch")
+	// No idle-based auto-reaping: reapable only once explicitly marked done.
+	if svc.computeReapable() {
+		t.Fatal("should not be reapable before being marked done")
 	}
-	if svc.computeReapable(now.Add(30 * time.Second)) {
-		t.Fatal("should not be reapable before the idle threshold")
+	if err := svc.MarkReapable(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	// Idle past the threshold → reapable.
-	if !svc.computeReapable(now.Add(61 * time.Second)) {
-		t.Fatal("should be reapable after idle exceeds threshold")
-	}
-	// Becomes busy → resets, not reapable.
-	idle = false
-	if svc.computeReapable(now.Add(120 * time.Second)) {
-		t.Fatal("should not be reapable once busy again")
-	}
-}
-
-func TestComputeReapableHomeNeverIdleReaps(t *testing.T) {
-	now := time.Unix(20_000_000, 0)
-	svc := newService(newFakeBrain(), config.Config{AgentID: "home"})
-	svc.role = "home"
-	svc.SetIdleReaping(func() bool { return true }, time.Nanosecond)
-	if svc.computeReapable(now.Add(time.Hour)) {
-		t.Fatal("home must never self-declare reapable on idle")
+	if !svc.computeReapable() {
+		t.Fatal("should be reapable after MarkReapable")
 	}
 }
 
