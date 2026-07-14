@@ -120,7 +120,7 @@ func FromEnv() Config {
 		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
 		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
-		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
+		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-swarm@main"),
 		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
 		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
 		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clouvet/sprite-agent/internal/config"
+	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
 func TestDispatchThenInbox(t *testing.T) {
