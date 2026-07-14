@@ -72,21 +72,14 @@ type Config struct {
 	// passes it to workers (from the create response); home sets it via env.
 	PublicURL string
 
-	// Auto-reap (DESIGN §2.3: workers come and go). A worker self-declares
-	// reapable after being idle this long (0 = never self-reap on idle). The
-	// reaper (on token-bearing agents) scans every ReapInterval and also cleans
-	// up workers whose heartbeat has been stale beyond DeadReapAfter.
-	IdleReapAfter time.Duration
+	// Reaper cadence (on token-bearing agents). Workers are torn down only on
+	// explicit teardown (POST /api/fleet/destroy, or a worker's own POST
+	// /api/fleet/done); the reaper scans every ReapInterval and, separately, cleans
+	// the brain entry of any worker whose heartbeat has been stale beyond
+	// DeadReapAfter AND whose sprite is actually gone. There is no idle-based
+	// auto-reaping — a suspended/idle worker is left alone.
 	ReapInterval  time.Duration
 	DeadReapAfter time.Duration
-
-	// WorkerIdleReapAfter is the idle-reap threshold the spawner bakes into the
-	// workers it creates. Default 0 (off): a worker is NOT destroyed just for
-	// being idle, because the reaper is not PR-aware — an idle worker may be
-	// waiting on human review of an open PR. Workers are reaped on explicit done
-	// (POST /api/fleet/done, e.g. after a merge) or a dead heartbeat. Enable idle
-	// reaping only for fire-and-forget workers that won't await review.
-	WorkerIdleReapAfter time.Duration
 }
 
 // BrainConfig points at the shared fleet brain (S3-compatible, e.g. Tigris).
@@ -129,10 +122,8 @@ func FromEnv() Config {
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
 		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-agent@main"),
 		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
-		IdleReapAfter:       minutesEnv("SPRITE_AGENT_IDLE_REAP_MINUTES", 0),
 		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
 		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),
-		WorkerIdleReapAfter: minutesEnv("SPRITE_AGENT_WORKER_IDLE_REAP_MINUTES", 0),
 		Brain: BrainConfig{
 			Bucket:     os.Getenv("S3_BUCKET"),
 			Region:     getenv("S3_REGION", "auto"),

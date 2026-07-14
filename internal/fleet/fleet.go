@@ -33,9 +33,6 @@ type Service struct {
 
 	mu              sync.Mutex
 	phase           string                // current free-text phase, refreshed into status
-	idleProbe       func() bool           // reports whether the agent is currently idle (no clients, not generating)
-	idleReapAfter   time.Duration         // a worker self-declares reapable after idle this long (0 = disabled)
-	idleSince       time.Time             // when the current idle stretch began (zero = not idle)
 	manualReapable  bool                  // set via MarkReapable (e.g. work done / PR merged)
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
 
@@ -108,16 +105,6 @@ func hashFile(path string) string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// SetIdleReaping wires an idle probe + threshold so a worker self-declares
-// reapable after being idle (no clients, not generating) for `after`. after<=0
-// disables idle self-reaping. Home agents never self-declare reapable.
-func (s *Service) SetIdleReaping(probe func() bool, after time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.idleProbe = probe
-	s.idleReapAfter = after
-}
-
 // SetAttendanceProbe wires a probe reporting whether a human is attached to this
 // agent and to which session (presence signal, §2.4), written into status.
 func (s *Service) SetAttendanceProbe(probe func() (bool, string)) {
@@ -135,25 +122,12 @@ func (s *Service) MarkReapable(ctx context.Context) error {
 	return s.writeStatus(ctx, "done")
 }
 
-// computeReapable decides whether this agent should advertise Reapable now.
-func (s *Service) computeReapable(now time.Time) bool {
+// computeReapable reports whether this agent has been explicitly marked done
+// (via MarkReapable). There is no idle-based auto-reaping — teardown is explicit.
+func (s *Service) computeReapable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.manualReapable {
-		return true
-	}
-	if s.role == "home" || s.idleReapAfter <= 0 || s.idleProbe == nil {
-		s.idleSince = time.Time{}
-		return false
-	}
-	if s.idleProbe() {
-		if s.idleSince.IsZero() {
-			s.idleSince = now
-		}
-		return now.Sub(s.idleSince) >= s.idleReapAfter
-	}
-	s.idleSince = time.Time{}
-	return false
+	return s.manualReapable
 }
 
 // Register writes this agent's status + initial heartbeat (boot self-registration).
@@ -192,7 +166,7 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 		URL:       s.url,
 		Artifact:  s.artifact,
 		Build:     s.build,
-		Reapable:  s.computeReapable(now),
+		Reapable:  s.computeReapable(),
 		Present:   present,
 		Session:   presentSession,
 		StartedAt: s.started,
@@ -276,7 +250,7 @@ func (s *Service) StartHeartbeat(ctx context.Context) {
 				if err := s.writeHeartbeat(hbCtx); err != nil {
 					log.Printf("fleet: heartbeat failed: %v", err)
 				}
-				// Refresh status too, so idle→reapable propagates to the roster.
+				// Refresh status too, so presence/phase changes propagate to the roster.
 				if err := s.writeStatus(hbCtx, ""); err != nil {
 					log.Printf("fleet: status refresh failed: %v", err)
 				}
