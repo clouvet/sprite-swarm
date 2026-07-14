@@ -192,8 +192,3 @@ See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations.
 **In active daily use.** The per-sprite session service and fleet coordination are built and running a
 live fleet — spawn, dispatch, pull-result, reap, shared memory, in-place upgrade, the web chat UI, and
 everything in the capabilities above works today.
-
-Not yet built: interactive **take-the-wheel** steering (attaching to a worker is read-only) and a
-**needs-human** signal that notifies you when a backgrounded worker is blocked. Known remaining
-hardening: fleet policy and memory integrity are enforced at the app layer, not yet the storage layer
-(physically-enforced per-prefix scoping).
