@@ -23,3 +23,6 @@ func (notConfigured) Exists(_ context.Context, _ string) (bool, error) {
 func (notConfigured) DeployApp(_ context.Context, _ DeployRequest) (Result, error) {
 	return Result{}, ErrNotConfigured
 }
+func (notConfigured) UpdateApp(_ context.Context, _ string, _ DeployRequest) (Result, error) {
+	return Result{}, ErrNotConfigured
+}
