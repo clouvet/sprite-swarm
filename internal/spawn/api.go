@@ -215,7 +215,7 @@ func appServiceSpec(req DeployRequest) ([]byte, error) {
 // background — the create and update paths share it. action labels the log line
 // ("deploy" / "update"). Runs async because warm→PUT→confirm takes 60-150s, past
 // the proxy's request timeout; the caller has already returned the sprite.
-func (a *apiSpawner) installAppService(name string, body []byte, port int, action string) {
+func (a *apiSpawner) installAppService(name string, body []byte, port int, action string, replace bool) {
 	go func() {
 		bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
@@ -224,6 +224,16 @@ func (a *apiSpawner) installAppService(name string, body []byte, port int, actio
 			if err := a.warmSprite(bg, name); err != nil {
 				lastErr = err
 				continue
+			}
+			// An update MUST force a restart. The platform does not re-run the boot
+			// command on a PUT to an already-running service — and if the artifact URL
+			// is unchanged the spec is byte-identical, so the PUT is a no-op — meaning
+			// the new tarball is never fetched and the app looks unchanged. Delete the
+			// service first, then recreate it: the fresh PUT starts a new process that
+			// re-runs boot (wipe app dir → curl new tarball → exec run).
+			if replace {
+				_ = a.deleteService(bg, name)
+				time.Sleep(2 * time.Second) // let the platform tear the old one down
 			}
 			if err := a.putService(bg, name, body); err != nil {
 				lastErr = err
@@ -237,6 +247,18 @@ func (a *apiSpawner) installAppService(name string, body []byte, port int, actio
 		}
 		log.Printf("%s: %s app provisioning failed: %v", action, name, lastErr)
 	}()
+}
+
+// deleteService removes the app service so a subsequent PUT starts a fresh process
+// (re-running the boot command). Best-effort; 404 = already gone.
+func (a *apiSpawner) deleteService(ctx context.Context, name string) error {
+	resp, err := a.do(ctx, http.MethodDelete, fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 // DeployApp hosts a user app on a dedicated BARE sprite (no agent). It creates the
@@ -263,7 +285,7 @@ func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	a.installAppService(res.Name, body, req.HTTPPort, "deploy")
+	a.installAppService(res.Name, body, req.HTTPPort, "deploy", false)
 	return res, nil
 }
 
@@ -288,7 +310,7 @@ func (a *apiSpawner) UpdateApp(ctx context.Context, name string, req DeployReque
 	if err != nil {
 		return Result{}, err
 	}
-	a.installAppService(name, body, req.HTTPPort, "update")
+	a.installAppService(name, body, req.HTTPPort, "update", true)
 	return Result{ID: name, Name: name}, nil
 }
 
