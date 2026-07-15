@@ -733,8 +733,9 @@
   function renderContext(ctx) {
     const repos = (ctx && ctx.repos) || [];
     const files = (ctx && ctx.files) || [];
+    const created = (ctx && ctx.created) || [];
     const discourse = (ctx && ctx.discourse) || [];
-    const total = repos.length + files.length + discourse.length;
+    const total = repos.length + files.length + created.length + discourse.length;
     contextCount.textContent = String(total);
     contextPill.hidden = total === 0;
     if (total === 0) closeContextPopover();
@@ -759,6 +760,17 @@
         const a = document.createElement('a');
         a.className = 'ctx-row'; a.href = f.url; a.target = '_blank'; a.rel = 'noopener'; a.title = f.name;
         const ic = document.createElement('span'); ic.textContent = f.image ? '🖼' : '📎'; a.appendChild(ic);
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = f.name; a.appendChild(n);
+        contextList.appendChild(a);
+      }
+    }
+    if (created.length) {
+      contextList.appendChild(ctxGroup('Created'));
+      for (const f of created) {
+        // Files the agent wrote to its workspace — download (server forces attachment).
+        const a = document.createElement('a');
+        a.className = 'ctx-row'; a.href = f.url; a.setAttribute('download', f.name); a.title = 'Download ' + f.name;
+        const ic = document.createElement('span'); ic.textContent = f.image ? '🖼' : '⬇'; a.appendChild(ic);
         const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = f.name; a.appendChild(n);
         contextList.appendChild(a);
       }
