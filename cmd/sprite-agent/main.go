@@ -286,6 +286,45 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 	return b.String()
 }
 
+// shouldBootSelfUpdate decides whether this process adopts the staged binary on
+// boot. Workers do (so a suspended one converges on wake); home never does (it
+// originates builds and would otherwise downgrade to the older staged artifact);
+// SPRITE_AGENT_BOOT_UPDATE=0 opts out entirely.
+func shouldBootSelfUpdate(role, disable string) bool {
+	if strings.EqualFold(role, "home") {
+		return false
+	}
+	if disable == "0" || strings.EqualFold(disable, "false") {
+		return false
+	}
+	return true
+}
+
+// maybeBootSelfUpdate converges a worker to the fleet's staged binary on boot
+// without a push: compare its build to the staged one and, if they differ, swap +
+// re-exec (identical to POST /api/fleet/update). Best-effort — any error just
+// continues booting on the current binary. Loop-safe: after re-exec the running
+// binary IS the staged one, so PrepareSelfUpdate no-ops.
+func maybeBootSelfUpdate(fleetSvc *fleet.Service, role string) {
+	if !shouldBootSelfUpdate(role, os.Getenv("SPRITE_AGENT_BOOT_UPDATE")) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	willUpdate, detail, err := fleetSvc.PrepareSelfUpdate(ctx)
+	if err != nil {
+		log.Printf("boot: self-update check skipped: %v (continuing on current build)", err)
+		return
+	}
+	if !willUpdate {
+		return
+	}
+	log.Printf("boot: adopting staged build (%s) — re-exec", detail)
+	if err := fleetSvc.Reexec(); err != nil {
+		log.Printf("boot: re-exec failed: %v", err)
+	}
+}
+
 func main() {
 	// `sprite-agent init` stands up a brand-new fleet (prime the brain + ignite home)
 	// rather than running the agent. See launch-fleet.sh.
@@ -388,6 +427,15 @@ func main() {
 			}
 		}
 		scancel()
+	}
+
+	// Boot-time self-update (workers only): adopt the fleet's staged binary on wake,
+	// so a suspended/idle worker converges to the latest build WITHOUT a push (which
+	// races the sprite's wake and often can't land). Re-execs if a different build is
+	// staged; home is excluded — it originates builds and must not downgrade to an
+	// older staged artifact. Same swap+re-exec as POST /api/fleet/update.
+	if fleetSvc != nil {
+		maybeBootSelfUpdate(fleetSvc, os.Getenv("SPRITE_AGENT_ROLE"))
 	}
 
 	// Resolve Claude auth now that any brain secrets are loaded: prefer the
