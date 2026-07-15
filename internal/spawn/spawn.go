@@ -42,6 +42,7 @@ type Spawner interface {
 	Destroy(ctx context.Context, name string) error
 	Exists(ctx context.Context, name string) (bool, error)
 	DeployApp(ctx context.Context, req DeployRequest) (Result, error)
+	UpdateApp(ctx context.Context, name string, req DeployRequest) (Result, error)
 }
 
 // DeployRequest hosts a user app on a dedicated BARE sprite (no agent), so the

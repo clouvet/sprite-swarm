@@ -250,7 +250,12 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"wrapper dir), stage the tarball to the brain (PUT it via the s3 connector), then POST /api/fleet/deploy-app " +
 			"{\"artifact_url\":\"<brain url of the tarball>\",\"run\":\"<start command>\",\"http_port\":<port the app listens on>}. " +
 			"That creates a dedicated BARE sprite (no agent) which fetches + runs your app, so the app owns that " +
-			"sprite's URL (served behind org login). The response returns the app's URL. ")
+			"sprite's URL (served behind org login). The response returns the app's URL. " +
+			"To CHANGE a deployed app in place (new build), stage the new tarball and POST /api/fleet/update-app " +
+			"{\"name\":\"<app sprite name>\",\"artifact_url\":..,\"run\":..,\"http_port\":..} — it reinstalls onto the " +
+			"SAME sprite, so the URL is unchanged; do NOT deploy a fresh sprite just to change an app. " +
+			"To TEAR DOWN an app sprite, POST /api/fleet/destroy-app {\"name\":\"<app sprite name>\"}. Bare app " +
+			"sprites are NOT in the fleet roster, so /api/fleet/destroy won't touch them — destroy-app is their teardown. ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")

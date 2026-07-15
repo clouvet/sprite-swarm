@@ -104,6 +104,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/result", s.serveFleetResult)
 	mux.HandleFunc("/api/fleet/update", s.serveUpdate)
 	mux.HandleFunc("/api/fleet/deploy-app", s.serveDeployApp)
+	mux.HandleFunc("/api/fleet/update-app", s.serveUpdateApp)
+	mux.HandleFunc("/api/fleet/destroy-app", s.serveDestroyApp)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -454,6 +456,76 @@ func (s *Server) serveDeployApp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res)
 }
 
+// serveUpdateApp re-installs an app on an EXISTING bare app sprite (deploy new
+// code without a new sprite or URL). POST {name, artifact_url, run, http_port}.
+func (s *Server) serveUpdateApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no spawn capability on this sprite", http.StatusNotImplemented)
+		return
+	}
+	var b struct {
+		Name        string `json:"name"`
+		ArtifactURL string `json:"artifact_url"`
+		Run         string `json:"run"`
+		HTTPPort    int    `json:"http_port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" || b.ArtifactURL == "" || b.Run == "" || b.HTTPPort == 0 {
+		http.Error(w, "name, artifact_url, run, and http_port are required", http.StatusBadRequest)
+		return
+	}
+	res, err := s.spawner.UpdateApp(r.Context(), b.Name, spawn.DeployRequest{
+		ArtifactURL: b.ArtifactURL, Run: b.Run, HTTPPort: b.HTTPPort,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"updated": res.Name})
+}
+
+// serveDestroyApp tears down a bare app sprite (from deploy-app) by name. App
+// sprites aren't in the roster, so /api/fleet/destroy won't touch them; this
+// destroys the VM directly after confirming it exists.
+func (s *Server) serveDestroyApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no teardown capability on this sprite (no sprites API token)", http.StatusNotImplemented)
+		return
+	}
+	var b struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if b.Name == s.cfg.AgentID {
+		http.Error(w, "refusing to destroy self ("+b.Name+")", http.StatusConflict)
+		return
+	}
+	exists, err := s.spawner.Exists(r.Context(), b.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !exists {
+		http.Error(w, "no such sprite: "+b.Name, http.StatusNotFound)
+		return
+	}
+	if err := s.spawner.Destroy(r.Context(), b.Name); err != nil {
+		http.Error(w, "destroy failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"destroyed": b.Name})
+}
+
 // serveUpdate rolls out a new binary. POST /api/fleet/update with no body =
 // self-update (fetch the staged binary from the brain, swap it in place, re-exec
 // — the VM disk survives). With {"target":"<id>"|"all"} the caller stages its own
@@ -584,7 +656,9 @@ func (s *Server) serveDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !exists {
-		http.Error(w, "no such agent in the roster: "+body.Target, http.StatusNotFound)
+		http.Error(w, "no such agent in the roster: "+body.Target+
+			" (if it's a bare app sprite from deploy-app, use POST /api/fleet/destroy-app instead)",
+			http.StatusNotFound)
 		return
 	}
 	if present && !body.Force {
