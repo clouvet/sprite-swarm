@@ -173,10 +173,21 @@ func (s *Server) serveSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, list)
 	case http.MethodPost:
 		var body struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Message string `json:"message"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		writeJSON(w, s.store.Create(body.Name))
+		meta := s.store.Create(body.Name)
+		// Optional seed: plant a first user message so the new chat opens with
+		// context and Claude starts on it — the path an agent uses to spin up a
+		// fresh conversation on THIS sprite (a handoff / clean window) without
+		// spawning a worker. Best-effort; the session still exists if it fails.
+		if strings.TrimSpace(body.Message) != "" {
+			if err := s.hub.InjectMessage(meta.ID, body.Message); err != nil {
+				log.Printf("session %s: seed inject failed: %v", meta.ID, err)
+			}
+		}
+		writeJSON(w, meta)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
