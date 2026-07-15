@@ -260,6 +260,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
 	}
+	b.WriteString("To start a FRESH CONVERSATION on yourself — a new chat on THIS SAME sprite, e.g. to " +
+		"hand a long thread off into a clean window, or split work off without flooding the current " +
+		"context — POST /api/sessions {\"name\":\"<short title>\",\"message\":\"<the seed / handoff text>\"} " +
+		"(to localhost:8080). It creates a new chat here, seeded with your message, that the human can open " +
+		"from the chat list; for a large payload write the JSON to a file and `curl -sX POST " +
+		"localhost:8080/api/sessions -d @<file>`. This is a NEW CHAT, not a new worker — never spawn a " +
+		"worker just to get a fresh conversation. ")
 	if githubAvailable {
 		b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
 			"and open PRs directly. When asked to clone a repo, ALWAYS clone it into your current working " +
