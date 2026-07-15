@@ -195,37 +195,27 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
-// DeployApp hosts a user app on a dedicated BARE sprite (no agent). It creates the
-// sprite, then in the background warms it and installs a service that fetches the
-// app tarball from req.ArtifactURL, extracts it, and runs req.Run on req.HTTPPort —
-// so the sprite's public URL serves the app (behind org auth) with nothing else
-// owning the port. Returns the created sprite (name + URL) immediately.
-func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, error) {
-	if req.ArtifactURL == "" || req.Run == "" || req.HTTPPort == 0 {
-		return Result{}, fmt.Errorf("deploy: artifact_url, run, and http_port are required")
-	}
-	prefix := req.NamePrefix
-	if prefix == "" {
-		prefix = "app-"
-	}
-	res, err := a.createSprite(ctx, createSpriteRequest{Name: prefix + a.newID()})
-	if err != nil {
-		return Result{}, err
-	}
-	name := res.Name
-	boot := "set -e; mkdir -p /home/sprite/app; " +
+// appServiceSpec is the service body that fetches the app tarball, extracts it,
+// and runs the start command. Shared by deploy (new sprite) and update (existing
+// sprite). The app dir is wiped first so an update fully replaces the old files.
+func appServiceSpec(req DeployRequest) ([]byte, error) {
+	boot := "set -e; rm -rf /home/sprite/app; mkdir -p /home/sprite/app; " +
 		"curl -fsSL " + shQuote(req.ArtifactURL) + " -o /tmp/app.tgz; " +
 		"tar xzf /tmp/app.tgz -C /home/sprite/app; cd /home/sprite/app; " +
 		// Tolerate a tarball that wraps everything in one top-level dir (a common
 		// `tar czf x.tgz mydir` mistake) — descend into it so the app root is right.
 		"if [ \"$(ls -1A | wc -l)\" -eq 1 ] && [ -d \"$(ls -1A)\" ]; then cd \"$(ls -1A)\"; fi; " +
 		"exec sh -c " + shQuote(req.Run)
-	body, err := json.Marshal(serviceSpec{
+	return json.Marshal(serviceSpec{
 		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", HTTPPort: req.HTTPPort,
 	})
-	if err != nil {
-		return Result{}, err
-	}
+}
+
+// installAppService warms the sprite and (re)installs the app service in the
+// background — the create and update paths share it. action labels the log line
+// ("deploy" / "update"). Runs async because warm→PUT→confirm takes 60-150s, past
+// the proxy's request timeout; the caller has already returned the sprite.
+func (a *apiSpawner) installAppService(name string, body []byte, port int, action string) {
 	go func() {
 		bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
@@ -240,14 +230,66 @@ func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, 
 				continue
 			}
 			if a.serviceExists(bg, name) {
-				log.Printf("deploy: %s app service installed (port %d)", name, req.HTTPPort)
+				log.Printf("%s: %s app service installed (port %d)", action, name, port)
 				return
 			}
 			lastErr = fmt.Errorf("service did not persist")
 		}
-		log.Printf("deploy: %s app provisioning failed: %v", name, lastErr)
+		log.Printf("%s: %s app provisioning failed: %v", action, name, lastErr)
 	}()
+}
+
+// DeployApp hosts a user app on a dedicated BARE sprite (no agent). It creates the
+// sprite (labeled role=app so it's identifiable), then in the background installs
+// a service that fetches + runs the app tarball on req.HTTPPort — so the sprite's
+// public URL serves the app (behind org auth). Returns the created sprite
+// immediately. Change it later with UpdateApp; tear it down with Destroy.
+func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, error) {
+	if req.ArtifactURL == "" || req.Run == "" || req.HTTPPort == 0 {
+		return Result{}, fmt.Errorf("deploy: artifact_url, run, and http_port are required")
+	}
+	prefix := req.NamePrefix
+	if prefix == "" {
+		prefix = "app-"
+	}
+	body, err := appServiceSpec(req)
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := a.createSprite(ctx, createSpriteRequest{
+		Name:   prefix + a.newID(),
+		Labels: map[string]string{"fleet": "sprite-agent", "role": "app"},
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	a.installAppService(res.Name, body, req.HTTPPort, "deploy")
 	return res, nil
+}
+
+// UpdateApp re-installs the app service on an EXISTING app sprite (new tarball,
+// start command, or port), so an app can be changed in place without a new sprite
+// or URL. The sprite must already exist.
+func (a *apiSpawner) UpdateApp(ctx context.Context, name string, req DeployRequest) (Result, error) {
+	if name == "" {
+		return Result{}, fmt.Errorf("update: app sprite name is required")
+	}
+	if req.ArtifactURL == "" || req.Run == "" || req.HTTPPort == 0 {
+		return Result{}, fmt.Errorf("update: artifact_url, run, and http_port are required")
+	}
+	exists, err := a.Exists(ctx, name)
+	if err != nil {
+		return Result{}, err
+	}
+	if !exists {
+		return Result{}, fmt.Errorf("update: no such app sprite %q (deploy it first)", name)
+	}
+	body, err := appServiceSpec(req)
+	if err != nil {
+		return Result{}, err
+	}
+	a.installAppService(name, body, req.HTTPPort, "update")
+	return Result{ID: name, Name: name}, nil
 }
 
 // shQuote single-quotes a string for safe embedding in a /bin/sh -c command.
