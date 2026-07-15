@@ -41,6 +41,7 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
 | `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans for explicitly-done workers + dead-sprite cleanup (token-bearing agents only). |
 | `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Clean the brain entry of a worker whose heartbeat has been stale beyond this AND whose sprite is gone (crashed-sprite cleanup; suspended workers are kept). |
+| `SPRITE_AGENT_BOOT_UPDATE` | `1` (workers) | On boot a **worker** adopts the fleet's staged binary if it differs (swap + re-exec), so a suspended/idle worker converges on its next wake without a push. Home is always excluded (it originates builds). Set `0` to disable. |
 
 ## Smoke test (M2 acceptance)
 ```sh
