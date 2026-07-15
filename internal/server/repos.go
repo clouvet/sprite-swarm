@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,11 +13,13 @@ import (
 )
 
 // contextInfo is everything added to a conversation, mirrored from disk: the git
-// repos in its workspace, the files uploaded to it, and the Discourse topics it
-// pulled in (when the Discourse integration is set up).
+// repos in its workspace, the files uploaded to it, the Discourse topics it pulled
+// in (when configured), and the files the agent created in its workspace (its
+// downloadable artifacts).
 type contextInfo struct {
 	Repos     []repoInfo     `json:"repos"`
 	Files     []fileInfo     `json:"files"`
+	Created   []fileInfo     `json:"created"`
 	Discourse []discourseRef `json:"discourse"`
 }
 
@@ -48,6 +51,7 @@ func (s *Server) serveSessionContext(w http.ResponseWriter, r *http.Request, id 
 	writeJSON(w, contextInfo{
 		Repos:     s.sessionRepos(id),
 		Files:     s.sessionFiles(id),
+		Created:   s.sessionCreatedFiles(id),
 		Discourse: s.sessionDiscourse(id),
 	})
 }
@@ -103,6 +107,74 @@ func (s *Server) sessionFiles(id string) []fileInfo {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 	return files
+}
+
+// sessionCreatedFiles lists the loose files the agent has written at the top level
+// of the chat's workspace (~/chats/<id>) — the artifacts it produced — as
+// downloadable entries, newest first. Directories (cloned repos, shown under
+// Repos) and dotfiles are skipped, so the human can grab a report/export the agent
+// made without copy-pasting it out of the chat. Capped so a busy workspace can't
+// flood the panel.
+func (s *Server) sessionCreatedFiles(id string) []fileInfo {
+	base := filepath.Join(s.cfg.WorkDir, "chats", id)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return []fileInfo{}
+	}
+	type item struct {
+		fi  fileInfo
+		mod int64
+	}
+	var items []item
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		items = append(items, item{
+			fi: fileInfo{
+				Name:  e.Name(),
+				URL:   "/api/sessions/" + id + "/files/" + url.PathEscape(e.Name()),
+				Image: isImageExt(filepath.Ext(e.Name())),
+			},
+			mod: info.ModTime().UnixNano(),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].mod > items[j].mod })
+	files := []fileInfo{}
+	for i, it := range items {
+		if i >= 50 {
+			break
+		}
+		files = append(files, it.fi)
+	}
+	return files
+}
+
+// serveCreatedFile downloads a file from the chat's workspace
+// (GET /api/sessions/<id>/files/<name>), forcing attachment disposition so the
+// browser saves it rather than rendering.
+func (s *Server) serveCreatedFile(w http.ResponseWriter, r *http.Request, id, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id = sessionIDRe.ReplaceAllString(id, "")
+	name = filepath.Base(name) // traversal defense: only a direct child
+	if id == "" || name == "" || name == "." {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(s.cfg.WorkDir, "chats", id, name)
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	http.ServeFile(w, r, path)
 }
 
 func isImageExt(ext string) bool {

@@ -267,6 +267,10 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"from the chat list; for a large payload write the JSON to a file and `curl -sX POST " +
 		"localhost:8080/api/sessions -d @<file>`. This is a NEW CHAT, not a new worker — never spawn a " +
 		"worker just to get a fresh conversation. ")
+	b.WriteString("To GIVE THE HUMAN A FILE you produced — a report, export, generated document, etc. — " +
+		"WRITE IT to your working directory (cwd, a plain filename with no path). Loose files in your cwd " +
+		"appear in the chat's context panel under \"Created\" as downloads. Do NOT paste a long file's " +
+		"contents into the chat for the human to copy — write the file so they can download it. ")
 	if githubAvailable {
 		b.WriteString("You have GitHub access (git + gh are authenticated) — clone repos, branch, commit, " +
 			"and open PRs directly. When asked to clone a repo, ALWAYS clone it into your current working " +
