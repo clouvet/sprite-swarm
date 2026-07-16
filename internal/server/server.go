@@ -218,6 +218,10 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.serveSessionContext(w, r, strings.TrimSuffix(rest, "/context"))
 		return
 	}
+	if i := strings.Index(rest, "/files/"); i >= 0 {
+		s.serveCreatedFile(w, r, rest[:i], rest[i+len("/files/"):])
+		return
+	}
 	id := rest
 	switch r.Method {
 	case http.MethodDelete:
