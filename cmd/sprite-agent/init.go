@@ -25,7 +25,7 @@ func runInit(args []string) {
 	region := fs.String("s3-region", "auto", "S3 region")
 	accessKey := fs.String("s3-access-key", "", "Tigris access key (required)")
 	secretKey := fs.String("s3-secret-key", "", "Tigris secret key (required)")
-	spritesToken := fs.String("sprites-token", "", "Sprites API token (required)")
+	spritesToken := fs.String("sprites-token", "", "Sprites API token (optional; worker spawn/reap is disabled until one is set)")
 	githubToken := fs.String("github-token", "", "GitHub token (optional)")
 	flyToken := fs.String("fly-token", "", "Fly token (optional)")
 	claudeToken := fs.String("claude-oauth-token", "", "Claude subscription OAuth token from `claude setup-token` (optional; the fleet defaults to it over the API connector)")
@@ -36,7 +36,7 @@ func runInit(args []string) {
 
 	required := map[string]string{
 		"bucket": *bucket, "s3-access-key": *accessKey, "s3-secret-key": *secretKey,
-		"sprites-token": *spritesToken, "name": *name, "artifact": *artifact,
+		"name": *name, "artifact": *artifact,
 	}
 	var missing []string
 	for k, v := range required {
@@ -68,8 +68,13 @@ func runInit(args []string) {
 	if err != nil {
 		log.Fatalf("init: open brain: %v", err)
 	}
-	if err := svc.PutSecret(ctx, fleet.SecretSpritesAPIToken, *spritesToken); err != nil {
-		log.Fatalf("init: write sprites token (check bucket/keys/endpoint): %v", err)
+	if *spritesToken != "" {
+		if err := svc.PutSecret(ctx, fleet.SecretSpritesAPIToken, *spritesToken); err != nil {
+			log.Fatalf("init: write sprites token (check bucket/keys/endpoint): %v", err)
+		}
+	} else {
+		log.Printf("init: no --sprites-token — the fleet will chat, but worker spawn/reap is disabled " +
+			"until one is added (sprite-agent put-secret --name sprites-api-token)")
 	}
 	if *githubToken != "" {
 		_ = svc.PutSecret(ctx, fleet.SecretGitHubToken, *githubToken)
