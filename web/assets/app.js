@@ -57,6 +57,9 @@
   const contextPopover = $('context-popover');
   const contextCount = $('context-count');
   const contextList = $('context-list');
+  const ctxMeter = $('ctx-meter');
+  const ctxMeterFill = $('ctx-meter-fill');
+  const ctxMeterLabel = $('ctx-meter-label');
   const statusEl = $('status');
   const chatTitle = $('chat-title');
   const mainEl = $('main');
@@ -139,6 +142,7 @@
     currentSession = null;
     currentAssistantEl = null; assistantText = ''; assistantTurns = 0;
     messagesEl.innerHTML = '';
+    hideContextMeter();
     inputEl.value = ''; autoGrow();
     clearAttachments();
     renderContext(null);
@@ -225,6 +229,7 @@
     currentAssistantEl = null;
     assistantText = '';
     setGenerating(false); // clear any stale turn state (stuck stop button / timer) when switching chats
+    hideContextMeter();    // repopulates on the next turn's message_start
     applySessionModel(s.model);
     fetchContext();
     clearAttachments();
@@ -452,6 +457,13 @@
         else if (msg.delta?.type === 'thinking_delta') appendThinking(msg.delta.thinking);
         else if (msg.delta?.type === 'input_json_delta') accumulateToolInput(msg.delta.partial_json);
         break;
+      case 'message_start': {
+        // Token usage rides the message_start event — the prompt (context) size for
+        // this turn. Sum the input sides for the context meter.
+        const u = msg.message && msg.message.usage;
+        if (u) updateContextMeter((u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0));
+        break;
+      }
       case 'message_stop':
         finalizeAssistant();
         // Between one assistant message and the next step (a tool running, or more
@@ -790,6 +802,34 @@
     }
   }
   function ctxGroup(text) { const d = document.createElement('div'); d.className = 'ctx-group'; d.textContent = text; return d; }
+
+  // ---- context meter: how full the conversation is, from per-turn token usage ----
+  // Soft ceiling before compaction risk gets real (empirically ~200-275K in the wild).
+  // Not the model's hard window — a "start thinking about summarizing" mark.
+  const CTX_SOFT_LIMIT = 200000;
+  function fmtTokens(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return Math.round(n / 1e3) + 'K';
+    return String(n);
+  }
+  function updateContextMeter(tokens) {
+    if (!ctxMeter || !tokens) return;
+    const pct = Math.min(100, Math.round((tokens / CTX_SOFT_LIMIT) * 100));
+    ctxMeterFill.style.width = pct + '%';
+    ctxMeter.classList.toggle('warn', pct >= 60 && pct < 85);
+    ctxMeter.classList.toggle('danger', pct >= 85);
+    ctxMeterLabel.textContent = fmtTokens(tokens);
+    ctxMeter.title = 'Conversation context: ~' + fmtTokens(tokens) + ' tokens'
+      + (pct >= 85 ? ' — getting full; use “Summarize & continue” to start a fresh chat.'
+         : pct >= 60 ? ' — filling up.' : '.');
+    ctxMeter.hidden = false;
+  }
+  function hideContextMeter() {
+    if (!ctxMeter) return;
+    ctxMeter.hidden = true;
+    ctxMeter.classList.remove('warn', 'danger');
+    ctxMeterFill.style.width = '0';
+  }
   function openContextPopover() { contextPopover.hidden = false; contextPill.setAttribute('aria-expanded', 'true'); }
   function closeContextPopover() { contextPopover.hidden = true; contextPill.setAttribute('aria-expanded', 'false'); }
   contextPill.addEventListener('click', (e) => {
