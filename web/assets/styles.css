@@ -39,7 +39,7 @@ html[data-theme="light"] {
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: "MonoLisaText", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5;
   -webkit-font-smoothing: antialiased; min-height: 100dvh;
   font-weight: 400;
@@ -105,21 +105,21 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .modal h3 { margin: 0 0 10px; font-size: 17px; }
 .modal p { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
 .modal .modal-prompt { color: var(--text); }
-.modal .modal-prompt strong { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.modal .modal-prompt strong { color: var(--accent); font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; }
 .copy-name { cursor: pointer; border-bottom: 1px dashed var(--accent); user-select: all; -webkit-user-select: all; }
 .copy-name:hover { filter: brightness(1.2); }
 .copy-name::after { content: ' ⧉'; opacity: .6; font-family: initial; }
 .copy-name.copied::after { content: ' ✓ copied'; color: var(--on); opacity: 1; }
 #reap-modal-input, #repo-modal-input { width: 100%; box-sizing: border-box; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; }
 #reap-modal-input:focus, #repo-modal-input:focus { outline: none; border-color: var(--accent); }
 /* env modal: rows of NAME ••••• [×], plus a name/value add row */
 #env-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 #env-list:empty { display: none; }
 .env-row { display: flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 10px; }
-.env-row .env-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+.env-row .env-name { font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
   color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .env-row .env-mask { color: var(--text-muted); letter-spacing: 1px; margin-left: auto; }
 .env-row .env-del { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; }
@@ -127,7 +127,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .env-empty { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
 .env-add { display: flex; gap: 8px; }
 .env-add input { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 10px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; }
+  padding: 8px 10px; font-size: 14px; font-family: "MonoLisaCode", ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; }
 .env-add input:focus { outline: none; border-color: var(--accent); }
 .env-add #env-name { flex: 0 0 40%; }
 .env-add #env-value { flex: 1; }
@@ -312,7 +312,7 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
    unknown language) the code has no .hljs class and would fall back to --text —
    dark on dark in light mode. Force a light default for un-highlighted code. */
 .message-content pre code:not(.hljs) { color: #e5e5e5; }
-.message-content code { font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 14px; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
+.message-content code { font-family: "MonoLisaCode", "SF Mono", Monaco, Consolas, monospace; font-size: 14px; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
 /* light mode: the 0.3 black reads as a heavy grey on a light page — lighten it
    for inline code (code blocks keep their own dark background). */
 html[data-theme="light"] .message-content code { background: rgba(0,0,0,0.06); }
@@ -328,7 +328,7 @@ html[data-theme="light"] .message-content pre code { background: none; }
 .activity-action { font-size: 14px; color: var(--text); font-weight: 500; }
 .activity-elapsed { color: var(--text-muted); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; margin-left: 6px; }
 .activity-detail { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-family: "SF Mono", Monaco, Consolas, monospace; margin-top: 2px; }
+  font-family: "MonoLisaCode", "SF Mono", Monaco, Consolas, monospace; margin-top: 2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes spin-clockwise { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
