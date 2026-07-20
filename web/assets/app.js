@@ -224,6 +224,7 @@
     messagesEl.innerHTML = '';
     currentAssistantEl = null;
     assistantText = '';
+    setGenerating(false); // clear any stale turn state (stuck stop button / timer) when switching chats
     applySessionModel(s.model);
     fetchContext();
     clearAttachments();
@@ -1047,6 +1048,11 @@
     }
 
     maybeAutoTitle(text);
+    // Fresh turn: drop any stale elapsed timer left by a prior turn that never
+    // finalized (e.g. its 'result' was lost during a compaction), so the working
+    // indicator counts from NOW instead of resuming an old genStart.
+    if (genTimer) { clearInterval(genTimer); genTimer = null; }
+    genStart = 0;
     addUser(text, attachmentRender(atts));
     showThinking();
     const payload = { type: 'user', content: text, model: currentModel };
