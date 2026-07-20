@@ -77,7 +77,8 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 	if !ok {
 		return Result{}, errors.New("spawn: a valid Sprites API token is required to launch a fleet")
 	}
-	res, err := sp.createSprite(ctx, sp.buildCreateRequest(Request{Name: name, Role: "home"}))
+	cr := sp.buildCreateRequest(Request{Name: name, Role: "home"})
+	res, err := sp.createSprite(ctx, cr)
 	if err != nil {
 		return Result{}, err
 	}
@@ -85,7 +86,12 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 	if err != nil {
 		return res, fmt.Errorf("spawn: stage artifact: %w", err)
 	}
-	env := map[string]string{"SPRITE_AGENT_ROLE": "home"}
+	// Provision home with the SAME bootstrap env the create used — crucially the
+	// brain pointer (direct S3 keys, or the gateway URL) plus role/artifact. Passing
+	// only {ROLE,URL} left a connector-less fleet's home with no brain credentials
+	// ("no brain"): it works only when an s3 connector is discovered at runtime.
+	// Mirrors Spawn, which already passes cr.Env to workers.
+	env := cr.Env
 	if res.URL != "" {
 		env["SPRITE_AGENT_URL"] = res.URL
 	}
