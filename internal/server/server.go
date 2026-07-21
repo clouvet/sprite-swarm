@@ -27,7 +27,6 @@ import (
 // *fleet.Service when a brain is configured, or nil otherwise.
 type Fleet interface {
 	Roster(ctx context.Context) (interface{}, error)
-	MarkReapable(ctx context.Context) error
 	AgentPresent(ctx context.Context, id string) (exists, present bool, err error)
 	RemoveAgent(ctx context.Context, id string) error
 	Dispatch(ctx context.Context, target, task, kind string) (interface{}, error)
@@ -97,7 +96,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/context", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
-	mux.HandleFunc("/api/fleet/done", s.serveDone)
 	mux.HandleFunc("/api/fleet/dispatch", s.serveDispatch)
 	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
 	mux.HandleFunc("/api/fleet/status", s.serveStatus)
@@ -290,8 +288,8 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		Name       string            `json:"name"`
 		Label      string            `json:"label"`
 		NamePrefix string            `json:"name_prefix"`
-		Role       string            `json:"role"`
 		Labels     map[string]string `json:"labels"`
+		Env        map[string]string `json:"env"` // extra boot env, e.g. {"SPRITE_AGENT_BOOT_UPDATE":"0"} to pin the new sprite's build
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if !s.spawner.Available() {
@@ -318,32 +316,13 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		body.NamePrefix = "wk-"
 	}
 	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
-		Name: body.Name, NamePrefix: body.NamePrefix, Role: body.Role, Labels: body.Labels,
+		Name: body.Name, NamePrefix: body.NamePrefix, Labels: body.Labels, Env: body.Env,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, res)
-}
-
-// serveDone marks this agent reapable (e.g. its task is finished / PR merged) so
-// the fleet reaper destroys it. The agent does not destroy itself — a
-// token-bearing reaper does, keeping the privileged token off workers.
-func (s *Server) serveDone(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.fleet == nil {
-		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
-		return
-	}
-	if err := s.fleet.MarkReapable(r.Context()); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // serveDispatch assigns a task to another agent (P2.1). The task is recorded in

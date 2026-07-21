@@ -7,8 +7,8 @@ import (
 )
 
 // Capability/policy control plane (DESIGN §6.2): a layered policy — fleet
-// defaults → per-role → per-agent override, most-specific wins. It lives in the
-// brain (fleet/config/policy.json + fleet/<id>/policy.json), is read on boot, and
+// defaults → per-agent override, most-specific wins. It lives in the brain
+// (fleet/config/policy.json + fleet/<id>/policy.json), is read on boot, and
 // maps onto real enforcement primitives (spawn cap, permission mode, …).
 //
 // Guardrail (DESIGN §6.2): can-modify-policy is human-held. Agents only READ
@@ -47,9 +47,8 @@ type ToolsPolicy struct {
 
 // Policy is the control-plane document (fleet/config/policy.json).
 type Policy struct {
-	Version  int                  `json:"version"`
-	Defaults PolicySet            `json:"defaults"`
-	Roles    map[string]PolicySet `json:"roles,omitempty"`
+	Version  int       `json:"version"`
+	Defaults PolicySet `json:"defaults"`
 }
 
 // Effective is the fully-resolved policy for one agent (no pointers).
@@ -68,7 +67,7 @@ type Effective struct {
 
 // DefaultPolicy is the built-in baseline (DESIGN §6.2 example) used when the
 // control-plane doc is absent: conservative — human merge, no push to main, no
-// self-modify; home may spawn more than workers.
+// self-modify; every sprite may spawn up to 50 total.
 func DefaultPolicy() Policy {
 	b := func(v bool) *bool { return &v }
 	i := func(v int) *int { return &v }
@@ -77,7 +76,7 @@ func DefaultPolicy() Policy {
 	return Policy{
 		Version: 1,
 		Defaults: PolicySet{
-			Spawn:        &SpawnPolicy{Allowed: b(true), MaxTotal: i(10), NamePrefix: s("wk-")},
+			Spawn:        &SpawnPolicy{Allowed: b(true), MaxTotal: i(50), NamePrefix: s("wk-")},
 			Merge:        s("human"),
 			PushMain:     b(false),
 			Spend:        &SpendPolicy{DailyUSDCap: f(50)},
@@ -85,22 +84,13 @@ func DefaultPolicy() Policy {
 			Tools:        &ToolsPolicy{PermissionMode: s("acceptEdits"), Deny: []string{"Bash(rm -rf /*)"}},
 			ModifyPolicy: b(false),
 		},
-		Roles: map[string]PolicySet{
-			"home":   {Spawn: &SpawnPolicy{MaxTotal: i(50)}},
-			"worker": {},
-		},
 	}
 }
 
-// Effective resolves powers for role with an optional per-agent override:
-// effective = merge(defaults, roles[role], override) — most-specific non-nil wins.
-func (p Policy) Effective(role string, override PolicySet) Effective {
-	layers := []PolicySet{p.Defaults}
-	if r, ok := p.Roles[role]; ok {
-		layers = append(layers, r)
-	}
-	layers = append(layers, override)
-	return resolve(layers)
+// Effective resolves powers with an optional per-agent override:
+// effective = merge(defaults, override) — most-specific non-nil wins.
+func (p Policy) Effective(override PolicySet) Effective {
+	return resolve([]PolicySet{p.Defaults, override})
 }
 
 // resolve folds policy layers (least → most specific); each non-nil field wins.
@@ -172,14 +162,14 @@ func (s *Service) agentOverride(ctx context.Context, id string) PolicySet {
 // EffectivePolicy resolves this agent's effective powers from the brain, layered
 // over the built-in defaults so a partial control-plane doc inherits sane
 // baselines (and an explicit 0/false still wins). Order, least→most specific:
-// builtin defaults → builtin role → doc defaults → doc role → per-agent override.
+// builtin defaults → doc defaults → per-agent override.
 func (s *Service) EffectivePolicy(ctx context.Context) Effective {
 	builtin := DefaultPolicy()
 	doc := s.LoadPolicy(ctx)
 	override := s.agentOverride(ctx, s.id)
 	return resolve([]PolicySet{
-		builtin.Defaults, builtin.Roles[s.role],
-		doc.Defaults, doc.Roles[s.role],
+		builtin.Defaults,
+		doc.Defaults,
 		override,
 	})
 }
@@ -190,8 +180,8 @@ func (s *Service) EffectivePolicyValue(ctx context.Context) (interface{}, error)
 }
 
 // SpawnAllowed reports whether this agent may spawn now, given its effective
-// policy and the current number of live workers (cap enforcement, §6.2). It
-// counts roster workers (role != home) against SpawnMaxTotal.
+// policy and the current fleet size (cap enforcement, §6.2). It counts every
+// roster entry against SpawnMaxTotal.
 func (s *Service) SpawnAllowed(ctx context.Context) (bool, string) {
 	eff := s.EffectivePolicy(ctx)
 	if !eff.SpawnAllowed {
@@ -204,13 +194,7 @@ func (s *Service) SpawnAllowed(ctx context.Context) (bool, string) {
 	if err != nil {
 		return true, "" // fail open on read error; don't block legitimate work
 	}
-	workers := 0
-	for _, e := range roster {
-		if e.Role != "home" {
-			workers++
-		}
-	}
-	if workers >= eff.SpawnMaxTotal {
+	if len(roster) >= eff.SpawnMaxTotal {
 		return false, "spawn cap reached (max_total)"
 	}
 	return true, ""

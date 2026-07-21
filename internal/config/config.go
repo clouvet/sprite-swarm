@@ -8,9 +8,7 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // ArtifactKey is the brain key where a sprite stages its own binary so peers can
@@ -71,15 +69,6 @@ type Config struct {
 	// advertised in the roster so a human can attach to it (P2.4). The spawner
 	// passes it to workers (from the create response); home sets it via env.
 	PublicURL string
-
-	// Reaper cadence (on token-bearing agents). Workers are torn down only on
-	// explicit teardown (POST /api/fleet/destroy, or a worker's own POST
-	// /api/fleet/done); the reaper scans every ReapInterval and, separately, cleans
-	// the brain entry of any worker whose heartbeat has been stale beyond
-	// DeadReapAfter AND whose sprite is actually gone. There is no idle-based
-	// auto-reaping — a suspended/idle worker is left alone.
-	ReapInterval  time.Duration
-	DeadReapAfter time.Duration
 }
 
 // BrainConfig points at the shared fleet brain (S3-compatible, e.g. Tigris).
@@ -130,8 +119,6 @@ func FromEnv() Config {
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
 		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-swarm@main"),
 		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
-		ReapInterval:        secondsEnv("SPRITE_AGENT_REAP_INTERVAL_SECONDS", 60),
-		DeadReapAfter:       minutesEnv("SPRITE_AGENT_DEAD_REAP_MINUTES", 5),
 		Brain: BrainConfig{
 			Bucket:     os.Getenv("S3_BUCKET"),
 			Region:     getenv("S3_REGION", "auto"),
@@ -193,16 +180,6 @@ func getenv(key, def string) string {
 	return def
 }
 
-// minutesEnv reads an integer-minutes env var, defaulting to def minutes.
-func minutesEnv(key string, def int) time.Duration {
-	return time.Duration(intEnv(key, def)) * time.Minute
-}
-
-// secondsEnv reads an integer-seconds env var, defaulting to def seconds.
-func secondsEnv(key string, def int) time.Duration {
-	return time.Duration(intEnv(key, def)) * time.Second
-}
-
 // boolEnv reads a boolean env var (1/true/yes = true, 0/false/no = false),
 // defaulting to def when unset/unrecognized.
 func boolEnv(key string, def bool) bool {
@@ -214,15 +191,6 @@ func boolEnv(key string, def bool) bool {
 	default:
 		return def
 	}
-}
-
-func intEnv(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
 }
 
 func hostname() string {

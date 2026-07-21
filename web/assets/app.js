@@ -254,15 +254,13 @@
       fleetRoster = await res.json() || [];
       fleetList.innerHTML = fleetRoster.map(a => {
         const badges =
-          (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '') +
-          (a.reapable ? '<span class="fleet-badge reap" title="reapable">⌛</span>' : '');
+          (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '');
         const attachable = a.url ? ' attachable' : '';
-        // Workers get a reap (destroy) button; home is never reaped.
-        const reap = a.role === 'home' ? '' : '<button class="fleet-reap" title="Reap (destroy) this worker">🗑</button>';
+        // Every sprite gets a destroy button.
+        const reap = '<button class="fleet-reap" title="Destroy this sprite">🗑</button>';
         return `<div class="fleet-item${attachable}" data-id="${escapeHtml(a.id)}" title="${a.url ? 'Attach (open session)' : 'no URL'}">
           <span class="dot ${a.alive ? 'on' : 'off'}"></span>
           <span class="fleet-id">${escapeHtml(a.id)}</span>
-          <span class="fleet-role">${escapeHtml(a.role || '')}</span>
           ${badges}
           <span class="fleet-phase">${escapeHtml(a.phase || '')}</span>
           ${reap}
@@ -277,10 +275,10 @@
     } catch (e) { fleetList.innerHTML = '<div class="fleet-empty">—</div>'; }
   }
 
-  // Reap (destroy) a worker via the teardown endpoint, honoring the presence guard.
-  // Reap is destructive, so it goes through an in-app modal that requires typing the
-  // worker's exact name (no native confirm()). The 409 "human attached" case is handled
-  // in-modal: the button turns into "Force reap" rather than a second prompt.
+  // Destroy a sprite via the teardown endpoint, honoring the presence guard.
+  // Destroy is destructive, so it goes through an in-app modal that requires typing the
+  // sprite's exact name (no native confirm()). The 409 "human attached" case is handled
+  // in-modal: the button turns into "Force destroy" rather than a second prompt.
   const reapModal = $('reap-modal');
   const reapInput = $('reap-modal-input');
   const reapConfirmBtn = $('reap-modal-confirm');
@@ -292,7 +290,7 @@
     $('reap-modal-name').textContent = id;
     reapInput.value = '';
     reapMsg.textContent = '';
-    reapConfirmBtn.textContent = 'Reap';
+    reapConfirmBtn.textContent = 'Destroy';
     reapConfirmBtn.dataset.force = '';
     reapConfirmBtn.disabled = true;
     reapModal.hidden = false;
@@ -320,7 +318,7 @@
     const id = reapTarget;
     const force = reapConfirmBtn.dataset.force === '1';
     reapConfirmBtn.disabled = true;
-    reapMsg.textContent = 'Reaping…';
+    reapMsg.textContent = 'Destroying…';
     try {
       const body = force ? { target: id, force: true } : { target: id };
       const res = await fetch('/api/fleet/destroy', {
@@ -329,7 +327,7 @@
       if (res.status === 409) {
         // A human is attached — offer force without leaving the modal.
         reapMsg.textContent = (await res.text()).trim();
-        reapConfirmBtn.textContent = 'Force reap';
+        reapConfirmBtn.textContent = 'Force destroy';
         reapConfirmBtn.dataset.force = '1';
         reapConfirmBtn.disabled = false;
         return;
@@ -337,7 +335,7 @@
       const ok = res.ok;
       const detail = ok ? '' : (await res.text()).trim();
       closeReapModal();
-      addSystem(ok ? 'Reaped ' + id : 'Reap failed: ' + detail);
+      addSystem(ok ? 'Destroyed ' + id : 'Destroy failed: ' + detail);
       loadFleet();
     } catch (e) {
       reapMsg.textContent = 'Error: ' + e.message;
@@ -357,13 +355,13 @@
     try {
       const res = await fetch('/api/fleet/spawn', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name_prefix: 'wk-', role: 'worker' }),
+        body: JSON.stringify({ name_prefix: 'wk-' }),
       });
       if (!res.ok) { addSystem('Spawn failed: ' + (await res.text())); }
       else { const w = await res.json(); addSystem('Spawned ' + (w.name || w.id) + ' — booting + registering…'); }
       loadFleet();
     } catch (e) { addSystem('Spawn error: ' + e.message); }
-    finally { if (btn) { btn.disabled = false; btn.textContent = '+ worker'; } }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '+ sprite'; } }
   }
 
   // ---- websocket ----

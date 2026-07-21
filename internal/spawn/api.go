@@ -125,19 +125,17 @@ func spriteName(req Request, newID string) string {
 // bootstrap env that points the new sprite at the same brain + artifact. The
 // sprite's name is also its SPRITE_AGENT_ID so it registers under that id.
 func (a *apiSpawner) buildCreateRequest(req Request) createSpriteRequest {
-	role := req.Role
-	if role == "" {
-		role = "worker"
-	}
-	labels := map[string]string{"fleet": "sprite-agent", "role": role}
+	labels := map[string]string{"fleet": "sprite-agent"}
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
 	name := spriteName(req, a.newID())
+	env := BootstrapEnv(a.cfg, name)
+	mergeEnv(env, req.Env) // caller-supplied boot env, minus reserved bootstrap keys
 	return createSpriteRequest{
 		Name:   name,
 		Labels: labels,
-		Env:    BootstrapEnv(a.cfg, name, role),
+		Env:    env,
 	}
 }
 
@@ -155,10 +153,6 @@ type serviceSpec struct {
 // Spawn creates a sprite and (unless provisioning is disabled) provisions
 // sprite-agent onto it so it boots and self-registers into the brain.
 func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
-	role := req.Role
-	if role == "" {
-		role = "worker"
-	}
 	cr := a.buildCreateRequest(req)
 	res, err := a.createSprite(ctx, cr)
 	if err != nil {
@@ -496,7 +490,7 @@ func (a *apiSpawner) serviceExists(ctx context.Context, name string) bool {
 	return resp.StatusCode/100 == 2
 }
 
-// Destroy deletes a sprite by name (used by the reaper).
+// Destroy deletes a sprite by name (manual teardown).
 func (a *apiSpawner) Destroy(ctx context.Context, name string) error {
 	resp, err := a.do(ctx, http.MethodDelete, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), nil)
 	if err != nil {
@@ -512,7 +506,7 @@ func (a *apiSpawner) Destroy(ctx context.Context, name string) error {
 }
 
 // Exists reports whether a sprite still exists on the platform (a suspended sprite
-// does; a destroyed one 404s). Used by the reaper to tell "suspended" from "gone".
+// does; a destroyed one 404s). Used by manual teardown to tell "suspended" from "gone".
 func (a *apiSpawner) Exists(ctx context.Context, name string) (bool, error) {
 	resp, err := a.do(ctx, http.MethodGet, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), nil)
 	if err != nil {

@@ -13,25 +13,25 @@ func TestEffectivePolicyPrecedence(t *testing.T) {
 	merge := "auto-on-green"
 	override := PolicySet{Merge: &merge} // per-agent override
 
-	// home: role raises spawn cap to 50; override flips merge.
-	home := p.Effective("home", override)
-	if home.Merge != "auto-on-green" {
-		t.Errorf("override should win for merge, got %q", home.Merge)
+	// override flips merge; the rest falls through from the defaults.
+	eff := p.Effective(override)
+	if eff.Merge != "auto-on-green" {
+		t.Errorf("override should win for merge, got %q", eff.Merge)
 	}
-	if home.SpawnMaxTotal != 50 {
-		t.Errorf("home role should raise spawn cap to 50, got %d", home.SpawnMaxTotal)
+	if eff.SpawnMaxTotal != 50 {
+		t.Errorf("default spawn cap should be 50, got %d", eff.SpawnMaxTotal)
 	}
-	if home.PermissionMode != "acceptEdits" {
-		t.Errorf("permission mode should fall through from defaults, got %q", home.PermissionMode)
+	if eff.PermissionMode != "acceptEdits" {
+		t.Errorf("permission mode should fall through from defaults, got %q", eff.PermissionMode)
 	}
-	if home.ModifyPolicy {
+	if eff.ModifyPolicy {
 		t.Error("modify_policy must default false (the guardrail)")
 	}
 
-	// worker: no role bump → default cap 10, default merge human.
-	worker := p.Effective("worker", PolicySet{})
-	if worker.SpawnMaxTotal != 10 || worker.Merge != "human" {
-		t.Errorf("worker effective wrong: cap=%d merge=%q", worker.SpawnMaxTotal, worker.Merge)
+	// No override → default cap 50, default merge human.
+	base := p.Effective(PolicySet{})
+	if base.SpawnMaxTotal != 50 || base.Merge != "human" {
+		t.Errorf("default effective wrong: cap=%d merge=%q", base.SpawnMaxTotal, base.Merge)
 	}
 }
 
@@ -44,7 +44,6 @@ func TestEffectivePolicyFromBrain(t *testing.T) {
 	brain.Put(context.Background(), policyConfigKey, data)
 
 	svc := newService(brain, config.Config{AgentID: "home"})
-	svc.role = "home"
 	eff := svc.EffectivePolicy(context.Background())
 	if eff.SpawnMaxTotal != 3 {
 		t.Fatalf("expected cap 3 from brain doc, got %d", eff.SpawnMaxTotal)
@@ -59,14 +58,12 @@ func TestSpawnAllowedCap(t *testing.T) {
 	brain.Put(context.Background(), policyConfigKey, data)
 
 	home := newService(brain, config.Config{AgentID: "home"})
-	home.role = "home"
-	home.Register(context.Background())
 
-	// 0 workers → allowed.
+	// 0 sprites registered → under cap → allowed.
 	if ok, _ := home.SpawnAllowed(context.Background()); !ok {
 		t.Fatal("should allow spawn under cap")
 	}
-	// Add 2 workers (at cap) → refused.
+	// Register 2 sprites (at cap of 2, counting all roster entries) → refused.
 	for _, id := range []string{"wk-1", "wk-2"} {
 		w := newService(brain, config.Config{AgentID: id})
 		w.Register(context.Background())

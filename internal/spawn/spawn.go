@@ -23,8 +23,28 @@ var ErrNotConfigured = errors.New("spawn: sprites API token not configured (set 
 type Request struct {
 	Name       string            // explicit name; if empty the API assigns one under NamePrefix
 	NamePrefix string            // restricted-token prefix (e.g. "wk-")
-	Role       string            // role the new agent advertises ("worker" | "home")
 	Labels     map[string]string // sprites-api labels (authoritative membership)
+	Env        map[string]string // extra boot env for the new sprite (e.g. SPRITE_AGENT_BOOT_UPDATE=0 to pin its build); reserved bootstrap keys can't be overridden
+}
+
+// reservedBootEnv are keys the bootstrap owns; caller-supplied Env can't override
+// them (they wire the sprite's identity, brain pointer, and listen addr — clobbering
+// them would break the sprite).
+var reservedBootEnv = map[string]bool{
+	"SPRITE_AGENT_ID": true, "SPRITE_AGENT_ARTIFACT": true,
+	"SPRITE_AGENT_ADDR": true, "SPRITE_AGENT_WORKDIR": true,
+	"SPRITE_AGENT_BRAIN_GATEWAY": true,
+	"S3_BUCKET": true, "S3_REGION": true, "S3_ENDPOINT": true,
+	"S3_ACCESS_KEY": true, "S3_SECRET_KEY": true,
+}
+
+// mergeEnv overlays extra onto env, skipping reserved bootstrap keys.
+func mergeEnv(env, extra map[string]string) {
+	for k, v := range extra {
+		if !reservedBootEnv[k] {
+			env[k] = v
+		}
+	}
 }
 
 // Result identifies a spawned sprite.
@@ -78,7 +98,7 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 	if !ok {
 		return Result{}, errors.New("spawn: a valid Sprites API token is required to launch a fleet")
 	}
-	cr := sp.buildCreateRequest(Request{Name: name, Role: "home"})
+	cr := sp.buildCreateRequest(Request{Name: name})
 	res, err := sp.createSprite(ctx, cr)
 	if err != nil {
 		return Result{}, err
@@ -88,8 +108,8 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 		return res, fmt.Errorf("spawn: stage artifact: %w", err)
 	}
 	// Provision home with the SAME bootstrap env the create used — crucially the
-	// brain pointer (direct S3 keys, or the gateway URL) plus role/artifact. Passing
-	// only {ROLE,URL} left a connector-less fleet's home with no brain credentials
+	// brain pointer (direct S3 keys, or the gateway URL) plus artifact. Passing
+	// only the URL left a connector-less fleet's home with no brain credentials
 	// ("no brain"): it works only when an s3 connector is discovered at runtime.
 	// Mirrors Spawn, which already passes cr.Env to workers.
 	env := cr.Env
@@ -105,10 +125,9 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 // BootstrapEnv is the environment a spawned sprite is handed so it can rehydrate
 // itself from the brain on boot (DESIGN §4.2: the brain pointer is the only
 // out-of-brain input; everything else rehydrates). Pure and unit-tested.
-func BootstrapEnv(cfg config.Config, newID, role string) map[string]string {
+func BootstrapEnv(cfg config.Config, newID string) map[string]string {
 	env := map[string]string{
 		"SPRITE_AGENT_ID":       newID,
-		"SPRITE_AGENT_ROLE":     role,
 		"SPRITE_AGENT_ARTIFACT": cfg.ArtifactRef,
 	}
 	// Brain pointer. Prefer the gateway connector — the sprite reaches the brain

@@ -24,7 +24,6 @@ const heartbeatInterval = 30 * time.Second
 type Service struct {
 	brain    Brain
 	id       string
-	role     string
 	url      string
 	artifact string
 	build    string // short hash of the running binary (immutable after construction)
@@ -33,7 +32,6 @@ type Service struct {
 
 	mu              sync.Mutex
 	phase           string                // current free-text phase, refreshed into status
-	manualReapable  bool                  // set via MarkReapable (e.g. work done / PR merged)
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
 
 	taskMu   sync.Mutex                                // serializes inbox drains (one at a time)
@@ -61,14 +59,9 @@ func New(cfg config.Config) (*Service, error) {
 func (s *Service) Brain() Brain { return s.brain }
 
 func newService(brain Brain, cfg config.Config) *Service {
-	role := "worker"
-	if r := strings.TrimSpace(envRole()); r != "" {
-		role = r
-	}
 	return &Service{
 		brain:    brain,
 		id:       cfg.AgentID,
-		role:     role,
 		url:      cfg.PublicURL,
 		artifact: cfg.ArtifactRef,
 		build:    computeBuild(),
@@ -113,23 +106,6 @@ func (s *Service) SetAttendanceProbe(probe func() (bool, string)) {
 	s.attendanceProbe = probe
 }
 
-// MarkReapable flags this agent as done so a reaper can destroy it (e.g. after
-// its PR merged). A no-op effect on home (ReapTargets protects home).
-func (s *Service) MarkReapable(ctx context.Context) error {
-	s.mu.Lock()
-	s.manualReapable = true
-	s.mu.Unlock()
-	return s.writeStatus(ctx, "done")
-}
-
-// computeReapable reports whether this agent has been explicitly marked done
-// (via MarkReapable). There is no idle-based auto-reaping — teardown is explicit.
-func (s *Service) computeReapable() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.manualReapable
-}
-
 // Register writes this agent's status + initial heartbeat (boot self-registration).
 func (s *Service) Register(ctx context.Context) error {
 	s.started = s.now().Unix()
@@ -161,12 +137,10 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 	}
 	st := Status{
 		ID:        s.id,
-		Role:      s.role,
 		Phase:     curPhase,
 		URL:       s.url,
 		Artifact:  s.artifact,
 		Build:     s.build,
-		Reapable:  s.computeReapable(),
 		Present:   present,
 		Session:   presentSession,
 		StartedAt: s.started,
@@ -209,25 +183,6 @@ func (s *Service) AgentPresent(ctx context.Context, id string) (exists, present 
 		}
 	}
 	return false, false, nil
-}
-
-// ReapTargets returns the ids to destroy now (explicit done only; pure policy).
-func (s *Service) ReapTargets(ctx context.Context) ([]string, error) {
-	roster, err := s.roster(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return ReapTargets(roster), nil
-}
-
-// StaleWorkers returns non-home workers with a stale heartbeat — brain-cleanup
-// candidates only if their sprite turns out to be gone (the reaper verifies).
-func (s *Service) StaleWorkers(ctx context.Context, staleAfter time.Duration) ([]string, error) {
-	roster, err := s.roster(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return StaleWorkers(roster, s.now(), staleAfter), nil
 }
 
 func (s *Service) writeHeartbeat(ctx context.Context) error {

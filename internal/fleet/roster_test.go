@@ -32,8 +32,8 @@ func TestKeyDerivation(t *testing.T) {
 func TestBuildRosterLiveness(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	statuses := map[string]Status{
-		"fresh": {ID: "fresh", Role: "home", UpdatedAt: now.Unix()},
-		"stale": {ID: "stale", Role: "worker", UpdatedAt: now.Add(-10 * time.Minute).Unix()},
+		"fresh": {ID: "fresh", UpdatedAt: now.Unix()},
+		"stale": {ID: "stale", UpdatedAt: now.Add(-10 * time.Minute).Unix()},
 	}
 	heartbeats := map[string]Heartbeat{
 		"fresh": {TS: now.Unix()},

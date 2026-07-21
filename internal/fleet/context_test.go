@@ -15,7 +15,6 @@ func TestFleetContextRendersPresenceAndMemory(t *testing.T) {
 
 	// home (the reader), a worker with a human attached, and a memory entry.
 	home := newService(brain, config.Config{AgentID: "home"})
-	home.role = "home"
 	home.now = func() time.Time { return now }
 	home.Register(context.Background())
 	home.WriteMemory(context.Background(), "deploy steps", "go build then run", []string{"ops"})
