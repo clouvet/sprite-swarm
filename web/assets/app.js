@@ -468,6 +468,9 @@
         // thinking) there's a real gap — keep a live indicator so it never goes
         // blank. 'result' clears it when the turn actually ends.
         if (generating) showActivity('Working');
+        // Remirror the workspace mid-turn: a repo cloned early in a long task shows
+        // up in the context view right away, not only when the whole turn ends.
+        fetchContext();
         break;
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
