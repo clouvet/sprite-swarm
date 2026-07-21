@@ -1,5 +1,6 @@
 # Binaries
 /sprite-agent
+*.bak
 /bin/
 *.exe
 *.test
