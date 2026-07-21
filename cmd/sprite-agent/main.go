@@ -22,7 +22,6 @@ import (
 	"github.com/clouvet/sprite-swarm/internal/hub"
 	"github.com/clouvet/sprite-swarm/internal/keepalive"
 	"github.com/clouvet/sprite-swarm/internal/memsync"
-	"github.com/clouvet/sprite-swarm/internal/reaper"
 	"github.com/clouvet/sprite-swarm/internal/secret"
 	"github.com/clouvet/sprite-swarm/internal/server"
 	"github.com/clouvet/sprite-swarm/internal/spawn"
@@ -219,8 +218,10 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"endpoints route through the gateway connector, which works token-free), so the CLI will just fail. " +
 			"To create a worker, POST /api/fleet/spawn — include a short \"label\" summarizing its task " +
 			"(e.g. {\"label\":\"posthog integration\"}) so it is named wk-posthog-integration; omit the label " +
-			"for a generic worker (a random wk-… id). The new " +
+			"for a generic worker (a random wk-… id); pass \"name\":\"<name>\" for an exact name. The new " +
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
+			"To pin a sprite so it won't auto-adopt the fleet's staged binary when it next wakes, spawn it " +
+			"with \"env\":{\"SPRITE_AGENT_BOOT_UPDATE\":\"0\"}. " +
 			"DELEGATING WORK follows ONE fixed protocol — use it exactly, never improvise a way to get " +
 			"results: " +
 			"(1) ASSIGN — POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"}; the response has a " +
@@ -235,8 +236,8 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"NEVER ask a worker to dispatch/send/curl its result back to you — a result delivered " +
 			"through dispatch is misread as a NEW task and executed, spawning runaway sessions. You PULL; the worker never pushes. " +
 			"To send an informational FYI rather than work, add \"kind\":\"note\" to a dispatch — the recipient is told not to execute it. " +
-			"To tear a worker down, POST /api/fleet/destroy {\"target\":\"<id>\"} — this destroys its VM " +
-			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that worker " +
+			"To reap/tear a sprite down BY NAME, POST /api/fleet/destroy {\"target\":\"<name>\"} — this destroys its VM " +
+			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that sprite " +
 			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
 			"with {\"target\":\"<id>\",\"force\":true}. Do NOT hand-roll teardown via the host socket or " +
 			"guess routes — this endpoint is the mechanism. " +
@@ -300,13 +301,10 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 }
 
 // shouldBootSelfUpdate decides whether this process adopts the staged binary on
-// boot. Workers do (so a suspended one converges on wake); home never does (it
-// originates builds and would otherwise downgrade to the older staged artifact);
-// SPRITE_AGENT_BOOT_UPDATE=0 opts out entirely.
-func shouldBootSelfUpdate(role, disable string) bool {
-	if strings.EqualFold(role, "home") {
-		return false
-	}
+// boot (so a suspended sprite converges on wake). SPRITE_AGENT_BOOT_UPDATE=0
+// opts out — it pins a sprite to its current binary so it won't downgrade to an
+// older staged artifact (e.g. the one originating builds).
+func shouldBootSelfUpdate(disable string) bool {
 	if disable == "0" || strings.EqualFold(disable, "false") {
 		return false
 	}
@@ -318,8 +316,8 @@ func shouldBootSelfUpdate(role, disable string) bool {
 // re-exec (identical to POST /api/fleet/update). Best-effort — any error just
 // continues booting on the current binary. Loop-safe: after re-exec the running
 // binary IS the staged one, so PrepareSelfUpdate no-ops.
-func maybeBootSelfUpdate(fleetSvc *fleet.Service, role string) {
-	if !shouldBootSelfUpdate(role, os.Getenv("SPRITE_AGENT_BOOT_UPDATE")) {
+func maybeBootSelfUpdate(fleetSvc *fleet.Service) {
+	if !shouldBootSelfUpdate(os.Getenv("SPRITE_AGENT_BOOT_UPDATE")) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -448,7 +446,7 @@ func main() {
 	// staged; home is excluded — it originates builds and must not downgrade to an
 	// older staged artifact. Same swap+re-exec as POST /api/fleet/update.
 	if fleetSvc != nil {
-		maybeBootSelfUpdate(fleetSvc, os.Getenv("SPRITE_AGENT_ROLE"))
+		maybeBootSelfUpdate(fleetSvc)
 	}
 
 	// Resolve Claude auth now that any brain secrets are loaded: prefer the
@@ -558,10 +556,6 @@ func main() {
 			return h.InjectMessage(sessionID, framed)
 		}
 		fleetSvc.StartTaskPolling(context.Background(), inject, h.Generating)
-
-		// Reaper: on token-bearing agents, destroy reapable/dead workers and
-		// clean their brain entries. Home is never reaped (fleet.ReapTargets).
-		go reaper.New(fleetSvc, spawner, cfg.ReapInterval, cfg.DeadReapAfter).Run(context.Background())
 	}
 
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}

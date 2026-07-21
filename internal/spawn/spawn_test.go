@@ -41,10 +41,9 @@ func TestNewReturnsLiveWithToken(t *testing.T) {
 }
 
 func TestBootstrapEnvHandsBrainPointer(t *testing.T) {
-	env := BootstrapEnv(testConfig(), "wk-1", "worker")
+	env := BootstrapEnv(testConfig(), "wk-1")
 	want := map[string]string{
 		"SPRITE_AGENT_ID":       "wk-1",
-		"SPRITE_AGENT_ROLE":     "worker",
 		"SPRITE_AGENT_ARTIFACT": "github.com/clouvet/sprite-swarm@main",
 		"S3_BUCKET":             "sprite-agent",
 		"S3_ENDPOINT":           "https://fly.storage.tigris.dev",
@@ -61,7 +60,7 @@ func TestBootstrapEnvHandsBrainPointer(t *testing.T) {
 func TestBootstrapEnvNoBrain(t *testing.T) {
 	cfg := testConfig()
 	cfg.Brain = config.BrainConfig{}
-	env := BootstrapEnv(cfg, "wk-1", "worker")
+	env := BootstrapEnv(cfg, "wk-1")
 	if _, ok := env["S3_BUCKET"]; ok {
 		t.Error("expected no S3 keys when brain disabled")
 	}
@@ -73,7 +72,7 @@ func TestBootstrapEnvNoBrain(t *testing.T) {
 func TestBootstrapEnvGatewayHidesKeys(t *testing.T) {
 	cfg := testConfig()
 	cfg.Brain.GatewayURL = "https://api.sprites.dev/v1/gateway/s3_object_store/abc"
-	env := BootstrapEnv(cfg, "wk-1", "worker")
+	env := BootstrapEnv(cfg, "wk-1")
 	if env["SPRITE_AGENT_BRAIN_GATEWAY"] != cfg.Brain.GatewayURL {
 		t.Errorf("gateway not passed: %q", env["SPRITE_AGENT_BRAIN_GATEWAY"])
 	}
@@ -89,7 +88,7 @@ func TestBootstrapEnvBootstrapGatewayOverridesKeys(t *testing.T) {
 	// ignites should run token-free — BootstrapGateway wins, keys are not copied.
 	cfg := testConfig() // has AccessKey/SecretKey set
 	cfg.Brain.BootstrapGateway = "https://api.sprites.dev/v1/gateway/s3_object_store/xyz"
-	env := BootstrapEnv(cfg, "home", "home")
+	env := BootstrapEnv(cfg, "home")
 	if env["SPRITE_AGENT_BRAIN_GATEWAY"] != cfg.Brain.BootstrapGateway {
 		t.Errorf("bootstrap gateway not passed: %q", env["SPRITE_AGENT_BRAIN_GATEWAY"])
 	}
@@ -119,13 +118,16 @@ func TestBuildCreateRequest(t *testing.T) {
 	a := newAPISpawner(cfg).(*apiSpawner)
 	a.newID = func() string { return "abcd1234" } // deterministic
 
-	cr := a.buildCreateRequest(Request{NamePrefix: "wk-", Role: "worker"})
+	cr := a.buildCreateRequest(Request{NamePrefix: "wk-"})
 	// name carries the restricted-token prefix + synthesized id.
 	if cr.Name != "wk-abcd1234" {
 		t.Errorf("Name = %q, want wk-abcd1234", cr.Name)
 	}
-	if cr.Labels["fleet"] != "sprite-agent" || cr.Labels["role"] != "worker" {
+	if cr.Labels["fleet"] != "sprite-agent" {
 		t.Errorf("labels = %v", cr.Labels)
+	}
+	if _, ok := cr.Labels["role"]; ok {
+		t.Errorf("spawned sprites must not carry a role label: %v", cr.Labels)
 	}
 	if cr.Env["S3_BUCKET"] != "sprite-agent" || cr.Env["SPRITE_AGENT_ARTIFACT"] == "" {
 		t.Errorf("bootstrap env missing brain/artifact: %v", cr.Env)

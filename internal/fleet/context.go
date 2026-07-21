@@ -32,7 +32,7 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 		if e.ID == s.id {
 			self = " (you)"
 		}
-		line := fmt.Sprintf("- %s%s · %s · %s · %q", e.ID, self, e.Role, dot, e.Phase)
+		line := fmt.Sprintf("- %s%s · %s · %q", e.ID, self, dot, e.Phase)
 		if e.Build != "" {
 			line += " · build " + e.Build
 			if e.ID != s.id && s.build != "" && e.Build != s.build {
@@ -42,9 +42,6 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 		if e.Present && e.ID != s.id {
 			line += "  👤 human attached → DEFER (don't act/narrate)"
 			attended = append(attended, e.ID)
-		}
-		if e.Reapable {
-			line += "  [reapable]"
 		}
 		b.WriteString(line + "\n")
 	}

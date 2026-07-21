@@ -46,7 +46,6 @@ func (s *Service) PeerStatus(ctx context.Context, target string) (interface{}, e
 
 	out := map[string]interface{}{
 		"id":        entry.ID,
-		"role":      entry.Role,
 		"phase":     entry.Phase, // last self-published activity (may be stale)
 		"alive":     entry.Alive,
 		"present":   entry.Present,

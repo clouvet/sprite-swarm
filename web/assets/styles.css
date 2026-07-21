@@ -84,7 +84,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .fleet-item.attachable:hover { background: var(--bg-tertiary); }
 .fleet-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot.on { background: var(--on); } .dot.off { background: var(--off); }
-.fleet-id { font-weight: 600; } .fleet-role { color: var(--accent); }
+.fleet-id { font-weight: 600; }
 .fleet-badge { font-size: 11px; } .fleet-badge.present { filter: saturate(1.4); }
 .fleet-phase { color: var(--text-muted); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .fleet-reap { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; opacity: 0; padding: 0 2px; flex-shrink: 0; }
