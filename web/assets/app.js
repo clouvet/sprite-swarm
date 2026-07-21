@@ -804,10 +804,12 @@
   }
   function ctxGroup(text) { const d = document.createElement('div'); d.className = 'ctx-group'; d.textContent = text; return d; }
 
-  // ---- context meter: how full the conversation is, from per-turn token usage ----
-  // Soft ceiling before compaction risk gets real (empirically ~200-275K in the wild).
-  // Not the model's hard window — a "start thinking about summarizing" mark.
-  const CTX_SOFT_LIMIT = 200000;
+  // ---- context meter: how full the conversation is vs the model's window ----
+  // Denominator is the ACTIVE model's context window; warn/danger fire well below
+  // the hard ceiling so there's room to compact. Opus / Sonnet / Fable are 1M,
+  // Haiku is 200K.
+  const MODEL_WINDOWS = { opus: 1000000, sonnet: 1000000, fable: 1000000, haiku: 200000 };
+  const ctxWindow = () => MODEL_WINDOWS[currentModel] || 1000000;
   function fmtTokens(n) {
     if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return Math.round(n / 1e3) + 'K';
@@ -815,14 +817,14 @@
   }
   function updateContextMeter(tokens) {
     if (!ctxMeter || !tokens) return;
-    const pct = Math.min(100, Math.round((tokens / CTX_SOFT_LIMIT) * 100));
+    const pct = Math.min(100, Math.round((tokens / ctxWindow()) * 100));
     ctxMeterFill.style.width = pct + '%';
     ctxMeter.classList.toggle('warn', pct >= 60 && pct < 85);
     ctxMeter.classList.toggle('danger', pct >= 85);
     ctxMeterLabel.textContent = fmtTokens(tokens);
-    ctxMeter.title = 'Conversation context: ~' + fmtTokens(tokens) + ' tokens'
-      + (pct >= 85 ? ' — getting full; use “Summarize & continue” to start a fresh chat.'
-         : pct >= 60 ? ' — filling up.' : '.');
+    ctxMeter.title = 'Conversation context: ~' + fmtTokens(tokens) + ' of ' + fmtTokens(ctxWindow())
+      + (pct >= 85 ? ' tokens — getting full; use “Summarize & continue” to start a fresh chat.'
+         : pct >= 60 ? ' tokens — filling up.' : ' tokens.');
     ctxMeter.hidden = false;
   }
   function hideContextMeter() {
