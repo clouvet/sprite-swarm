@@ -32,6 +32,10 @@ func runInit(args []string) {
 	discourseProfile := fs.String("discourse-profile", "", "path to a @discourse/mcp profile JSON (optional; enables read-only Discourse forum access fleet-wide)")
 	name := fs.String("name", "", "home sprite name (required)")
 	artifact := fs.String("artifact", "", "path to a linux/amd64 sprite-agent binary to stage (required)")
+	brainGateway := fs.String("brain-gateway", "", "s3_object_store connector gateway URL "+
+		"(https://api.sprites.dev/v1/gateway/s3_object_store/<id>). When set, the fleet runs token-free: "+
+		"sprites reach the brain by their own identity and NO S3 keys are copied onto them. The launch host "+
+		"still uses --s3-access-key/--s3-secret-key to prime the brain (it isn't a sprite).")
 	_ = fs.Parse(args)
 
 	required := map[string]string{
@@ -58,6 +62,9 @@ func runInit(args []string) {
 		Brain: config.BrainConfig{
 			Bucket: *bucket, Endpoint: *endpoint, Region: *region,
 			AccessKey: *accessKey, SecretKey: *secretKey,
+			// Raw keys prime the brain from this (off-account) host; when a connector
+			// URL is given, the fleet it ignites runs token-free instead.
+			BootstrapGateway: *brainGateway,
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -103,4 +110,10 @@ func runInit(args []string) {
 	fmt.Println("   The brain bucket now stores your Sprites/GitHub/Fly tokens so every worker")
 	fmt.Println("   reconstitutes from it. Guard the bucket's S3 keys + its s3 connector — that")
 	fmt.Println("   is the trust boundary for the whole fleet.")
+	if *brainGateway != "" {
+		fmt.Println()
+		fmt.Println("   Token-free mode: sprites reach the brain via the s3 connector by identity —")
+		fmt.Println("   no S3 keys are copied onto them. You can rotate/retire the launch keys once")
+		fmt.Println("   the old key-mode sprites (if any) are gone.")
+	}
 }

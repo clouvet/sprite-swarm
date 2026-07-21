@@ -70,6 +70,34 @@ func TestBootstrapEnvNoBrain(t *testing.T) {
 	}
 }
 
+func TestBootstrapEnvGatewayHidesKeys(t *testing.T) {
+	cfg := testConfig()
+	cfg.Brain.GatewayURL = "https://api.sprites.dev/v1/gateway/s3_object_store/abc"
+	env := BootstrapEnv(cfg, "wk-1", "worker")
+	if env["SPRITE_AGENT_BRAIN_GATEWAY"] != cfg.Brain.GatewayURL {
+		t.Errorf("gateway not passed: %q", env["SPRITE_AGENT_BRAIN_GATEWAY"])
+	}
+	for _, k := range []string{"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"} {
+		if _, ok := env[k]; ok {
+			t.Errorf("gateway mode must not copy %s", k)
+		}
+	}
+}
+
+func TestBootstrapEnvBootstrapGatewayOverridesKeys(t *testing.T) {
+	// init's case: this host has raw keys (to prime the brain), but the fleet it
+	// ignites should run token-free — BootstrapGateway wins, keys are not copied.
+	cfg := testConfig() // has AccessKey/SecretKey set
+	cfg.Brain.BootstrapGateway = "https://api.sprites.dev/v1/gateway/s3_object_store/xyz"
+	env := BootstrapEnv(cfg, "home", "home")
+	if env["SPRITE_AGENT_BRAIN_GATEWAY"] != cfg.Brain.BootstrapGateway {
+		t.Errorf("bootstrap gateway not passed: %q", env["SPRITE_AGENT_BRAIN_GATEWAY"])
+	}
+	if _, ok := env["S3_ACCESS_KEY"]; ok {
+		t.Error("BootstrapGateway must suppress copying S3 keys onto the sprite")
+	}
+}
+
 func TestParseToken(t *testing.T) {
 	tp, err := parseToken("myorg/org_123/tok_456/secretvalue")
 	if err != nil {
