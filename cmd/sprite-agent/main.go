@@ -249,6 +249,8 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"root (e.g. `tar czf app.tgz -C <appdir> .` — entry point like index.html at the top, not nested in a " +
 			"wrapper dir), stage the tarball to the brain (PUT it via the s3 connector), then POST /api/fleet/deploy-app " +
 			"{\"artifact_url\":\"<brain url of the tarball>\",\"run\":\"<start command>\",\"http_port\":<port the app listens on>}. " +
+			"To give the app a specific sprite name (e.g. \"host this as foo\"), add \"name\":\"foo\"; omit it for an " +
+			"auto-generated app-<id> name (or pass \"name_prefix\":\"myprefix-\" to control just the prefix). " +
 			"That creates a dedicated BARE sprite (no agent) which fetches + runs your app, so the app owns that " +
 			"sprite's URL (served behind org login). The response returns the app's URL. " +
 			"To CHANGE a deployed app in place (new build), stage the new tarball and POST /api/fleet/update-app " +

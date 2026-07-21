@@ -452,7 +452,8 @@ func (s *Server) serveDeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		NamePrefix  string `json:"name_prefix"`
+		Name        string `json:"name"`        // optional: exact sprite name
+		NamePrefix  string `json:"name_prefix"` // optional: <prefix><random-id> when name is unset
 		ArtifactURL string `json:"artifact_url"`
 		Run         string `json:"run"`
 		HTTPPort    int    `json:"http_port"`
@@ -462,7 +463,7 @@ func (s *Server) serveDeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.spawner.DeployApp(r.Context(), spawn.DeployRequest{
-		NamePrefix: b.NamePrefix, ArtifactURL: b.ArtifactURL, Run: b.Run, HTTPPort: b.HTTPPort,
+		Name: b.Name, NamePrefix: b.NamePrefix, ArtifactURL: b.ArtifactURL, Run: b.Run, HTTPPort: b.HTTPPort,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)

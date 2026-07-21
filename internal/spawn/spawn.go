@@ -50,6 +50,7 @@ type Spawner interface {
 // The new sprite fetches the app tarball from ArtifactURL (a brain URL the worker
 // staged, reachable token-free by sprite identity) and runs Run on HTTPPort.
 type DeployRequest struct {
+	Name        string // explicit sprite name; when empty, NamePrefix + a random id is used
 	NamePrefix  string
 	ArtifactURL string
 	Run         string

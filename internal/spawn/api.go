@@ -270,16 +270,23 @@ func (a *apiSpawner) DeployApp(ctx context.Context, req DeployRequest) (Result, 
 	if req.ArtifactURL == "" || req.Run == "" || req.HTTPPort == 0 {
 		return Result{}, fmt.Errorf("deploy: artifact_url, run, and http_port are required")
 	}
-	prefix := req.NamePrefix
-	if prefix == "" {
-		prefix = "app-"
+	// Explicit name wins (e.g. "host this app as foo"); otherwise synthesize
+	// <prefix><id> (prefix defaults to app-). An invalid explicit name is rejected
+	// by the sprites API with a clear error.
+	name := req.Name
+	if name == "" {
+		prefix := req.NamePrefix
+		if prefix == "" {
+			prefix = "app-"
+		}
+		name = prefix + a.newID()
 	}
 	body, err := appServiceSpec(req)
 	if err != nil {
 		return Result{}, err
 	}
 	res, err := a.createSprite(ctx, createSpriteRequest{
-		Name:   prefix + a.newID(),
+		Name:   name,
 		Labels: map[string]string{"fleet": "sprite-agent", "role": "app"},
 	})
 	if err != nil {
