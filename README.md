@@ -153,6 +153,19 @@ go run ./cmd/sprite-agent
 # then open http://localhost:8080
 ```
 
+## Deploy your own fleet (hosted installer)
+
+The quickest way to stand up a fleet is the hosted one-click installer:
+**[deploy-sprite-swarm.fly.dev](https://deploy-sprite-swarm.fly.dev)**. Give it a Fly org token, a
+Sprites token, and a Claude token (plus optional GitHub / Fly / Discourse) and it provisions a storage
+bucket, the brain, and a home sprite **into your own Fly org**, then returns your home URL and one-time
+storage keys. Under the hood it builds `sprite-agent` from a pinned commit and runs `init` for you.
+
+Source — including a walkthrough of exactly how it handles your credentials (used in memory for one
+request, never logged or stored) — is [`clouvet/deploy-sprite-swarm`](https://github.com/clouvet/deploy-sprite-swarm).
+
+Prefer the CLI, or want the connector-based token-free setup? Use `scripts/launch-fleet.sh` below.
+
 ## Launching a fleet
 
 Pre-reqs (once, in the Sprites dashboard): a Tigris bucket + an `s3_object_store` connector pointing
