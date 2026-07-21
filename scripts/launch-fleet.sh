@@ -19,7 +19,15 @@
 #     --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
 #     [--s3-endpoint https://fly.storage.tigris.dev] [--s3-region auto] \
 #     --sprites-token <token> [--github-token <token>] [--fly-token <token>] \
-#     [--claude-oauth-token <token>] [--discourse-profile <file.json>]
+#     [--claude-oauth-token <token>] [--discourse-profile <file.json>] \
+#     [--brain-gateway <s3_object_store connector URL>]
+#
+# --brain-gateway: run the fleet TOKEN-FREE. Pass your `s3_object_store` connector's
+# gateway URL (https://api.sprites.dev/v1/gateway/s3_object_store/<id>) and the
+# sprites will reach the brain by their own identity — no S3 keys copied onto them.
+# You still pass --s3-access-key/--s3-secret-key here (this launch host isn't a
+# sprite, so it primes the brain with the keys); the running fleet just doesn't
+# carry them. Omit the flag for the simpler key-based fleet.
 #
 # --claude-oauth-token: a Claude subscription token from `claude setup-token` (run
 # once on a machine with a browser). When set, the fleet drives Claude through your

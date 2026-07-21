@@ -95,6 +95,14 @@ type BrainConfig struct {
 	// the token-free path; it takes precedence over direct keys. May be discovered
 	// at runtime, so it isn't always known at config time.
 	GatewayURL string
+
+	// BootstrapGateway is the connector gateway URL to hand to *spawned* sprites,
+	// even when this process reaches the brain via raw S3 keys. It exists for the
+	// one case they differ: `init` seeding a connector-mode fleet from an
+	// off-account launch host (which isn't a sprite, so it must write with keys,
+	// but the fleet it ignites should run token-free). Empty in the normal case,
+	// where a sprite simply passes on its own GatewayURL.
+	BootstrapGateway string
 }
 
 // Enabled reports whether a brain is reachable — either via the gateway connector

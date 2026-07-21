@@ -176,8 +176,16 @@ for token-free spawn (then skip `--sprites-token`). Then, from anywhere with Go:
 scripts/launch-fleet.sh --name my-fleet \
   --bucket <tigris-bucket> --s3-access-key <key> --s3-secret-key <secret> \
   --sprites-token <token> [--github-token <token>] [--fly-token <token>] \
-  [--claude-oauth-token <token>] [--discourse-profile <file.json>]
+  [--claude-oauth-token <token>] [--discourse-profile <file.json>] \
+  [--brain-gateway <s3_object_store connector URL>]
 ```
+
+**Token-free brain (optional):** pass `--brain-gateway https://api.sprites.dev/v1/gateway/s3_object_store/<id>`
+(your `s3_object_store` connector) and the fleet runs token-free — sprites reach the brain by their own
+identity and **no S3 keys are copied onto them**. You still pass `--s3-access-key`/`--s3-secret-key` (this
+launch host isn't a sprite, so it primes the brain with the keys); the running fleet just doesn't carry
+them. This is also how you migrate a key-based fleet (e.g. one stood up by the installer) to the connector:
+re-run against the same bucket with `--brain-gateway`, then reap the old workers so they respawn token-free.
 
 **Claude auth:** by default the fleet drives Claude through the **Anthropic connector** (metered API,
 authed by sprite identity, no key copied). Pass `--claude-oauth-token` (from `claude setup-token`, run
