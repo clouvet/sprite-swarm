@@ -158,13 +158,15 @@ go run ./cmd/sprite-agent
 The quickest way to stand up a fleet is the hosted one-click installer:
 **[deploy-sprite-swarm.fly.dev](https://deploy-sprite-swarm.fly.dev)**. Give it a Fly org token, a
 Sprites token, and a Claude token (plus optional GitHub / Fly / Discourse) and it provisions a storage
-bucket, the brain, and a home sprite **into your own Fly org**, then returns your home URL and one-time
-storage keys. Under the hood it builds `sprite-agent` from a pinned commit and runs `init` for you.
+bucket, an `s3_object_store` connector for it, the brain, and a home sprite **into your own Fly org**,
+then returns your home URL and one-time storage keys. The fleet it stands up is **token-free** — it
+registers the connector and runs `init --brain-gateway`, so sprites reach the brain by their own identity
+and no S3 keys are copied onto them. Under the hood it builds `sprite-agent` from a pinned commit.
 
 Source — including a walkthrough of exactly how it handles your credentials (used in memory for one
 request, never logged or stored) — is [`clouvet/deploy-sprite-swarm`](https://github.com/clouvet/deploy-sprite-swarm).
 
-Prefer the CLI, or want the connector-based token-free setup? Use `scripts/launch-fleet.sh` below.
+Prefer the CLI? Use `scripts/launch-fleet.sh` below (also token-free with `--brain-gateway`).
 
 ## Launching a fleet
 
