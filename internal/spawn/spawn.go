@@ -61,6 +61,7 @@ type Spawner interface {
 	Spawn(ctx context.Context, req Request) (Result, error)
 	Destroy(ctx context.Context, name string) error
 	Exists(ctx context.Context, name string) (bool, error)
+	SetEnv(ctx context.Context, name string, env map[string]string) error
 	DeployApp(ctx context.Context, req DeployRequest) (Result, error)
 	UpdateApp(ctx context.Context, name string, req DeployRequest) (Result, error)
 }

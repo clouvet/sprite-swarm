@@ -468,6 +468,53 @@ func (a *apiSpawner) spriteStatus(ctx context.Context, name string) (string, err
 	return s.Status, nil
 }
 
+// SetEnv patches the sprite-agent service's boot env on an existing sprite and
+// restarts it so the change takes effect (e.g. add SPRITE_AGENT_BOOT_UPDATE=0 to
+// pin a sprite's build). It GETs the current service spec as raw JSON — so
+// cmd/args/dir/needs it doesn't model are preserved — merges the caller's env
+// (reserved bootstrap keys can't be overridden), drops the read-only state, then
+// delete+PUTs to force a fresh boot (a plain PUT to a running service doesn't
+// restart it). The VM disk survives. A sprite without a managed sprite-agent
+// service (e.g. a directly-bootstrapped home) returns a clear error.
+func (a *apiSpawner) SetEnv(ctx context.Context, name string, extra map[string]string) error {
+	svcURL := fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name)
+	resp, err := a.do(ctx, http.MethodGet, svcURL, nil)
+	if err != nil {
+		return fmt.Errorf("spawn: get service %s: %w", name, err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%s has no managed sprite-agent service — a directly-bootstrapped sprite (e.g. home) can't be set-env'd this way", name)
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("spawn: get service %s: %d: %s", name, resp.StatusCode, string(data))
+	}
+	var spec map[string]interface{}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return fmt.Errorf("spawn: decode service %s: %w", name, err)
+	}
+	env, _ := spec["env"].(map[string]interface{})
+	if env == nil {
+		env = map[string]interface{}{}
+	}
+	for k, v := range extra {
+		if reservedBootEnv[k] {
+			continue // never let a caller rewrite identity/brain/addr wiring
+		}
+		env[k] = v
+	}
+	spec["env"] = env
+	delete(spec, "state") // read-only runtime field; don't send it back
+	body, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	_ = a.deleteService(ctx, name)
+	time.Sleep(2 * time.Second)
+	return a.putService(ctx, name, body)
+}
+
 func (a *apiSpawner) putService(ctx context.Context, name string, body []byte) error {
 	resp, err := a.do(ctx, http.MethodPut, fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name), body)
 	if err != nil {

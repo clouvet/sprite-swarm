@@ -59,6 +59,7 @@ func (f *fakeSpawner) Destroy(_ context.Context, name string) error {
 func (f *fakeSpawner) Exists(_ context.Context, name string) (bool, error) {
 	return f.taken[name], nil
 }
+func (f *fakeSpawner) SetEnv(_ context.Context, _ string, _ map[string]string) error { return nil }
 func (f *fakeSpawner) DeployApp(context.Context, spawn.DeployRequest) (spawn.Result, error) {
 	return spawn.Result{}, nil
 }

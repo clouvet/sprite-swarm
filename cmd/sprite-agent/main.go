@@ -241,6 +241,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"(the roster's present/👤 = the DEFER signal, §2.4); only after the human confirms, re-POST " +
 			"with {\"target\":\"<id>\",\"force\":true}. Do NOT hand-roll teardown via the host socket or " +
 			"guess routes — this endpoint is the mechanism. " +
+			"To change a running sprite's boot env — and restart it so the change applies (its VM disk " +
+			"survives) — POST /api/fleet/set-env {\"target\":\"<name>\",\"env\":{...}}, e.g. " +
+			"{\"env\":{\"SPRITE_AGENT_BOOT_UPDATE\":\"0\"}} to pin it so it stops auto-adopting the staged binary. " +
+			"Reserved bootstrap keys (id/brain/addr) can't be overridden; same 409-on-attached-human guard as " +
+			"destroy (add \"force\":true); it doesn't work on home. " +
 			"To roll out a new build after this binary is updated: POST /api/fleet/update {\"target\":\"<id>\"|\"all\"} " +
 			"stages your current binary and tells that worker (or every other agent) to self-update in place — they " +
 			"re-exec, keeping their VM disk (repo/branch/uncommitted work). POST /api/fleet/update with no body updates " +

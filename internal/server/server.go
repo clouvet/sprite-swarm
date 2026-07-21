@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/destroy-app", s.serveDestroyApp)
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
+	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
@@ -667,6 +668,56 @@ func (s *Server) serveDestroy(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.fleet.RemoveAgent(r.Context(), body.Target) // best-effort brain cleanup
 	writeJSON(w, map[string]interface{}{"destroyed": body.Target, "forced": body.Force})
+}
+
+// serveSetEnv patches a sprite's boot env and restarts it (keeping its VM disk),
+// so an already-running sprite can adopt a new posture — e.g. pin its build with
+// {"env":{"SPRITE_AGENT_BOOT_UPDATE":"0"}}. Reserved bootstrap keys (id/brain/addr)
+// can't be overridden. Presence-guarded like destroy since it restarts the target.
+func (s *Server) serveSetEnv(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Target string            `json:"target"`
+		Env    map[string]string `json:"env"`
+		Force  bool              `json:"force"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" || len(body.Env) == 0 {
+		http.Error(w, "target and a non-empty env are required", http.StatusBadRequest)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no spawn capability on this sprite (no sprites API token)", http.StatusNotImplemented)
+		return
+	}
+	if body.Target == s.cfg.AgentID {
+		http.Error(w, "refusing to set-env on self ("+body.Target+") — run this from another sprite", http.StatusConflict)
+		return
+	}
+	exists, present, err := s.fleet.AgentPresent(r.Context(), body.Target)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !exists {
+		http.Error(w, "no such agent in the roster: "+body.Target, http.StatusNotFound)
+		return
+	}
+	if present && !body.Force {
+		http.Error(w, "DEFER: a human is attached to "+body.Target+" (set-env restarts it). Re-POST with {\"force\":true} to proceed.", http.StatusConflict)
+		return
+	}
+	if err := s.spawner.SetEnv(r.Context(), body.Target, body.Env); err != nil {
+		http.Error(w, "set-env failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"updated": body.Target})
 }
 
 // serveMemory: GET = the always-loaded index; POST = append a memory (P2.2).
