@@ -205,6 +205,11 @@ boundary.
 
 See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations.
 
+## Credits
+
+The chat UI is set in [MonoLisa](https://www.monolisa.dev/) — MonoLisa Text for the interface, MonoLisa
+Code for code and monospace.
+
 ## Status
 
 **In active daily use.** The per-sprite session service and fleet coordination are built and running a
