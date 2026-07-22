@@ -244,7 +244,12 @@ html[data-view="new"] #continue-btn { display: none; }
   font-size: 13px; color: var(--text-secondary); text-decoration: none; }
 .ctx-row .ctx-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 a.ctx-row:hover { background: var(--bg-tertiary); color: var(--text); }
-.ctx-row .repo-branch { color: var(--text-muted); margin-left: auto; font-size: 12px; flex-shrink: 0; }
+/* repo rows stack: name on line 1, branch (truncated) on line 2 */
+.ctx-row.ctx-repo { flex-direction: column; align-items: stretch; gap: 2px; }
+.ctx-repo .repo-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctx-row .repo-branch { color: var(--text-muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-repo .repo-branch::before { content: "⎇ "; opacity: .7; }
 .ctx-row .repo-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .repo-add { cursor: pointer; font-size: 12px; color: var(--text-muted); background: none;
   border: 1px dashed var(--border); border-radius: 12px; padding: 3px 10px; }

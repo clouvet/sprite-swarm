@@ -759,11 +759,14 @@
       contextList.appendChild(ctxGroup('Repos'));
       for (const r of repos) {
         const row = document.createElement('span');
-        row.className = 'ctx-row';
+        row.className = 'ctx-row ctx-repo';
         row.title = [r.remote, r.branch ? 'branch: ' + r.branch : '', r.dirty ? 'uncommitted changes' : '']
           .filter(Boolean).join('\n');
-        if (r.dirty) { const d = document.createElement('span'); d.className = 'repo-dirty'; row.appendChild(d); }
-        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = r.name; row.appendChild(n);
+        // Line 1: repo name (+ dirty dot). Line 2: branch, truncated if long.
+        const line = document.createElement('span'); line.className = 'repo-line';
+        if (r.dirty) { const d = document.createElement('span'); d.className = 'repo-dirty'; line.appendChild(d); }
+        const n = document.createElement('span'); n.className = 'ctx-name'; n.textContent = r.name; line.appendChild(n);
+        row.appendChild(line);
         if (r.branch) { const b = document.createElement('span'); b.className = 'repo-branch'; b.textContent = r.branch; row.appendChild(b); }
         contextList.appendChild(row);
       }
