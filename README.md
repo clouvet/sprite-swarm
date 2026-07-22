@@ -77,12 +77,21 @@ are `sprite-swarm`._
   fleet context marks them). Typical flow: rebuild + restart home, then ask it in chat to "update all
   workers." (A node must already run update-capable code; a pre-existing old worker needs one
   reap+respawn to adopt it.)
+- **Set boot env** — `POST /api/fleet/set-env {target, env}` patches a running sprite's service env and
+  restarts it (VM disk survives), so it adopts a new posture without a respawn — e.g.
+  `{"env":{"SPRITE_AGENT_BOOT_UPDATE":"0"}}` to pin its build so it won't auto-adopt the staged binary.
+  Reserved id/brain/addr keys can't be overridden; same 409-on-attached-human guard as destroy. (Home has
+  no managed service, so it's not settable this way.)
+- **Reload secrets** — `POST /api/fleet/reload-secrets` re-reads the brain and re-applies the git/gh +
+  flyctl creds **in place, no restart**, so newly-spawned subprocesses pick up a rotated token;
+  `{target:"all"}` fans it out to every worker. (Sprites-API + Claude tokens are bound at spawn/launch, so
+  rotating those still needs a restart.)
 - **Host an app** — `POST /api/fleet/deploy-app {artifact_url, run, http_port}` creates a **bare** sprite
   (no agent) that fetches the app tarball (staged in the brain) and runs it on its `http_port`, so the
   app owns that sprite's URL (behind org login). Agent sprites never host apps themselves — the agent
   already owns port 8080 (you'd hit a 409) — they *deploy* to a dedicated sprite. Worker flow: build →
   tar → stage tarball to the brain → `deploy-app` → get the URL.
-- **Reap** — the fleet UI's per-worker reap button, or `POST /api/fleet/destroy {target[,force]}`.
+- **Reap** — the fleet UI's per-sprite destroy button, or `POST /api/fleet/destroy {target[,force]}`.
   Presence-aware: it refuses (409) if a human is attached, unless `force`.
 - **Memory** — sprites read/write `$HOME/.sprite-agent/memory/` (grouped by topic: `repos/`,
   `decisions/`, `how-to/`); it syncs to the brain so the fleet shares learnings.
