@@ -36,6 +36,7 @@ type Fleet interface {
 	PrepareSelfUpdate(ctx context.Context) (bool, string, error)
 	Reexec() error
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
+	ReloadFleet(ctx context.Context, target string) (interface{}, error)
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -55,7 +56,14 @@ type Server struct {
 	spawner  spawn.Spawner
 	secrets  *secret.Store
 	upgrader websocket.Upgrader
+	// reloadSecrets re-reads the brain and re-applies env-based creds (git/gh,
+	// flyctl) in place; wired by main (which owns setupGitHubAuth). nil = no-op.
+	reloadSecrets func()
 }
+
+// SetReloadSecrets registers the in-process secret re-apply hook used by
+// POST /api/fleet/reload-secrets. Set once, after New.
+func (s *Server) SetReloadSecrets(fn func()) { s.reloadSecrets = fn }
 
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
 // spawner is always non-nil (a stub when no sprites token is available).
@@ -107,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
+	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
@@ -718,6 +727,41 @@ func (s *Server) serveSetEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"updated": body.Target})
+}
+
+// serveReloadSecrets re-reads the brain and re-applies this agent's env-based
+// creds (git/gh, flyctl) IN PLACE — no restart — so newly-spawned subprocesses
+// pick up a rotated token. With {"target":"<id>"|"all"} it also fans the reload
+// out to that worker / every other agent. No body = just this node.
+func (s *Server) serveReloadSecrets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // empty body is valid: self-reload
+
+	// Always re-apply on this node first.
+	if s.reloadSecrets != nil {
+		s.reloadSecrets()
+	}
+
+	if t := strings.TrimSpace(body.Target); t != "" {
+		if s.fleet == nil {
+			http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+			return
+		}
+		res, err := s.fleet.ReloadFleet(r.Context(), t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, res)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"reloaded": s.cfg.AgentID})
 }
 
 // serveMemory: GET = the always-loaded index; POST = append a memory (P2.2).

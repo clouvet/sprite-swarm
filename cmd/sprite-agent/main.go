@@ -47,6 +47,26 @@ func setupGitHubAuth(token string) {
 	os.Setenv("GIT_CONFIG_VALUE_0", helper)
 }
 
+// reloadBrainSecrets re-reads the brain and re-applies the env-based creds (git/gh,
+// flyctl) so newly-spawned subprocesses pick up ROTATED tokens without a restart.
+// Wired to POST /api/fleet/reload-secrets. The Sprites-API + Claude tokens are bound
+// at spawner construction / Claude launch, so changing those still needs a restart.
+func reloadBrainSecrets(fleetSvc *fleet.Service) {
+	if fleetSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if gh := fleetSvc.GetSecret(ctx, fleet.SecretGitHubToken); gh != "" {
+		setupGitHubAuth(gh)
+		log.Printf("reload-secrets: re-applied github token")
+	}
+	if fly := fleetSvc.GetSecret(ctx, fleet.SecretFlyToken); fly != "" {
+		setupFlyAuth(fly)
+		log.Printf("reload-secrets: re-applied fly token")
+	}
+}
+
 // setupFlyAuth wires flyctl to the brain-sourced Fly token and ensures the CLI is
 // available, so any sprite can run `fly`/`flyctl` non-interactively. The token lives
 // only in process env (FLY_API_TOKEN), inherited by the claude subprocess. flyctl is
@@ -246,6 +266,9 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"{\"env\":{\"SPRITE_AGENT_BOOT_UPDATE\":\"0\"}} to pin it so it stops auto-adopting the staged binary. " +
 			"Reserved bootstrap keys (id/brain/addr) can't be overridden; same 409-on-attached-human guard as " +
 			"destroy (add \"force\":true); it doesn't work on home. " +
+			"After a brain secret is rotated (e.g. a new GitHub token via put-secret), POST /api/fleet/reload-secrets " +
+			"{\"target\":\"all\"} to hot-re-apply git/gh + flyctl creds fleet-wide with NO restart (empty body = just " +
+			"this node). " +
 			"To roll out a new build after this binary is updated: POST /api/fleet/update {\"target\":\"<id>\"|\"all\"} " +
 			"stages your current binary and tells that worker (or every other agent) to self-update in place — they " +
 			"re-exec, keeping their VM disk (repo/branch/uncommitted work). POST /api/fleet/update with no body updates " +
@@ -518,6 +541,7 @@ func main() {
 		roster = fleetSvc
 	}
 	srv := server.New(cfg, h, roster, spawner, secrets)
+	srv.SetReloadSecrets(func() { reloadBrainSecrets(fleetSvc) }) // POST /api/fleet/reload-secrets
 
 	if fleetSvc != nil {
 		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
