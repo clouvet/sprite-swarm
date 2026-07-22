@@ -46,6 +46,7 @@ func (m *Manager) Spawn(opts Options) (*HeadlessProcess, error) {
 	go func() {
 		if err := hp.Wait(); err != nil {
 			log.Printf("[%s] claude exited with error: %v", opts.SessionID, err)
+			hp.DiscardIfUnresumable()
 		} else {
 			log.Printf("[%s] claude exited normally", opts.SessionID)
 		}
