@@ -134,7 +134,6 @@ capability is simply off (the agent is told so).
 | `internal/secret/` | worker-scoped in-memory env vars injected into Claude processes |
 | `internal/fleet/` | brain client + roster + secrets + memory + dispatch + policy |
 | `internal/spawn/` | sprite spawn/provision + teardown + `LaunchHome` |
-| `internal/reaper/` | destroy done workers; clean orphaned brain entries (keep suspended) |
 | `internal/keepalive/` | hold the sprite awake while working (Sprite Tasks API) |
 | `internal/memsync/` | sync the local markdown fleet-memory dir with the brain |
 | `internal/gateway/` | discover API-Gateway connectors (s3 brain, Anthropic) |
@@ -156,8 +155,9 @@ go run ./cmd/sprite-agent
 ## Deploy your own fleet (hosted installer)
 
 The quickest way to stand up a fleet is the hosted one-click installer:
-**[deploy-sprite-swarm.fly.dev](https://deploy-sprite-swarm.fly.dev)**. Give it a Fly org token, a
-Sprites token, and a Claude token (plus optional GitHub / Fly / Discourse) and it provisions a storage
+**[deploy-sprite-swarm.fly.dev](https://deploy-sprite-swarm.fly.dev)**. Give it a Fly org token and a
+Claude token (plus optional GitHub / Fly / Discourse) — it **mints your Sprites token from the Fly token**,
+so there's nothing to copy from the dashboard — and it provisions a storage
 bucket, an `s3_object_store` connector for it, the brain, and a home sprite **into your own Fly org**,
 then returns your home URL and one-time storage keys. The fleet it stands up is **token-free** — it
 registers the connector and runs `init --brain-gateway`, so sprites reach the brain by their own identity
