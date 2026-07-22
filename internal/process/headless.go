@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -46,6 +47,10 @@ type HeadlessProcess struct {
 
 	OutputChan chan *claude.StreamMessage
 	ErrorChan  chan error
+
+	transcript   string        // on-disk transcript path (for resume-failure cleanup)
+	resumeFailed bool          // set (under mu) if claude reported the session isn't resumable
+	stderrDone   chan struct{} // closed when readStderr drains (so resumeFailed is settled)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -92,12 +97,48 @@ func buildArgs(opts Options) []string {
 	}
 
 	transcript := opts.ProjectsDir + "/" + opts.SessionID + ".jsonl"
-	if _, err := os.Stat(transcript); err == nil {
+	if resumableTranscript(transcript) {
 		args = append(args, "--resume", opts.SessionID)
 	} else {
 		args = append(args, "--session-id", opts.SessionID)
 	}
 	return args
+}
+
+// resumableTranscript reports whether the on-disk transcript holds a real
+// conversation we can hand to `claude --resume`. A file that merely EXISTS is
+// not enough: interrupting the first turn of a brand-new chat (stop the stream
+// before Claude persists anything) can leave an empty or header-only .jsonl,
+// and resuming that makes Claude exit with "No conversation found with session
+// ID" — crash-looping the session on every subsequent message. We treat a
+// transcript as resumable only once it contains at least one user/assistant
+// message line; otherwise we start a fresh session under the same id.
+func resumableTranscript(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false // no file (or unreadable) → start a fresh session
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var line struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			continue
+		}
+		if line.Type == "user" || line.Type == "assistant" {
+			return true
+		}
+	}
+	// A line longer than the buffer only happens once there's a substantial
+	// (assistant) turn on disk — treat that as resumable rather than nuking it.
+	if errors.Is(scanner.Err(), bufio.ErrTooLong) {
+		return true
+	}
+	return false
 }
 
 // NewHeadlessProcess starts a headless Claude process for a session.
@@ -144,6 +185,8 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 		StartedAt:  time.Now(),
 		OutputChan: make(chan *claude.StreamMessage, 256),
 		ErrorChan:  make(chan error, 10),
+		transcript: opts.ProjectsDir + "/" + opts.SessionID + ".jsonl",
+		stderrDone: make(chan struct{}),
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -227,12 +270,49 @@ func (hp *HeadlessProcess) readStdout(stdout io.ReadCloser) {
 }
 
 func (hp *HeadlessProcess) readStderr(stderr io.ReadCloser) {
+	defer close(hp.stderrDone)
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
-		if line := scanner.Text(); line != "" {
-			log.Printf("[%s] claude stderr: %s", hp.SessionID, line)
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		log.Printf("[%s] claude stderr: %s", hp.SessionID, line)
+		// Guard #1 keeps us from resuming a stub, but a transcript that has real
+		// turns yet is otherwise unresumable (corruption, truncation) still trips
+		// this. Flag it so the exit path can discard the poisoned file.
+		if strings.Contains(line, "No conversation found with session ID") {
+			hp.mu.Lock()
+			hp.resumeFailed = true
+			hp.mu.Unlock()
 		}
 	}
+}
+
+// DiscardIfUnresumable removes the transcript when claude reported this session
+// could not be resumed ("No conversation found ..."). Left in place, the stale
+// .jsonl would poison every future spawn — buildArgs would keep choosing
+// --resume and claude would keep exiting 1. Dropping it lets the next message
+// start a clean session under the same id, so the chat recovers instead of
+// crash-looping. Call after Wait() returns and stderr has drained.
+func (hp *HeadlessProcess) DiscardIfUnresumable() {
+	// stderr may still be draining when Wait() returns; wait briefly so the
+	// resumeFailed flag is settled before we read it.
+	select {
+	case <-hp.stderrDone:
+	case <-time.After(500 * time.Millisecond):
+	}
+	hp.mu.RLock()
+	failed, path := hp.resumeFailed, hp.transcript
+	hp.mu.RUnlock()
+	if !failed || path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("[%s] failed to discard unresumable transcript %s: %v", hp.SessionID, path, err)
+		return
+	}
+	log.Printf("[%s] discarded unresumable transcript; next message starts a fresh session", hp.SessionID)
 }
 
 func (hp *HeadlessProcess) Done() <-chan struct{} { return hp.ctx.Done() }
