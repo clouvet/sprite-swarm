@@ -416,6 +416,10 @@
           if (m.role === 'user') addUser(m.content, { images: m.images });
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
+        // Restore this chat's own context meter from its transcript, so a dormant
+        // chat shows ITS real size — not whatever value was live when we switched.
+        if (msg.contextTokens) updateContextMeter(msg.contextTokens);
+        else hideContextMeter();
         if (msg.isGenerating) showThinking();
         // A history event only arrives for an existing session we've opened, so
         // dock the composer — never flip to the big centered "new chat" composer

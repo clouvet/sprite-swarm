@@ -29,6 +29,34 @@ func TestExtractContentAssistant(t *testing.T) {
 	}
 }
 
+func TestContextTokens(t *testing.T) {
+	// An assistant turn's usage sums the input side (131 + 1793 + 90200).
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":131,"cache_creation_input_tokens":1793,"cache_read_input_tokens":90200,"output_tokens":50}}}`
+	msg, _ := ParseJSONLLine(line)
+	n, ok := ContextTokens(msg)
+	if !ok || n != 92124 {
+		t.Fatalf("assistant usage: got %d ok=%v, want 92124 true", n, ok)
+	}
+
+	// A tool-only assistant turn (no text) still carries usage — must count.
+	toolLine := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}],"usage":{"input_tokens":10,"cache_read_input_tokens":5}}}`
+	msg2, _ := ParseJSONLLine(toolLine)
+	if n, ok := ContextTokens(msg2); !ok || n != 15 {
+		t.Fatalf("tool-only usage: got %d ok=%v, want 15 true", n, ok)
+	}
+
+	// User lines and assistant lines without usage report nothing.
+	for _, l := range []string{
+		`{"type":"user","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+	} {
+		m, _ := ParseJSONLLine(l)
+		if n, ok := ContextTokens(m); ok || n != 0 {
+			t.Fatalf("no-usage line %q: got %d ok=%v, want 0 false", l, n, ok)
+		}
+	}
+}
+
 func TestExtractContentSkipsMarkers(t *testing.T) {
 	line := `{"type":"user","timestamp":"2026-06-22T20:00:00Z","message":{"role":"user","content":"<system-reminder>internal</system-reminder>"}}`
 	msg, _ := ParseJSONLLine(line)
