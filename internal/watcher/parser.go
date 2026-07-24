@@ -111,6 +111,29 @@ func ExtractContent(msg *ClaudeMessage) (*ParsedMessage, error) {
 	return nil, nil
 }
 
+// ContextTokens returns the prompt (context) size an assistant turn was
+// generated against — the input-side token sum from its usage block:
+// input_tokens + cache_creation_input_tokens + cache_read_input_tokens. This is
+// the SAME sum the web client computes live from message_start, so replaying the
+// last assistant turn's value on history reproduces the meter for a dormant chat
+// (ok=false for non-assistant lines or any line without usage).
+func ContextTokens(msg *ClaudeMessage) (int, bool) {
+	if msg.Type != "assistant" {
+		return 0, false
+	}
+	var m struct {
+		Usage *struct {
+			InputTokens         int `json:"input_tokens"`
+			CacheCreationTokens int `json:"cache_creation_input_tokens"`
+			CacheReadTokens     int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(msg.Message, &m); err != nil || m.Usage == nil {
+		return 0, false
+	}
+	return m.Usage.InputTokens + m.Usage.CacheCreationTokens + m.Usage.CacheReadTokens, true
+}
+
 // shouldSkipMessage filters internal Claude Code command/markers and
 // harness-injected meta turns that aren't real conversation, so they don't render
 // as user bubbles in replayed history (and don't clobber the human's own turns).

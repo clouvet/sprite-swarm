@@ -750,6 +750,7 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 	defer file.Close()
 
 	messages := []map[string]interface{}{}
+	contextTokens := 0 // last assistant turn's prompt size, for the context meter
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -760,6 +761,11 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 		msg, err := watcher.ParseJSONLLine(line)
 		if err != nil {
 			continue
+		}
+		// Track context size off EVERY assistant line, before the display filter:
+		// a tool-only turn carries usage but no text, so it'd be dropped below.
+		if n, ok := watcher.ContextTokens(msg); ok {
+			contextTokens = n
 		}
 		parsed, err := watcher.ExtractContent(msg)
 		if err != nil || parsed == nil {
@@ -775,9 +781,10 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 
 	if len(messages) > 0 || isGenerating {
 		h.sendJSON(client, map[string]interface{}{
-			"type":         "history",
-			"messages":     messages,
-			"isGenerating": isGenerating,
+			"type":          "history",
+			"messages":      messages,
+			"isGenerating":  isGenerating,
+			"contextTokens": contextTokens,
 		})
 	}
 
