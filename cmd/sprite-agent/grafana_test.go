@@ -27,37 +27,48 @@ func TestWriteGrafanaToken(t *testing.T) {
 	}
 }
 
-func TestGrafanaConfigParse(t *testing.T) {
-	// Both the canonical key and the `token` alias parse.
+func TestParseGrafanaSecret(t *testing.T) {
+	// url + canonical token, and the `token` alias; trailing slash trimmed.
 	for _, s := range []string{
 		`{"url":"https://g.example.net","service_account_token":"glsa_x"}`,
 		`{"url":"https://g.example.net/","token":"glsa_x"}`,
 	} {
-		var c grafanaConfig
-		if err := json.Unmarshal([]byte(s), &c); err != nil {
+		url, tok, err := parseGrafanaSecret(s)
+		if err != nil {
 			t.Fatalf("parse %s: %v", s, err)
 		}
-		tok := c.Token
-		if tok == "" {
-			tok = c.Alt
+		if url != "https://g.example.net" || tok != "glsa_x" {
+			t.Errorf("parsed url=%q token=%q from %s", url, tok, s)
 		}
-		if c.URL == "" || tok != "glsa_x" {
-			t.Errorf("parsed url=%q token=%q from %s", c.URL, tok, s)
+	}
+
+	// url is required; token is now OPTIONAL (connector mode carries no token).
+	if url, tok, err := parseGrafanaSecret(`{"url":"https://g.example.net"}`); err != nil || url == "" || tok != "" {
+		t.Errorf("url-only should parse token-free: url=%q tok=%q err=%v", url, tok, err)
+	}
+	for _, bad := range []string{`{"service_account_token":"glsa_x"}`, `{}`, `not json`, ``} {
+		if _, _, err := parseGrafanaSecret(bad); err == nil {
+			t.Errorf("expected error for %q", bad)
 		}
 	}
 }
 
-func TestSetupGrafanaMCPRejectsIncomplete(t *testing.T) {
-	dir := t.TempDir()
-	// Missing url or token errors BEFORE any binary download (no network here).
-	for _, bad := range []string{
-		`{"url":"https://g.example.net"}`,           // no token
-		`{"service_account_token":"glsa_x"}`,        // no url
-		`{}`, `not json`, ``,
-	} {
-		if _, _, err := setupGrafanaMCP(dir, bad); err == nil {
-			t.Errorf("expected error for %q", bad)
-		}
+func TestGrafanaServerEntry(t *testing.T) {
+	// Connector mode: gateway base as URL, and NO token env on the sprite.
+	conn := grafanaServerEntry("/x/mcp-grafana", "https://api.sprites.dev/v1/gateway/custom_api/abc", "")
+	env := conn["env"].(map[string]any)
+	if env["GRAFANA_URL"] != "https://api.sprites.dev/v1/gateway/custom_api/abc" {
+		t.Errorf("connector URL = %v", env["GRAFANA_URL"])
+	}
+	if _, ok := env["GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"]; ok {
+		t.Error("connector mode must not set a token env")
+	}
+
+	// Fallback mode: direct URL + token file.
+	fb := grafanaServerEntry("/x/mcp-grafana", "https://g.example.net", "/d/grafana-token")
+	env = fb["env"].(map[string]any)
+	if env["GRAFANA_URL"] != "https://g.example.net" || env["GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"] != "/d/grafana-token" {
+		t.Errorf("fallback env = %v", env)
 	}
 }
 

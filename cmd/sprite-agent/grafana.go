@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/clouvet/sprite-swarm/internal/gateway"
 )
 
 // grafanaMCPVersion pins the mcp-grafana release the fleet runs. Bump it to adopt
@@ -25,34 +28,59 @@ const grafanaMCPVersion = "v0.17.2"
 // grant more; it's an allowlist over mcp-grafana's tool categories.
 const grafanaEnabledTools = "search,datasource,prometheus,loki,dashboard,folder,navigation,annotations,rendering"
 
-// grafanaConfig is the brain secret shape ({url, service_account_token}). token
-// is accepted as an alias so either key works.
+// grafanaConfig is the brain secret shape. url is required; the token is OPTIONAL
+// — preferred path is a custom_api gateway connector fronting url (token lives in
+// the connector, never on the sprite). service_account_token / token remain as a
+// fallback for fleets without a connector.
 type grafanaConfig struct {
 	URL   string `json:"url"`
 	Token string `json:"service_account_token"`
 	Alt   string `json:"token"`
 }
 
-// setupGrafanaMCP materializes the optional Grafana MCP server from a brain
-// secret. It writes the service-account token to a 0600 file (so it stays out of
-// the process args AND out of the 0644 mcp.json), ensures the mcp-grafana binary
-// is present, and returns the server name + mcp.json entry to compose. Optional
-// by construction: only fleets with a `grafana` secret get the server.
-func setupGrafanaMCP(baseDir, secret string) (string, map[string]any, error) {
+// parseGrafanaSecret pulls the (required) url and (optional) token from the brain
+// secret. Split out from setupGrafanaMCP so it's unit-testable without network.
+func parseGrafanaSecret(secret string) (url, token string, err error) {
 	var cfg grafanaConfig
 	if err := json.Unmarshal([]byte(strings.TrimSpace(secret)), &cfg); err != nil {
-		return "", nil, fmt.Errorf("parse grafana secret: %w", err)
+		return "", "", fmt.Errorf("parse grafana secret: %w", err)
 	}
-	url := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	token := strings.TrimSpace(cfg.Token)
+	url = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	token = strings.TrimSpace(cfg.Token)
 	if token == "" {
 		token = strings.TrimSpace(cfg.Alt)
 	}
-	if url == "" || token == "" {
-		return "", nil, fmt.Errorf("grafana secret needs both url and service_account_token")
+	if url == "" {
+		return "", "", fmt.Errorf("grafana secret needs a url")
 	}
+	return url, token, nil
+}
 
-	tokenPath, err := writeGrafanaToken(baseDir, token)
+// grafanaServerEntry builds the mcp.json entry. In connector mode grafanaURL is
+// the gateway base and tokenPath is "" — no credential rides on the sprite at all
+// (the gateway injects it by identity). In fallback mode grafanaURL is the direct
+// Grafana URL and tokenPath points at the 0600 token file
+// (GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE keeps the value out of argv and mcp.json).
+func grafanaServerEntry(binPath, grafanaURL, tokenPath string) map[string]any {
+	env := map[string]any{"GRAFANA_URL": grafanaURL}
+	if tokenPath != "" {
+		env["GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"] = tokenPath
+	}
+	return map[string]any{
+		"command": binPath,
+		"args":    []string{"-enabled-tools", grafanaEnabledTools},
+		"env":     env,
+	}
+}
+
+// setupGrafanaMCP wires the optional Grafana MCP server from a brain secret.
+// Preferred: a custom_api gateway connector fronting the secret's url — the fleet
+// reaches Grafana by sprite identity and NO token touches the sprite. Fallback:
+// if no connector matches but the secret carries a token, it's written to a 0600
+// file and passed via GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE. Either way it ensures
+// the mcp-grafana binary and returns the server name + mcp.json entry to compose.
+func setupGrafanaMCP(ctx context.Context, baseDir, secret string) (string, map[string]any, error) {
+	url, token, err := parseGrafanaSecret(secret)
 	if err != nil {
 		return "", nil, err
 	}
@@ -62,18 +90,25 @@ func setupGrafanaMCP(baseDir, secret string) (string, map[string]any, error) {
 		return "", nil, fmt.Errorf("provision mcp-grafana: %w", err)
 	}
 
-	// Token via _FILE (not the value) keeps it in the 0600 file only; mcp.json and
-	// the process argv carry just the URL, the file path, and the tool allowlist.
-	entry := map[string]any{
-		"command": binPath,
-		"args":    []string{"-enabled-tools", grafanaEnabledTools},
-		"env": map[string]any{
-			"GRAFANA_URL":                        url,
-			"GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE": tokenPath,
-		},
+	// Prefer the gateway connector (token-free by sprite identity).
+	if base := gateway.CustomAPIBaseFor(ctx, url); base != "" {
+		// Drop any token a prior secret-mode boot left on disk — connector mode
+		// keeps no credential on the sprite.
+		_ = os.Remove(filepath.Join(baseDir, "grafana-token"))
+		log.Printf("secrets: grafana via gateway connector (token-free, mcp %s, metrics+dashboards, %s)", grafanaMCPVersion, url)
+		return "grafana", grafanaServerEntry(binPath, base, ""), nil
 	}
-	log.Printf("secrets: loaded grafana config from brain (mcp %s, metrics+dashboards, %s)", grafanaMCPVersion, url)
-	return "grafana", entry, nil
+
+	// Fallback: token on the sprite (0600 file). Requires a token in the secret.
+	if token == "" {
+		return "", nil, fmt.Errorf("grafana: no custom_api connector fronting %s and no token in the secret", url)
+	}
+	tokenPath, err := writeGrafanaToken(baseDir, token)
+	if err != nil {
+		return "", nil, err
+	}
+	log.Printf("secrets: grafana via on-disk token (no connector found; mcp %s, metrics+dashboards, %s)", grafanaMCPVersion, url)
+	return "grafana", grafanaServerEntry(binPath, url, tokenPath), nil
 }
 
 // writeGrafanaToken persists the service-account token to a 0600 file that
