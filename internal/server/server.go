@@ -195,6 +195,12 @@ func (s *Server) serveSessions(w http.ResponseWriter, r *http.Request) {
 				log.Printf("session %s: seed inject failed: %v", meta.ID, err)
 			}
 		}
+		// Push the new chat to every connected client's sidebar so a session the
+		// agent spins up (POST /api/sessions from within a chat) appears live —
+		// no page refresh needed to see and open it.
+		if data, err := json.Marshal(map[string]interface{}{"type": "session_created", "session": meta}); err == nil {
+			s.hub.BroadcastAll(data)
+		}
 		writeJSON(w, meta)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
