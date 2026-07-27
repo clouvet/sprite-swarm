@@ -40,6 +40,11 @@ are `sprite-swarm`._
   forums **read-only** (paste a topic link → it pulls the thread in) via the official
   [`@discourse/mcp`](https://github.com/discourse/discourse-mcp) server; one profile can serve several
   sites. Absent ⇒ off. See *Launching a fleet* below.
+- **Grafana** (optional) — with a `grafana` secret configured, its Claude can query metrics
+  (Prometheus/Loki datasources) and **build/edit dashboards** via the official
+  [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) server. Scoped to metrics +
+  dashboards (writes on); the alerting/incident/oncall/admin write surfaces are left off. Absent ⇒ off.
+  See *Launching a fleet* below.
 - **Worker env vars** — set in-memory environment variables on a worker (e.g. a `DISCOURSE_API_KEY` a
   dev app needs) from the UI; the harness injects them into every Claude process it spawns, so the
   tools/apps the agent runs inherit them. **RAM-only** — never written to disk or the brain, cleared
@@ -107,7 +112,7 @@ are `sprite-swarm`._
 
   Fleet brain (S3/Tigris), reached via the s3 connector (token-free, by sprite identity):
     fleet/<id>/{status,heartbeat}.json   per-sprite keys → roster = ListObjects("fleet/")
-    fleet/config/secrets/{sprites-api-token?,github?,fly?,claude-oauth-token?,discourse?}  rehydrated on boot (all optional)
+    fleet/config/secrets/{sprites-api-token?,github?,fly?,claude-oauth-token?,discourse?,grafana?}  rehydrated on boot (all optional)
     fleet/config/policy.json             capability/policy control plane
     fleet/memory-fs/<id>/…               frictionless shared memory (synced markdown)
     fleet/tasks/<id>/…                   dispatch inboxes
@@ -213,9 +218,29 @@ profile, an `auth_pairs` array so one server serves several sites (e.g. a privat
 sprite-agent put-secret --name discourse --file profile.json   # {"auth_pairs":[{"site":..,"api_key":..,"api_username":..}]}
 ```
 
-On boot each sprite writes a `0600` profile + an `mcp.json` and points Claude's `--mcp-config` at it
-(read-only; no writes). Skipped when `SPRITE_AGENT_MCP_CONFIG` is set, so an operator-supplied MCP
-config wins. Optional by construction: fleets without the secret get no Discourse server.
+On boot each sprite writes a `0600` profile and adds a `discourse` entry to the composed `mcp.json`
+that Claude's `--mcp-config` points at (read-only; no writes). Skipped when `SPRITE_AGENT_MCP_CONFIG`
+is set, so an operator-supplied MCP config wins. Optional by construction: fleets without the secret
+get no Discourse server.
+
+**Grafana (optional):** store a `grafana` secret and the fleet gains **metrics + dashboard** access to
+your Grafana via the [official `grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) server —
+query Prometheus/Loki datasources and build/edit dashboards from a chat. The secret is
+`{"url":..,"service_account_token":..}` (a service account with at least the **Editor** role):
+
+```
+sprite-agent put-secret --name grafana --file grafana.json   # {"url":"https://you.grafana.net","service_account_token":"glsa_…"}
+```
+
+On boot each sprite writes the token to a `0600` file (read via `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`,
+so it's never in the process args or the `0644` mcp.json), fetches + caches the pinned `mcp-grafana`
+binary once, and adds a `grafana` entry to the composed `mcp.json`. Scoped via `-enabled-tools` to
+`search,datasource,prometheus,loki,dashboard,folder,navigation,annotations,rendering` — **writes on**
+(create/edit dashboards) but the alerting/incident/oncall/admin/provisioning write surfaces are off;
+widen the allowlist in `cmd/sprite-agent/grafana.go` to grant more. Rotate the token by re-running
+`put-secret` then `POST /api/fleet/reload-secrets {"target":"all"}` (new chats pick it up — `mcp.json`
+is read at `claude` start, so existing sessions keep the old config until restarted). Optional by
+construction: fleets without the secret get no Grafana server.
 
 It cross-compiles the binary, primes the brain (stages the artifact + writes the secrets via direct
 Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores those
