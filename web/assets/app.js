@@ -409,6 +409,15 @@
       case 'system':
         if (msg.message && !/Connected/.test(msg.message)) addSystem(msg.message);
         break;
+      case 'session_created':
+        // A chat created elsewhere (e.g. the agent spawning a fresh conversation
+        // on this sprite) — drop it into the sidebar live, deduping against a
+        // session we already know about (our own new-chat unshift, or a replay).
+        if (msg.session && msg.session.id && !sessions.some(s => s.id === msg.session.id)) {
+          sessions.unshift(msg.session);
+          renderSessions();
+        }
+        break;
       case 'history':
         messagesEl.innerHTML = '';
         currentAssistantEl = null; assistantText = '';

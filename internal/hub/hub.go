@@ -252,6 +252,35 @@ func (h *Hub) unregisterClient(client *Client) {
 	}
 }
 
+// BroadcastAll delivers a message to EVERY connected client, regardless of which
+// session its WS is attached to. Used for fleet-wide UI signals that aren't
+// scoped to one conversation — e.g. a new session appearing in the sidebar so a
+// chat created by the agent (POST /api/sessions) shows up live for whoever's
+// watching another chat, without a page refresh.
+func (h *Hub) BroadcastAll(data []byte) {
+	if h.cfg.secrets != nil {
+		data = h.cfg.secrets.Mask(data)
+	}
+	h.mu.RLock()
+	targets := make([]*Client, 0)
+	for _, clients := range h.clients {
+		for client := range clients {
+			targets = append(targets, client)
+		}
+	}
+	h.mu.RUnlock()
+	for _, client := range targets {
+		select {
+		case client.send <- data:
+		default:
+			close(client.send)
+			h.mu.Lock()
+			delete(h.clients[client.sessionID], client)
+			h.mu.Unlock()
+		}
+	}
+}
+
 func (h *Hub) broadcastToSession(message *BroadcastMessage) {
 	h.mu.RLock()
 	clients := h.clients[message.SessionID]
