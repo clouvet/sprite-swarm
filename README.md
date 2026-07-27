@@ -225,22 +225,29 @@ get no Discourse server.
 
 **Grafana (optional):** store a `grafana` secret and the fleet gains **metrics + dashboard** access to
 your Grafana via the [official `grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) server —
-query Prometheus/Loki datasources and build/edit dashboards from a chat. The secret is
-`{"url":..,"service_account_token":..}` (a service account with at least the **Editor** role):
+query Prometheus/Loki datasources and build/edit dashboards from a chat. The secret is just the URL:
 
 ```
-sprite-agent put-secret --name grafana --file grafana.json   # {"url":"https://you.grafana.net","service_account_token":"glsa_…"}
+sprite-agent put-secret --name grafana --file grafana.json   # {"url":"https://you.grafana.net"}
 ```
 
-On boot each sprite writes the token to a `0600` file (read via `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`,
-so it's never in the process args or the `0644` mcp.json), fetches + caches the pinned `mcp-grafana`
-binary once, and adds a `grafana` entry to the composed `mcp.json`. Scoped via `-enabled-tools` to
-`search,datasource,prometheus,loki,dashboard,folder,navigation,annotations,rendering` — **writes on**
-(create/edit dashboards) but the alerting/incident/oncall/admin/provisioning write surfaces are off;
-widen the allowlist in `cmd/sprite-agent/grafana.go` to grant more. Rotate the token by re-running
-`put-secret` then `POST /api/fleet/reload-secrets {"target":"all"}` (new chats pick it up — `mcp.json`
-is read at `claude` start, so existing sessions keep the old config until restarted). Optional by
-construction: fleets without the secret get no Grafana server.
+The token lives in a **gateway connector**, not on the sprites — the same identity-authed model the brain
+and Claude use (see *Capability model* above). Create a `custom_api` connector fronting the Grafana URL — either in the Sprites dashboard ("Connect any
+API with a token" → base URL + a service-account token with the **Editor** role, `Authorization: Bearer`)
+or via `POST /v1/oauth/connections/custom_api` (`access_token`, `base_api_url`, `auth_method:"header"`,
+`auth_header_prefix:"Bearer"`, `access_policy:{allow_all:true}`). On boot each sprite discovers the
+connector by the URL it fronts and points `mcp-grafana` at the gateway base — reaching Grafana **by its
+Fly identity with no token on the sprite** (the gateway injects it). It also fetches + caches the pinned
+`mcp-grafana` binary once and adds a `grafana` entry to the composed `mcp.json`, scoped via
+`-enabled-tools` to `search,datasource,prometheus,loki,dashboard,folder,navigation,annotations,rendering`
+— **writes on** (create/edit dashboards) but the alerting/incident/oncall/admin/provisioning write
+surfaces are off; widen the allowlist in `cmd/sprite-agent/grafana.go` to grant more.
+
+Rotate by updating the connector's token (dashboard or API); revoke by deleting the connector — instant
+and fleet-wide, no secret to rotate. **Fallback:** if no connector fronts the URL, a
+`service_account_token` in the secret is written to a `0600` file and used directly (`mcp.json` is read
+at `claude` start, so new chats pick up either path; existing sessions keep their config until
+restarted). Optional by construction: fleets without the secret get no Grafana server.
 
 It cross-compiles the binary, primes the brain (stages the artifact + writes the secrets via direct
 Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores those
