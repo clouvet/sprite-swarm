@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,7 +52,7 @@ func setupGitHubAuth(token string) {
 // flyctl) so newly-spawned subprocesses pick up ROTATED tokens without a restart.
 // Wired to POST /api/fleet/reload-secrets. The Sprites-API + Claude tokens are bound
 // at spawner construction / Claude launch, so changing those still needs a restart.
-func reloadBrainSecrets(fleetSvc *fleet.Service) {
+func reloadBrainSecrets(fleetSvc *fleet.Service, baseDir string) {
 	if fleetSvc == nil {
 		return
 	}
@@ -64,6 +65,26 @@ func reloadBrainSecrets(fleetSvc *fleet.Service) {
 	if fly := fleetSvc.GetSecret(ctx, fleet.SecretFlyToken); fly != "" {
 		setupFlyAuth(fly)
 		log.Printf("reload-secrets: re-applied fly token")
+	}
+	// Refresh a rotated Grafana token in its 0600 file so the next mcp-grafana
+	// launch (new session) authenticates with it. Parses just for the token;
+	// mcp.json/URL are unchanged, so already-running servers keep the old value
+	// until their session restarts — same as the other env-bound creds above.
+	if gsec := fleetSvc.GetSecret(ctx, fleet.SecretGrafana); gsec != "" {
+		var cfg grafanaConfig
+		if err := json.Unmarshal([]byte(strings.TrimSpace(gsec)), &cfg); err == nil {
+			token := strings.TrimSpace(cfg.Token)
+			if token == "" {
+				token = strings.TrimSpace(cfg.Alt)
+			}
+			if token != "" {
+				if _, err := writeGrafanaToken(baseDir, token); err != nil {
+					log.Printf("reload-secrets: refresh grafana token failed: %v", err)
+				} else {
+					log.Printf("reload-secrets: refreshed grafana token")
+				}
+			}
+		}
 	}
 }
 
@@ -452,14 +473,32 @@ func main() {
 				log.Printf("secrets: loaded claude oauth token from brain (subscription auth)")
 			}
 		}
-		// Discourse MCP (optional): if forum creds are in the brain and the operator
-		// hasn't supplied their own MCP config, generate the @discourse/mcp server so
-		// pasting a Discourse link lets Claude pull the thread in. One server serves
-		// every site in the profile (e.g. a private + a public forum).
+		// MCP servers (optional, composed): if the operator hasn't supplied their own
+		// MCP config, materialize any brain-configured servers into one mcp.json so
+		// the fleet runs them all. Discourse (paste a forum link, pull the thread in)
+		// and Grafana (query metrics, build/edit dashboards) are each gated on their
+		// own secret — a fleet gets only what's stored. Every sprite rehydrates the
+		// same set, so any worker is as capable as home (symmetry).
 		if cfg.MCPConfigPath == "" {
+			baseDir := filepath.Join(cfg.WorkDir, ".sprite-agent")
+			servers := map[string]any{}
 			if prof := fleetSvc.GetSecret(sctx, fleet.SecretDiscourse); prof != "" {
-				if p, err := setupDiscourseMCP(filepath.Join(cfg.WorkDir, ".sprite-agent"), prof); err != nil {
+				if name, entry, err := setupDiscourseMCP(baseDir, prof); err != nil {
 					log.Printf("secrets: discourse mcp setup failed: %v", err)
+				} else {
+					servers[name] = entry
+				}
+			}
+			if gsec := fleetSvc.GetSecret(sctx, fleet.SecretGrafana); gsec != "" {
+				if name, entry, err := setupGrafanaMCP(baseDir, gsec); err != nil {
+					log.Printf("secrets: grafana mcp setup failed: %v", err)
+				} else {
+					servers[name] = entry
+				}
+			}
+			if len(servers) > 0 {
+				if p, err := writeMCPConfig(baseDir, servers); err != nil {
+					log.Printf("secrets: write mcp config failed: %v", err)
 				} else {
 					cfg.MCPConfigPath = p
 				}
@@ -541,7 +580,7 @@ func main() {
 		roster = fleetSvc
 	}
 	srv := server.New(cfg, h, roster, spawner, secrets)
-	srv.SetReloadSecrets(func() { reloadBrainSecrets(fleetSvc) }) // POST /api/fleet/reload-secrets
+	srv.SetReloadSecrets(func() { reloadBrainSecrets(fleetSvc, filepath.Join(cfg.WorkDir, ".sprite-agent")) }) // POST /api/fleet/reload-secrets
 
 	if fleetSvc != nil {
 		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
