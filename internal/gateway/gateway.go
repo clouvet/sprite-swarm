@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type Connection struct {
 	Provider    string `json:"provider"`
 	ID          string `json:"id"`
 	GatewayBase string `json:"gateway_base_url"`
+	BaseAPIURL  string `json:"base_api_url"` // custom_api: the upstream this connector fronts
 }
 
 type listResponse struct {
@@ -79,6 +81,29 @@ func AnthropicBaseURL(ctx context.Context) string {
 		return ""
 	}
 	return conns["anthropic"].GatewayBase
+}
+
+// CustomAPIBaseFor returns the gateway base URL of the custom_api connector that
+// fronts the given upstream (e.g. a Grafana URL), or "" if none. A sprite then
+// calls that base by its identity and the gateway injects the connector's stored
+// token — so a third-party API is reached WITHOUT any token on the sprite.
+// Matched by upstream so no connector id needs pinning; custom_api is generic, so
+// callers pass the specific upstream they mean.
+func CustomAPIBaseFor(ctx context.Context, upstream string) string {
+	want := strings.TrimRight(strings.TrimSpace(upstream), "/")
+	if want == "" {
+		return ""
+	}
+	conns, err := list(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, c := range conns {
+		if c.Provider == "custom_api" && strings.TrimRight(c.BaseAPIURL, "/") == want {
+			return c.GatewayBase
+		}
+	}
+	return ""
 }
 
 // SpritesAPIBase returns the gateway base URL of a custom_api connector fronting

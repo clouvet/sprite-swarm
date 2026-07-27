@@ -490,7 +490,7 @@ func main() {
 				}
 			}
 			if gsec := fleetSvc.GetSecret(sctx, fleet.SecretGrafana); gsec != "" {
-				if name, entry, err := setupGrafanaMCP(baseDir, gsec); err != nil {
+				if name, entry, err := setupGrafanaMCP(sctx, baseDir, gsec); err != nil {
 					log.Printf("secrets: grafana mcp setup failed: %v", err)
 				} else {
 					servers[name] = entry
