@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ws", s.serveWs)
 	mux.HandleFunc("/health", s.serveHealth)
 	mux.HandleFunc("/api/sessions", s.serveSessions)
+	mux.HandleFunc("/api/sessions/search", s.serveSearch)
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/context", s.serveFleet)
