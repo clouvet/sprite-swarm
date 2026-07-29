@@ -41,6 +41,7 @@
   // ---- DOM ----
   const $ = id => document.getElementById(id);
   const sessionsList = $('sessions-list');
+  const searchInput = $('session-search-input');
   const fleetList = $('fleet-list');
   const messagesEl = $('messages');
   const inputEl = $('input');
@@ -218,6 +219,57 @@
         const s = sessions.find(x => x.id === el.dataset.id);
         if (s) selectSession(s);
       });
+    });
+  }
+
+  // ---- session search (phase 1: this sprite's own chats) ----
+  // Debounced; a monotonic seq drops out-of-order responses so fast typing can't
+  // let an older result overwrite a newer one. Empty query restores the normal list.
+  let searchTimer = null, searchSeq = 0;
+  function highlight(text, q) {
+    const esc = escapeHtml(text || '');
+    if (!q) return esc;
+    const idx = esc.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) return esc;
+    return esc.slice(0, idx) + '<mark>' + esc.slice(idx, idx + q.length) + '</mark>' + esc.slice(idx + q.length);
+  }
+  function renderSearchResults(hits, q) {
+    if (!hits.length) {
+      sessionsList.innerHTML = '<div class="session-empty">No chats match “' + escapeHtml(q) + '”</div>';
+      return;
+    }
+    sessionsList.innerHTML = hits.map(h => `
+      <div class="session-item ${currentSession && currentSession.id === h.id ? 'active' : ''}" data-id="${h.id}">
+        <div class="session-name"><span>${highlight(h.name || 'Chat', q)}</span>${h.matches ? `<span class="session-badge" title="${h.matches} matching message${h.matches === 1 ? '' : 's'}">${h.matches}</span>` : ''}</div>
+        <div class="session-preview">${highlight(h.snippet || '', q)}</div>
+        <div class="session-time">${formatTime(h.lastMessageAt)}</div>
+      </div>`).join('');
+    sessionsList.querySelectorAll('.session-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.id;
+        const s = sessions.find(x => x.id === id) || { id, name: el.querySelector('.session-name span').textContent };
+        searchInput.value = ''; searchSeq++;       // leave search mode on open
+        selectSession(s);
+      });
+    });
+  }
+  async function runSearch(q) {
+    const seq = ++searchSeq;
+    try {
+      const res = await fetch('/api/sessions/search?q=' + encodeURIComponent(q));
+      const hits = (await res.json()) || [];
+      if (seq === searchSeq) renderSearchResults(hits, q);
+    } catch (e) { if (seq === searchSeq) renderSearchResults([], q); }
+  }
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim();
+      clearTimeout(searchTimer);
+      if (!q) { searchSeq++; renderSessions(); return; } // back to the normal list
+      searchTimer = setTimeout(() => runSearch(q), 200);
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { searchInput.value = ''; searchSeq++; renderSessions(); searchInput.blur(); }
     });
   }
 
