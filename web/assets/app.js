@@ -261,17 +261,84 @@
       if (seq === searchSeq) renderSearchResults(hits, q);
     } catch (e) { if (seq === searchSeq) renderSearchResults([], q); }
   }
+
+  // ---- fleet-wide search (phase 2): fan out across all sprites, grouped by sprite ----
+  const fleetToggle = $('search-fleet-toggle');
+  const dormantOpt = $('search-dormant-opt');
+  const dormantToggle = $('search-dormant-toggle');
+  function openHit(sprite, id, name) {
+    if (sprite.self) {                              // a chat on THIS sprite → open in place
+      searchInput.value = ''; searchSeq++;
+      selectSession(sessions.find(x => x.id === id) || { id, name });
+    } else if (sprite.url) {                        // a chat on another sprite → open its UI there
+      window.open(sprite.url.replace(/\/$/, '') + '/#session=' + id, '_blank', 'noopener');
+    }
+  }
+  function renderFleetResults(res, q) {
+    const sprites = (res.sprites || []).slice().sort((a, b) =>
+      (b.self ? 1 : 0) - (a.self ? 1 : 0) || (b.present ? 1 : 0) - (a.present ? 1 : 0) || a.sprite.localeCompare(b.sprite));
+    let html = '', shown = 0, skipped = 0, errored = 0;
+    for (const sp of sprites) {
+      if (sp.skipped) skipped++;
+      if (sp.error) errored++;
+      const hits = sp.hits || [];
+      if (!hits.length) continue;
+      shown++;
+      const tag = (sp.self ? '<span class="search-you">you</span>' : '') + (sp.present ? ' <span class="search-present">👤</span>' : '');
+      html += `<div class="search-group">${escapeHtml(sp.sprite)}${tag}</div>`;
+      html += hits.map(h => `
+        <div class="session-item" data-sprite="${escapeHtml(sp.sprite)}" data-id="${h.id}">
+          <div class="session-name"><span>${highlight(h.name || 'Chat', q)}</span>${h.matches ? `<span class="session-badge">${h.matches}</span>` : ''}</div>
+          <div class="session-preview">${highlight(h.snippet || '', q)}</div>
+        </div>`).join('');
+    }
+    const notes = [];
+    if (skipped) notes.push(`${skipped} dormant not searched`);
+    if (errored) notes.push(`${errored} unreachable`);
+    const footer = notes.length ? `<div class="session-empty">${notes.join(' · ')}${!fleetIncludesDormant() && skipped ? ' — tick “incl. dormant” to wake them' : ''}</div>` : '';
+    if (!shown) {
+      sessionsList.innerHTML = `<div class="session-empty">No chats match “${escapeHtml(q)}” across the fleet</div>` + footer;
+      return;
+    }
+    sessionsList.innerHTML = html + footer;
+    sessionsList.querySelectorAll('.session-item').forEach(el => {
+      const sp = sprites.find(x => x.sprite === el.dataset.sprite);
+      el.addEventListener('click', () => openHit(sp, el.dataset.id, el.querySelector('.session-name span').textContent));
+    });
+  }
+  const fleetIncludesDormant = () => dormantToggle && dormantToggle.checked;
+  async function runFleetSearch(q) {
+    const seq = ++searchSeq;
+    const scope = fleetIncludesDormant() ? 'all' : 'awake';
+    sessionsList.innerHTML = '<div class="session-empty">Searching the fleet…</div>';
+    try {
+      const res = await fetch('/api/fleet/search?q=' + encodeURIComponent(q) + '&scope=' + scope);
+      const data = (await res.json()) || {};
+      if (seq === searchSeq) renderFleetResults(data, q);
+    } catch (e) { if (seq === searchSeq) sessionsList.innerHTML = '<div class="session-empty">Fleet search failed</div>'; }
+  }
+
+  // Dispatcher: empty query → normal list; else local or fleet search per the toggle.
+  function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) { searchSeq++; renderSessions(); return; }
+    if (fleetToggle && fleetToggle.checked) runFleetSearch(q); else runSearch(q);
+  }
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      const q = searchInput.value.trim();
       clearTimeout(searchTimer);
-      if (!q) { searchSeq++; renderSessions(); return; } // back to the normal list
-      searchTimer = setTimeout(() => runSearch(q), 200);
+      if (!searchInput.value.trim()) { searchSeq++; renderSessions(); return; }
+      searchTimer = setTimeout(doSearch, 250);
     });
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { searchInput.value = ''; searchSeq++; renderSessions(); searchInput.blur(); }
     });
   }
+  if (fleetToggle) fleetToggle.addEventListener('change', () => {
+    if (dormantOpt) dormantOpt.hidden = !fleetToggle.checked;
+    doSearch();
+  });
+  if (dormantToggle) dormantToggle.addEventListener('change', doSearch);
 
   function selectSession(s) {
     currentSession = s;
