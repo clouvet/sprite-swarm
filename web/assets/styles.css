@@ -65,6 +65,16 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 }
 #session-search-input:focus { border-color: var(--accent); }
 #session-search-input::placeholder { color: var(--text-muted); }
+#search-opts { display: flex; gap: 12px; padding: 6px 2px 0; font-size: 12px; color: var(--text-muted); }
+#search-opts label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+#search-opts input { accent-color: var(--accent); margin: 0; }
+.search-group {
+  padding: 10px 6px 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 6px;
+}
+.search-you { font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 6px; }
+.search-present { font-size: 11px; }
 .session-empty { padding: 16px 14px; font-size: 13px; color: var(--text-muted); text-align: center; }
 .session-badge {
   flex-shrink: 0; font-size: 11px; font-weight: 600; line-height: 1;

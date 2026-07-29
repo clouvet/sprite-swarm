@@ -135,6 +135,32 @@ func makeSnippet(content, qLower string) string {
 	return snippet
 }
 
+// serveFleetSearch handles GET /api/fleet/search?q=<query>&scope=<awake|all>,
+// fanning the per-sprite search out across the roster from this sprite. Default
+// scope "awake" skips dormant sprites (fast); "all" wakes and searches them too.
+func (s *Server) serveFleetSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		writeJSON(w, map[string]any{"query": q, "sprites": []any{}})
+		return
+	}
+	includeAsleep := r.URL.Query().Get("scope") == "all"
+	res, err := s.fleet.SearchFleet(r.Context(), q, includeAsleep)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
 // serveSearch handles GET /api/sessions/search?q=<query>&limit=<n>, searching
 // this sprite's own sessions. limit defaults to 50.
 func (s *Server) serveSearch(w http.ResponseWriter, r *http.Request) {

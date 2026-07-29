@@ -37,6 +37,7 @@ type Fleet interface {
 	Reexec() error
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
 	ReloadFleet(ctx context.Context, target string) (interface{}, error)
+	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -117,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
 	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
+	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
