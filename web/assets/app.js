@@ -262,10 +262,8 @@
     } catch (e) { if (seq === searchSeq) renderSearchResults([], q); }
   }
 
-  // ---- fleet-wide search (phase 2): fan out across all sprites, grouped by sprite ----
+  // ---- fleet-wide search (phase 2): fan out across ALL sprites (incl. dormant) ----
   const fleetToggle = $('search-fleet-toggle');
-  const dormantOpt = $('search-dormant-opt');
-  const dormantToggle = $('search-dormant-toggle');
   function openHit(sprite, id, name) {
     if (sprite.self) {                              // a chat on THIS sprite → open in place
       searchInput.value = ''; searchSeq++;
@@ -292,10 +290,10 @@
           <div class="session-preview">${highlight(h.snippet || '', q)}</div>
         </div>`).join('');
     }
-    const notes = [];
-    if (skipped) notes.push(`${skipped} dormant not searched`);
-    if (errored) notes.push(`${errored} unreachable`);
-    const footer = notes.length ? `<div class="session-empty">${notes.join(' · ')}${!fleetIncludesDormant() && skipped ? ' — tick “incl. dormant” to wake them' : ''}</div>` : '';
+    // scope is always "all" now, so skipped/error just means a sprite couldn't be
+    // reached or woken within the timeout.
+    const unreachable = skipped + errored;
+    const footer = unreachable ? `<div class="session-empty">${unreachable} sprite${unreachable === 1 ? '' : 's'} unreachable</div>` : '';
     if (!shown) {
       sessionsList.innerHTML = `<div class="session-empty">No chats match “${escapeHtml(q)}” across the fleet</div>` + footer;
       return;
@@ -306,13 +304,11 @@
       el.addEventListener('click', () => openHit(sp, el.dataset.id, el.querySelector('.session-name span').textContent));
     });
   }
-  const fleetIncludesDormant = () => dormantToggle && dormantToggle.checked;
   async function runFleetSearch(q) {
     const seq = ++searchSeq;
-    const scope = fleetIncludesDormant() ? 'all' : 'awake';
     sessionsList.innerHTML = '<div class="session-empty">Searching the fleet…</div>';
     try {
-      const res = await fetch('/api/fleet/search?q=' + encodeURIComponent(q) + '&scope=' + scope);
+      const res = await fetch('/api/fleet/search?q=' + encodeURIComponent(q) + '&scope=all');
       const data = (await res.json()) || {};
       if (seq === searchSeq) renderFleetResults(data, q);
     } catch (e) { if (seq === searchSeq) sessionsList.innerHTML = '<div class="session-empty">Fleet search failed</div>'; }
@@ -334,11 +330,7 @@
       if (e.key === 'Escape') { searchInput.value = ''; searchSeq++; renderSessions(); searchInput.blur(); }
     });
   }
-  if (fleetToggle) fleetToggle.addEventListener('change', () => {
-    if (dormantOpt) dormantOpt.hidden = !fleetToggle.checked;
-    doSearch();
-  });
-  if (dormantToggle) dormantToggle.addEventListener('change', doSearch);
+  if (fleetToggle) fleetToggle.addEventListener('change', doSearch);
 
   function selectSession(s) {
     currentSession = s;
