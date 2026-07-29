@@ -75,6 +75,21 @@ func TestSearchSessions(t *testing.T) {
 	}
 }
 
+func TestSearchExcludesUnnamed(t *testing.T) {
+	s, root := newTestServer(t)
+	// A transcript whose body matches but which has NO store entry (a dispatched
+	// or orphaned session) must be excluded — no "session <id>" clutter.
+	writeTranscript(t, root, "eeeeeeee", userLine("lots of grafana talk here"))
+	if hits := s.searchSessions("grafana", 50); len(hits) != 0 {
+		t.Fatalf("expected unnamed session to be excluded, got %+v", hits)
+	}
+	// Once it's a named chat, it shows up.
+	s.store.EnsureNamed("eeeeeeee", "Grafana notes")
+	if hits := s.searchSessions("grafana", 50); len(hits) != 1 {
+		t.Fatalf("expected the named session to match, got %+v", hits)
+	}
+}
+
 func TestSearchNameOnlyMatch(t *testing.T) {
 	s, root := newTestServer(t)
 	// Body has no "deploy" but the NAME does — still surfaced.

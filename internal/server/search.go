@@ -50,13 +50,17 @@ func (s *Server) searchSessions(query string, limit int) []SearchHit {
 	for _, path := range files {
 		id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 		name := names[id]
+		// Only surface real, named chats. A transcript with no store entry is a
+		// dispatched/terminal/orphaned session (would show as "session <id>") —
+		// skip it entirely rather than clutter results. Skipping before the scan
+		// is also faster (we never read those files).
+		if name == "" {
+			continue
+		}
 		matches, snippet := scanTranscript(path, q)
 		// A name match still surfaces the session even with no in-body hit.
 		if matches == 0 && !strings.Contains(strings.ToLower(name), q) {
 			continue
-		}
-		if name == "" {
-			name = "session " + shortID(id)
 		}
 		if snippet == "" {
 			snippet = name
