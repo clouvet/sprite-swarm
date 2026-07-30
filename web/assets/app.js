@@ -222,10 +222,10 @@
     });
   }
 
-  // ---- session search (phase 1: this sprite's own chats) ----
-  // Debounced; a monotonic seq drops out-of-order responses so fast typing can't
-  // let an older result overwrite a newer one. Empty query restores the normal list.
-  let searchTimer = null, searchSeq = 0;
+  // ---- session search: this sprite first, then the rest of the fleet streams in ----
+  // A single monotonic seq drops out-of-order responses; the local result lands
+  // fast, and the (slower) fleet fan-out fills in the other sprites behind it.
+  let searchSeq = 0, localTimer = null, fleetTimer = null, fleetDoneSeq = 0;
   function highlight(text, q) {
     const esc = escapeHtml(text || '');
     if (!q) return esc;
@@ -233,37 +233,6 @@
     if (idx < 0) return esc;
     return esc.slice(0, idx) + '<mark>' + esc.slice(idx, idx + q.length) + '</mark>' + esc.slice(idx + q.length);
   }
-  function renderSearchResults(hits, q) {
-    if (!hits.length) {
-      sessionsList.innerHTML = '<div class="session-empty">No chats match “' + escapeHtml(q) + '”</div>';
-      return;
-    }
-    sessionsList.innerHTML = hits.map(h => `
-      <div class="session-item ${currentSession && currentSession.id === h.id ? 'active' : ''}" data-id="${h.id}">
-        <div class="session-name"><span>${highlight(h.name || 'Chat', q)}</span>${h.matches ? `<span class="session-badge" title="${h.matches} matching message${h.matches === 1 ? '' : 's'}">${h.matches}</span>` : ''}</div>
-        <div class="session-preview">${highlight(h.snippet || '', q)}</div>
-        <div class="session-time">${formatTime(h.lastMessageAt)}</div>
-      </div>`).join('');
-    sessionsList.querySelectorAll('.session-item').forEach(el => {
-      el.addEventListener('click', () => {
-        const id = el.dataset.id;
-        const s = sessions.find(x => x.id === id) || { id, name: el.querySelector('.session-name span').textContent };
-        searchInput.value = ''; searchSeq++;       // leave search mode on open
-        selectSession(s);
-      });
-    });
-  }
-  async function runSearch(q) {
-    const seq = ++searchSeq;
-    try {
-      const res = await fetch('/api/sessions/search?q=' + encodeURIComponent(q));
-      const hits = (await res.json()) || [];
-      if (seq === searchSeq) renderSearchResults(hits, q);
-    } catch (e) { if (seq === searchSeq) renderSearchResults([], q); }
-  }
-
-  // ---- fleet-wide search (phase 2): fan out across ALL sprites (incl. dormant) ----
-  const fleetToggle = $('search-fleet-toggle');
   function openHit(sprite, id, name) {
     if (sprite.self) {                              // a chat on THIS sprite → open in place
       searchInput.value = ''; searchSeq++;
@@ -272,65 +241,73 @@
       window.open(sprite.url.replace(/\/$/, '') + '/#session=' + id, '_blank', 'noopener');
     }
   }
-  function renderFleetResults(res, q) {
-    const sprites = (res.sprites || []).slice().sort((a, b) =>
-      (b.self ? 1 : 0) - (a.self ? 1 : 0) || (b.present ? 1 : 0) - (a.present ? 1 : 0) || a.sprite.localeCompare(b.sprite));
-    let html = '', shown = 0, skipped = 0, errored = 0;
-    for (const sp of sprites) {
-      if (sp.skipped) skipped++;
-      if (sp.error) errored++;
+  // renderResults draws groups (this sprite first, then present sprites, then the
+  // rest by id). opts.loading appends a "searching the fleet…" line; opts.unreachable
+  // notes sprites that couldn't be reached/woken.
+  function renderResults(sprites, q, opts) {
+    opts = opts || {};
+    const sorted = sprites.slice().sort((a, b) =>
+      (b.self ? 1 : 0) - (a.self ? 1 : 0) || (b.present ? 1 : 0) - (a.present ? 1 : 0) || (a.sprite || '').localeCompare(b.sprite || ''));
+    let html = '', shown = 0;
+    sorted.forEach((sp, idx) => {
       const hits = sp.hits || [];
-      if (!hits.length) continue;
+      if (!hits.length) return;
       shown++;
-      const tag = (sp.self ? '<span class="search-you">you</span>' : '') + (sp.present ? ' <span class="search-present">👤</span>' : '');
-      html += `<div class="search-group">${escapeHtml(sp.sprite)}${tag}</div>`;
+      const label = sp.self ? 'This sprite' : escapeHtml(sp.sprite || 'sprite');
+      const tag = sp.present ? ' <span class="search-present">👤</span>' : '';
+      html += `<div class="search-group">${label}${tag}</div>`;
       html += hits.map(h => `
-        <div class="session-item" data-sprite="${escapeHtml(sp.sprite)}" data-id="${h.id}">
+        <div class="session-item" data-idx="${idx}" data-id="${h.id}">
           <div class="session-name"><span>${highlight(h.name || 'Chat', q)}</span>${h.matches ? `<span class="session-badge">${h.matches}</span>` : ''}</div>
           <div class="session-preview">${highlight(h.snippet || '', q)}</div>
         </div>`).join('');
-    }
-    // scope is always "all" now, so skipped/error just means a sprite couldn't be
-    // reached or woken within the timeout.
-    const unreachable = skipped + errored;
-    const footer = unreachable ? `<div class="session-empty">${unreachable} sprite${unreachable === 1 ? '' : 's'} unreachable</div>` : '';
+    });
+    let footer = '';
+    if (opts.loading) footer = '<div class="session-empty search-loading">Searching the fleet…</div>';
+    else if (opts.unreachable) footer = `<div class="session-empty">${opts.unreachable} sprite${opts.unreachable === 1 ? '' : 's'} unreachable</div>`;
     if (!shown) {
-      sessionsList.innerHTML = `<div class="session-empty">No chats match “${escapeHtml(q)}” across the fleet</div>` + footer;
-      return;
+      const none = opts.loading ? 'No matches on this sprite…' : `No chats match “${escapeHtml(q)}”`;
+      sessionsList.innerHTML = `<div class="session-empty">${none}</div>` + footer;
+    } else {
+      sessionsList.innerHTML = html + footer;
     }
-    sessionsList.innerHTML = html + footer;
     sessionsList.querySelectorAll('.session-item').forEach(el => {
-      const sp = sprites.find(x => x.sprite === el.dataset.sprite);
+      const sp = sorted[+el.dataset.idx];
       el.addEventListener('click', () => openHit(sp, el.dataset.id, el.querySelector('.session-name span').textContent));
     });
   }
-  async function runFleetSearch(q) {
-    const seq = ++searchSeq;
-    sessionsList.innerHTML = '<div class="session-empty">Searching the fleet…</div>';
+  async function runLocal(q, seq) {
     try {
-      const res = await fetch('/api/fleet/search?q=' + encodeURIComponent(q) + '&scope=all');
-      const data = (await res.json()) || {};
-      if (seq === searchSeq) renderFleetResults(data, q);
-    } catch (e) { if (seq === searchSeq) sessionsList.innerHTML = '<div class="session-empty">Fleet search failed</div>'; }
+      const hits = (await (await fetch('/api/sessions/search?q=' + encodeURIComponent(q))).json()) || [];
+      // Don't clobber a fleet render that already landed for this query.
+      if (seq === searchSeq && fleetDoneSeq !== seq) {
+        renderResults([{ self: true, hits }], q, { loading: true });
+      }
+    } catch (e) { /* fleet result (or a newer query) will render */ }
   }
-
-  // Dispatcher: empty query → normal list; else local or fleet search per the toggle.
-  function doSearch() {
-    const q = searchInput.value.trim();
-    if (!q) { searchSeq++; renderSessions(); return; }
-    if (fleetToggle && fleetToggle.checked) runFleetSearch(q); else runSearch(q);
+  async function runFleet(q, seq) {
+    try {
+      const data = (await (await fetch('/api/fleet/search?q=' + encodeURIComponent(q) + '&scope=all')).json()) || {};
+      if (seq !== searchSeq) return;
+      fleetDoneSeq = seq;
+      const sprites = data.sprites || [];
+      const unreachable = sprites.filter(s => s.skipped || s.error).length;
+      renderResults(sprites, q, { unreachable });
+    } catch (e) { /* keep whatever local rendered */ }
   }
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      clearTimeout(searchTimer);
-      if (!searchInput.value.trim()) { searchSeq++; renderSessions(); return; }
-      searchTimer = setTimeout(doSearch, 250);
+      clearTimeout(localTimer); clearTimeout(fleetTimer);
+      const q = searchInput.value.trim();
+      const seq = ++searchSeq;
+      if (!q) { renderSessions(); return; }         // back to the normal list
+      localTimer = setTimeout(() => runLocal(q, seq), 150);   // snappy local pass
+      fleetTimer = setTimeout(() => runFleet(q, seq), 450);   // slower fan-out (wakes dormant sprites)
     });
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { searchInput.value = ''; searchSeq++; renderSessions(); searchInput.blur(); }
     });
   }
-  if (fleetToggle) fleetToggle.addEventListener('change', doSearch);
 
   function selectSession(s) {
     currentSession = s;
