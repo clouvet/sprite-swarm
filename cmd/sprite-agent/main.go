@@ -86,6 +86,14 @@ func reloadBrainSecrets(fleetSvc *fleet.Service, baseDir string) {
 			}
 		}
 	}
+	// Re-apply a rotated Sentry token to the process env so the next mcp-server
+	// launch (new session) authenticates with it.
+	if ssec := fleetSvc.GetSecret(ctx, fleet.SecretSentry); ssec != "" {
+		if _, token, err := parseSentrySecret(ssec); err == nil {
+			os.Setenv("SENTRY_ACCESS_TOKEN", token)
+			log.Printf("reload-secrets: re-applied sentry token")
+		}
+	}
 }
 
 // setupFlyAuth wires flyctl to the brain-sourced Fly token and ensures the CLI is
@@ -492,6 +500,13 @@ func main() {
 			if gsec := fleetSvc.GetSecret(sctx, fleet.SecretGrafana); gsec != "" {
 				if name, entry, err := setupGrafanaMCP(sctx, baseDir, gsec); err != nil {
 					log.Printf("secrets: grafana mcp setup failed: %v", err)
+				} else {
+					servers[name] = entry
+				}
+			}
+			if ssec := fleetSvc.GetSecret(sctx, fleet.SecretSentry); ssec != "" {
+				if name, entry, err := setupSentryMCP(ssec); err != nil {
+					log.Printf("secrets: sentry mcp setup failed: %v", err)
 				} else {
 					servers[name] = entry
 				}
