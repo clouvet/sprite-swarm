@@ -23,6 +23,7 @@ const (
 	SecretClaudeOAuthToken = "claude-oauth-token" // Claude subscription (from `claude setup-token`)
 	SecretDiscourse        = "discourse"          // @discourse/mcp profile (auth_pairs: site/api_key/api_username)
 	SecretGrafana          = "grafana"            // mcp-grafana config ({url, service_account_token})
+	SecretSentry           = "sentry"             // @sentry/mcp-server config ({host, access_token})
 )
 
 func secretKey(name string) string { return path.Join("fleet", "config", "secrets", name) }
