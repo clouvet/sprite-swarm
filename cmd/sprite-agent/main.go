@@ -94,6 +94,13 @@ func reloadBrainSecrets(fleetSvc *fleet.Service, baseDir string) {
 			log.Printf("reload-secrets: re-applied sentry token")
 		}
 	}
+	// Same for a rotated Honeycomb key (mcp-remote reads ${HONEYCOMB_KEY}).
+	if hsec := fleetSvc.GetSecret(ctx, fleet.SecretHoneycomb); hsec != "" {
+		if _, key, err := parseHoneycombSecret(hsec); err == nil {
+			os.Setenv("HONEYCOMB_KEY", key)
+			log.Printf("reload-secrets: re-applied honeycomb key")
+		}
+	}
 }
 
 // setupFlyAuth wires flyctl to the brain-sourced Fly token and ensures the CLI is
@@ -507,6 +514,13 @@ func main() {
 			if ssec := fleetSvc.GetSecret(sctx, fleet.SecretSentry); ssec != "" {
 				if name, entry, err := setupSentryMCP(ssec); err != nil {
 					log.Printf("secrets: sentry mcp setup failed: %v", err)
+				} else {
+					servers[name] = entry
+				}
+			}
+			if hsec := fleetSvc.GetSecret(sctx, fleet.SecretHoneycomb); hsec != "" {
+				if name, entry, err := setupHoneycombMCP(hsec); err != nil {
+					log.Printf("secrets: honeycomb mcp setup failed: %v", err)
 				} else {
 					servers[name] = entry
 				}
