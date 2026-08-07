@@ -83,6 +83,17 @@ func AnthropicBaseURL(ctx context.Context) string {
 	return conns["anthropic"].GatewayBase
 }
 
+// SlackBase returns the Slack (user) connector's gateway base URL, or "" if no
+// Slack connector is configured. Sprites reach the Slack Web API through it by
+// identity — token-free — as `<base>/<method>`.
+func SlackBase(ctx context.Context) string {
+	conns, err := Discover(ctx)
+	if err != nil {
+		return ""
+	}
+	return conns["slack"].GatewayBase
+}
+
 // CustomAPIBaseFor returns the gateway base URL of the custom_api connector that
 // fronts the given upstream (e.g. a Grafana URL), or "" if none. A sprite then
 // calls that base by its identity and the gateway injects the connector's stored

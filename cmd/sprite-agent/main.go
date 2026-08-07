@@ -413,6 +413,12 @@ func main() {
 		runPutSecret(os.Args[2:])
 		return
 	}
+	// `slack-mcp` runs the in-house Slack MCP server over stdio (launched by Claude
+	// via mcp.json when a slack gateway connector exists — token-free).
+	if len(os.Args) > 1 && os.Args[1] == "slack-mcp" {
+		runSlackMCP()
+		return
+	}
 
 	cfg := config.FromEnv()
 	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
@@ -524,6 +530,13 @@ func main() {
 				} else {
 					servers[name] = entry
 				}
+			}
+			// Slack is connector-gated, not secret-gated: no brain secret, no token —
+			// present only if a `slack` gateway connector exists for the org.
+			if name, entry, err := setupSlackMCP(sctx); err != nil {
+				log.Printf("secrets: slack mcp setup failed: %v", err)
+			} else if entry != nil {
+				servers[name] = entry
 			}
 			if len(servers) > 0 {
 				if p, err := writeMCPConfig(baseDir, servers); err != nil {
