@@ -1283,6 +1283,9 @@
   function openSidebar() { appEl.classList.add('sidebar-open'); }
   function closeSidebar() { appEl.classList.remove('sidebar-open'); }
   const mqMobile = window.matchMedia('(max-width: 768px)');
+  // Touch devices (phones/tablets) have no Shift+Enter, and their on-screen Return
+  // should insert a newline — send is via the button, like Messages/WhatsApp.
+  const mqCoarse = window.matchMedia('(pointer: coarse)');
   // The ☰ button: on mobile it reveals the under-sidebar; on desktop it shows/hides
   // the persistent sidebar (state on <html data-sidebar>, remembered across refresh
   // and applied pre-paint by a <head> script so there's no flash).
@@ -1471,7 +1474,9 @@
   applySessionModel(currentModel); // initialize the picker (defaults to Opus until a session sets it)
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    // Desktop: Enter sends, Shift+Enter is a newline. Touch/mobile: Enter is a
+    // newline and sending is via the button (no Shift key on a soft keyboard).
+    if (e.key === 'Enter' && !e.shiftKey && !mqCoarse.matches) { e.preventDefault(); send(); }
   });
   // Esc interrupts Claude while it's generating (item #26).
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !stopBtn.disabled) interrupt(); });
