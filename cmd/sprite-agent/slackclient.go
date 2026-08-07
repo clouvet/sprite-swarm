@@ -240,7 +240,7 @@ func (c *slackClient) formatMessages(ctx context.Context, msgs []map[string]any)
 		if who == "" {
 			who = firstNonEmpty(str(m["username"]), str(m["bot_id"]), "?")
 		}
-		text := str(m["text"])
+		text := messageBody(m)
 		when := time.Unix(int64(ts), 0).UTC().Format("2006-01-02 15:04")
 		fmt.Fprintf(&b, "[%s] %s: %s", when, who, text)
 		if rc, ok := m["reply_count"].(float64); ok && rc > 0 {
@@ -249,6 +249,103 @@ func (c *slackClient) formatMessages(ctx context.Context, msgs []map[string]any)
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// messageBody returns a message's readable content. Slack puts a lot of content
+// (bot posts, alerts, link unfurls, Block Kit) in attachments[]/blocks[] rather
+// than the top-level text, so we fall back to those, and list any uploaded files.
+func messageBody(m map[string]any) string {
+	var parts []string
+	if t := strings.TrimSpace(str(m["text"])); t != "" {
+		parts = append(parts, t)
+	}
+	for _, a := range asList(m["attachments"]) {
+		if at, ok := a.(map[string]any); ok {
+			if s := attachmentText(at); s != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+	if len(parts) == 0 { // only reach into blocks if nothing else surfaced text
+		if s := blocksText(asList(m["blocks"])); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	for _, f := range asList(m["files"]) {
+		if ff, ok := f.(map[string]any); ok {
+			name := firstNonEmpty(str(ff["name"]), str(ff["title"]), "file")
+			link := firstNonEmpty(str(ff["permalink"]), str(ff["url_private"]))
+			parts = append(parts, strings.TrimSpace(fmt.Sprintf("📎 %s (%s) %s", name, str(ff["mimetype"]), link)))
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+// attachmentText pulls title + text/fallback + fields (and nested blocks) from one
+// legacy message attachment.
+func attachmentText(at map[string]any) string {
+	var b []string
+	if t := strings.TrimSpace(str(at["title"])); t != "" {
+		b = append(b, t)
+	}
+	if body := firstNonEmpty(strings.TrimSpace(str(at["text"])), strings.TrimSpace(str(at["fallback"]))); body != "" && !strings.EqualFold(body, "[no preview available]") {
+		b = append(b, body)
+	}
+	for _, f := range asList(at["fields"]) {
+		if fm, ok := f.(map[string]any); ok {
+			if kv := strings.TrimSpace(strings.TrimSpace(str(fm["title"])) + ": " + strings.TrimSpace(str(fm["value"]))); kv != ":" && kv != "" {
+				b = append(b, kv)
+			}
+		}
+	}
+	if len(b) == 0 {
+		if s := blocksText(asList(at["blocks"])); s != "" {
+			b = append(b, s)
+		}
+	}
+	return strings.Join(uniqStrings(b), " — ")
+}
+
+// blocksText recursively extracts text from Block Kit blocks/elements (section
+// text, rich_text runs, etc.).
+func blocksText(blocks []any) string {
+	var out []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if t, ok := x["text"].(string); ok {
+				if s := strings.TrimSpace(t); s != "" {
+					out = append(out, s)
+				}
+			}
+			for _, vv := range x {
+				walk(vv)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	for _, b := range blocks {
+		walk(b)
+	}
+	return strings.Join(uniqStrings(out), " ")
+}
+
+// uniqStrings drops duplicate entries (Block Kit often repeats a run's text at
+// multiple nesting levels), preserving order.
+func uniqStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := in[:0:0]
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ---- small helpers ----
