@@ -291,7 +291,7 @@ func slackTools() []mcpTool {
 				for _, m := range asList(mm["matches"]) {
 					x, _ := m.(map[string]any)
 					ch, _ := x["channel"].(map[string]any)
-					fmt.Fprintf(&b, "[#%s] %s: %s\n", str(ch["name"]), firstNonEmpty(str(x["username"]), c.userName(ctx, str(x["user"]))), str(x["text"]))
+					fmt.Fprintf(&b, "[#%s] %s: %s\n", str(ch["name"]), firstNonEmpty(str(x["username"]), c.userName(ctx, str(x["user"]))), messageBody(x))
 				}
 				return b.String(), nil
 			},
