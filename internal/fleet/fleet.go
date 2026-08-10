@@ -33,6 +33,9 @@ type Service struct {
 	mu              sync.Mutex
 	phase           string                // current free-text phase, refreshed into status
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
+	tzName          string                // cached IANA timezone (brain-backed; default Asia/Ho_Chi_Minh)
+	tzFetched       time.Time             // when tzName was last read from the brain
+	lastContext     time.Time             // last FleetContext render, for per-turn time-gap detection
 
 	taskMu   sync.Mutex                                // serializes inbox drains (one at a time)
 	seen     map[string]bool                           // task ids already injected (loaded once, persisted on change)
