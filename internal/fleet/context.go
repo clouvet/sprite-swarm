@@ -21,6 +21,8 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 	}
 
 	var b strings.Builder
+	b.WriteString(s.timeContext(ctx))
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "## Fleet (live) — you are %q\n", s.id)
 	var attended []string
 	for _, e := range roster {

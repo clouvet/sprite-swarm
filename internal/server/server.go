@@ -38,6 +38,8 @@ type Fleet interface {
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
 	ReloadFleet(ctx context.Context, target string) (interface{}, error)
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
+	Timezone(ctx context.Context) string
+	SetTimezone(ctx context.Context, name string) error
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -119,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
 	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
 	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
+	mux.HandleFunc("/api/timezone", s.serveTimezone)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
@@ -293,6 +296,27 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, roster)
+}
+
+// serveTimezone reports (GET) or sets (POST {"tz":"America/New_York"}) the user's
+// IANA timezone, used to localize the per-turn time context. Fleet-wide (brain).
+// The agent POSTs here when the user says where they are.
+func (s *Server) serveTimezone(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var body struct {
+			TZ string `json:"tz"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := s.fleet.SetTimezone(r.Context(), body.TZ); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"timezone": s.fleet.Timezone(r.Context())})
 }
 
 // serveSpawn creates another sprite running this same artifact (M4). When no

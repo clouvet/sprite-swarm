@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed the IANA tz database so LoadLocation works on minimal images
 
 	"github.com/clouvet/sprite-swarm/internal/config"
 	"github.com/clouvet/sprite-swarm/internal/fleet"
@@ -361,6 +362,15 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"procedure); anything else can be a top-level .md. It syncs fleet-wide automatically, so the next "+
 		"worker starts already knowing. Make writing memory as second-nature as committing code.",
 		mem, mem, own)
+	b.WriteString(" TIME & LOCATION: the injected fleet context starts with a '## Now' line giving the " +
+		"current time in the user's local timezone AND UTC, plus a note when significant time has passed " +
+		"since the previous turn here. WATCH FOR GAPS — if you're resuming a chat after hours (e.g. " +
+		"overnight), do NOT assume the repo, deploys, or others' work are unchanged: re-verify (git " +
+		"status/pull, the roster, the build) before acting on stale assumptions. The user is normally in " +
+		"Hanoi (Asia/Ho_Chi_Minh, UTC+7); when they tell you they're somewhere else (e.g. 'I'm on the US " +
+		"east coast'), set it with `curl -sX POST localhost:8080/api/timezone -d '{\"tz\":\"America/New_York\"}'` " +
+		"(any valid IANA zone) so times localize correctly, then confirm briefly. When you report times or " +
+		"events to the user, give BOTH their local time and UTC (e.g. '14:32 Hanoi / 07:32 UTC').")
 	return b.String()
 }
 
