@@ -62,6 +62,7 @@ type Spawner interface {
 	Destroy(ctx context.Context, name string) error
 	Exists(ctx context.Context, name string) (bool, error)
 	SetEnv(ctx context.Context, name string, env map[string]string) error
+	SetURLAccess(ctx context.Context, name, visibility, scope string) error
 	DeployApp(ctx context.Context, req DeployRequest) (Result, error)
 	UpdateApp(ctx context.Context, name string, req DeployRequest) (Result, error)
 }

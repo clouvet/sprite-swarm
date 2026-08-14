@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/phase", s.servePhase)
 	mux.HandleFunc("/api/fleet/destroy", s.serveDestroy)
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
+	mux.HandleFunc("/api/fleet/sprite-access", s.serveSpriteAccess)
 	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
 	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
 	mux.HandleFunc("/api/timezone", s.serveTimezone)
@@ -760,6 +761,37 @@ func (s *Server) serveSetEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"updated": body.Target})
+}
+
+// serveSpriteAccess sets a sprite's URL visibility: POST /api/fleet/sprite-access
+// {"target":"<name>","visibility":"public"|"private","scope":"admins"|"org_users"}.
+// "public" = anyone with the URL (no login); "private" = Fly org login, scoped to
+// admins (default) or any org member. Works for worker AND app sprites; it's a
+// settings change (no restart), so no presence-defer. Not roster-gated, since app
+// sprites aren't in the roster — an unknown name surfaces as a 502 from the API.
+func (s *Server) serveSpriteAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Target     string `json:"target"`
+		Visibility string `json:"visibility"`
+		Scope      string `json:"scope"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Target == "" || body.Visibility == "" {
+		http.Error(w, `target and visibility ("public" or "private") are required`, http.StatusBadRequest)
+		return
+	}
+	if !s.spawner.Available() {
+		http.Error(w, "no spawn capability on this sprite (no sprites API token)", http.StatusNotImplemented)
+		return
+	}
+	if err := s.spawner.SetURLAccess(r.Context(), body.Target, body.Visibility, body.Scope); err != nil {
+		http.Error(w, "sprite-access failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"target": body.Target, "visibility": body.Visibility, "scope": body.Scope})
 }
 
 // serveReloadSecrets re-reads the brain and re-applies this agent's env-based

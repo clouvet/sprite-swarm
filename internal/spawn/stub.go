@@ -23,6 +23,9 @@ func (notConfigured) Exists(_ context.Context, _ string) (bool, error) {
 func (notConfigured) SetEnv(_ context.Context, _ string, _ map[string]string) error {
 	return ErrNotConfigured
 }
+func (notConfigured) SetURLAccess(_ context.Context, _, _, _ string) error {
+	return ErrNotConfigured
+}
 func (notConfigured) DeployApp(_ context.Context, _ DeployRequest) (Result, error) {
 	return Result{}, ErrNotConfigured
 }

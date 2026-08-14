@@ -515,6 +515,47 @@ func (a *apiSpawner) SetEnv(ctx context.Context, name string, extra map[string]s
 	return a.putService(ctx, name, body)
 }
 
+// SetURLAccess sets a sprite's public/private URL visibility via the Sprites API
+// (PUT /v1/sprites/<name>, url_settings). visibility is "public" (anyone, no
+// login) or "private" (Fly org login); for private, scope is "admins" (org
+// admins only, the default) or "org_users" (any org member). Works for worker and
+// app sprites alike — it's a settings change, not a restart.
+func (a *apiSpawner) SetURLAccess(ctx context.Context, name, visibility, scope string) error {
+	settings := map[string]string{}
+	switch visibility {
+	case "public":
+		settings["auth"] = "public"
+	case "private", "":
+		if scope == "" {
+			scope = "admins"
+		}
+		if scope != "admins" && scope != "org_users" {
+			return fmt.Errorf("invalid private scope %q (want admins or org_users)", scope)
+		}
+		settings["auth"] = "sprite"
+		settings["private_access"] = scope
+	default:
+		return fmt.Errorf("invalid visibility %q (want public or private)", visibility)
+	}
+	body, err := json.Marshal(map[string]any{"url_settings": settings})
+	if err != nil {
+		return err
+	}
+	resp, err := a.do(ctx, http.MethodPut, fmt.Sprintf("%s/v1/sprites/%s", a.base, name), body)
+	if err != nil {
+		return fmt.Errorf("set url access: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("no such sprite: %s", name)
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("set url access: %d: %s", resp.StatusCode, string(data))
+	}
+	return nil
+}
+
 func (a *apiSpawner) putService(ctx context.Context, name string, body []byte) error {
 	resp, err := a.do(ctx, http.MethodPut, fmt.Sprintf("%s/v1/sprites/%s/services/sprite-agent", a.base, name), body)
 	if err != nil {

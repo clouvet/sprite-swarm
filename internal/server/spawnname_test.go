@@ -36,11 +36,15 @@ func TestWorkerSlug(t *testing.T) {
 
 // fakeSpawner records the Spawn request and can simulate an existing name.
 type fakeSpawner struct {
-	taken       map[string]bool
-	lastReq     spawn.Request
-	destroyed   []string
-	updatedName string
-	updatedReq  spawn.DeployRequest
+	taken        map[string]bool
+	lastReq      spawn.Request
+	destroyed    []string
+	updatedName  string
+	updatedReq   spawn.DeployRequest
+	accessTarget string
+	accessVis    string
+	accessScope  string
+	accessErr    error
 }
 
 func (f *fakeSpawner) Available() bool { return true }
@@ -60,6 +64,10 @@ func (f *fakeSpawner) Exists(_ context.Context, name string) (bool, error) {
 	return f.taken[name], nil
 }
 func (f *fakeSpawner) SetEnv(_ context.Context, _ string, _ map[string]string) error { return nil }
+func (f *fakeSpawner) SetURLAccess(_ context.Context, name, visibility, scope string) error {
+	f.accessTarget, f.accessVis, f.accessScope = name, visibility, scope
+	return f.accessErr
+}
 func (f *fakeSpawner) DeployApp(context.Context, spawn.DeployRequest) (spawn.Result, error) {
 	return spawn.Result{}, nil
 }

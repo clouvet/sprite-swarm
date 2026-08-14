@@ -323,7 +323,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"{\"name\":\"<app sprite name>\",\"artifact_url\":..,\"run\":..,\"http_port\":..} — it reinstalls onto the " +
 			"SAME sprite, so the URL is unchanged; do NOT deploy a fresh sprite just to change an app. " +
 			"To TEAR DOWN an app sprite, POST /api/fleet/destroy-app {\"name\":\"<app sprite name>\"}. Bare app " +
-			"sprites are NOT in the fleet roster, so /api/fleet/destroy won't touch them — destroy-app is their teardown. ")
+			"sprites are NOT in the fleet roster, so /api/fleet/destroy won't touch them — destroy-app is their teardown. " +
+			"To CONTROL a sprite's URL visibility (worker OR app), POST /api/fleet/sprite-access " +
+			"{\"target\":\"<name>\",\"visibility\":\"public\"|\"private\"[,\"scope\":\"admins\"|\"org_users\"]}. " +
+			"\"public\" = reachable by anyone with the URL, no login (use for apps meant to be shared); \"private\" " +
+			"(the default for new sprites) = behind Fly org login, scoped to \"admins\" (default) or any org member " +
+			"(\"org_users\"). It's a settings change, not a restart. There is NO token-gated URL — access is public " +
+			"or by org membership. ")
 	} else {
 		b.WriteString("Spawning is not yet wired on this sprite (no sprites API token), so for now " +
 			"do the work here and note when a worker sprite would have been the better tool. ")
