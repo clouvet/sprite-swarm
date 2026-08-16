@@ -146,6 +146,12 @@ func (s *Server) Handler() http.Handler {
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Embedded assets (go:embed) have a zero ModTime, so http.FileServer sets no
+		// cache validator — browsers then cache them heuristically and show STALE UI
+		// after a hot-swap deploy (a UI change doesn't appear without a hard refresh).
+		// no-cache forces revalidation on every load; the assets are tiny and local,
+		// so the cost is negligible and the UI is always current.
+		w.Header().Set("Cache-Control", "no-cache")
 		fileServer.ServeHTTP(w, r)
 	})
 
