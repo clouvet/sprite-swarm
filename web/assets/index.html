@@ -53,6 +53,12 @@
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
         </button>
+        <button id="mcp-btn" title="MCP servers (fleet-wide)" aria-label="MCP servers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="6" rx="2"></rect><rect x="2" y="14" width="20" height="6" rx="2"></rect>
+            <line x1="6" y1="7" x2="6.01" y2="7"></line><line x1="6" y1="17" x2="6.01" y2="17"></line>
+          </svg>
+        </button>
         <button id="theme-toggle" title="Theme: system" aria-label="Theme: cycle light / dark / system">
           <svg class="icon-system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -130,6 +136,30 @@
         <p id="env-msg" class="modal-msg"></p>
         <div class="modal-actions">
           <button id="env-close" class="modal-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/remove MCP servers (fleet-wide registry). -->
+    <div id="mcp-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mcp-modal-title">
+        <h3 id="mcp-modal-title">MCP servers</h3>
+        <p>Add an MCP server for the whole fleet by pasting its standard config. Stored in the
+           fleet brain and merged with the built-in servers. New chats pick it up immediately;
+           other sprites on their next update.
+           <strong>⚠ Adding a server runs its command on every sprite</strong> — only add ones you trust,
+           and prefer scoped/read-only keys (a token in the config is stored in the brain).</p>
+        <div id="mcp-list"></div>
+        <div class="mcp-add">
+          <input id="mcp-name" type="text" placeholder="name (e.g. github)" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <textarea id="mcp-config" rows="5" placeholder='{"command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_TOKEN":"…"}}'
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+          <button id="mcp-add-btn" class="modal-btn primary">Add server</button>
+        </div>
+        <p id="mcp-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button id="mcp-close" class="modal-btn">Close</button>
         </div>
       </div>
     </div>
