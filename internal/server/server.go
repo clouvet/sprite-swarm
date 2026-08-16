@@ -40,6 +40,9 @@ type Fleet interface {
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	Timezone(ctx context.Context) string
 	SetTimezone(ctx context.Context, name string) error
+	MCPRegistry(ctx context.Context) (map[string]json.RawMessage, error)
+	SetMCPServer(ctx context.Context, name string, config json.RawMessage) error
+	DeleteMCPServer(ctx context.Context, name string) error
 	UpdatePhase(ctx context.Context, phase string) error
 	WriteMemoryValue(ctx context.Context, title, text string, tags []string) (interface{}, error)
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
@@ -62,7 +65,13 @@ type Server struct {
 	// reloadSecrets re-reads the brain and re-applies env-based creds (git/gh,
 	// flyctl) in place; wired by main (which owns setupGitHubAuth). nil = no-op.
 	reloadSecrets func()
+	// regenerateMCP recomposes mcp.json from the built-ins + brain registry and
+	// returns its path; wired by main (which owns the setup funcs). nil = no-op.
+	regenerateMCP func() (string, error)
 }
+
+// SetRegenerateMCP wires the mcp.json regenerator (main owns the compose logic).
+func (s *Server) SetRegenerateMCP(fn func() (string, error)) { s.regenerateMCP = fn }
 
 // SetReloadSecrets registers the in-process secret re-apply hook used by
 // POST /api/fleet/reload-secrets. Set once, after New.
@@ -131,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/uploads/", s.serveUploadFile)
 	mux.HandleFunc("/api/env", s.serveEnv)
 	mux.HandleFunc("/api/env/", s.serveEnvByName)
+	mux.HandleFunc("/api/mcp", s.serveMCP)
+	mux.HandleFunc("/api/mcp/", s.serveMCPByName)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))

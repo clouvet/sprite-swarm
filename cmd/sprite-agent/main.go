@@ -377,6 +377,14 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"east coast'), set it with `curl -sX POST localhost:8080/api/timezone -d '{\"tz\":\"America/New_York\"}'` " +
 		"(any valid IANA zone) so times localize correctly, then confirm briefly. When you report times or " +
 		"events to the user, give BOTH their local time and UTC (e.g. '14:32 Hanoi / 07:32 UTC').")
+	b.WriteString(" MCP SERVERS: the fleet already runs a built-in set (discourse/grafana/sentry/honeycomb/" +
+		"slack, when configured). To ADD ANOTHER one — ONLY when the human asks, since it runs the server's " +
+		"command on every sprite with your privileges — POST /api/mcp {\"name\":\"<name>\",\"config\":{...}}, where " +
+		"config is the standard MCP entry ({\"command\",\"args\",\"env\"} for stdio, or {\"url\":..} for a remote " +
+		"server) pasted verbatim from the server's README. GET /api/mcp lists the user-added ones; DELETE " +
+		"/api/mcp/<name> removes one. It's stored fleet-wide in the brain and applied by regenerating mcp.json + " +
+		"restarting THIS sprite's sessions (so a NEW chat here picks it up); other sprites get it on their next " +
+		"boot/roll. Advise scoped/read-only keys for any token in the config (it lands in the 0644 mcp.json).")
 	return b.String()
 }
 
@@ -510,57 +518,14 @@ func main() {
 				log.Printf("secrets: loaded claude oauth token from brain (subscription auth)")
 			}
 		}
-		// MCP servers (optional, composed): if the operator hasn't supplied their own
-		// MCP config, materialize any brain-configured servers into one mcp.json so
-		// the fleet runs them all. Discourse (paste a forum link, pull the thread in)
-		// and Grafana (query metrics, build/edit dashboards) are each gated on their
-		// own secret — a fleet gets only what's stored. Every sprite rehydrates the
-		// same set, so any worker is as capable as home (symmetry).
-		if cfg.MCPConfigPath == "" {
-			baseDir := filepath.Join(cfg.WorkDir, ".sprite-agent")
-			servers := map[string]any{}
-			if prof := fleetSvc.GetSecret(sctx, fleet.SecretDiscourse); prof != "" {
-				if name, entry, err := setupDiscourseMCP(baseDir, prof); err != nil {
-					log.Printf("secrets: discourse mcp setup failed: %v", err)
-				} else {
-					servers[name] = entry
-				}
-			}
-			if gsec := fleetSvc.GetSecret(sctx, fleet.SecretGrafana); gsec != "" {
-				if name, entry, err := setupGrafanaMCP(sctx, baseDir, gsec); err != nil {
-					log.Printf("secrets: grafana mcp setup failed: %v", err)
-				} else {
-					servers[name] = entry
-				}
-			}
-			if ssec := fleetSvc.GetSecret(sctx, fleet.SecretSentry); ssec != "" {
-				if name, entry, err := setupSentryMCP(ssec); err != nil {
-					log.Printf("secrets: sentry mcp setup failed: %v", err)
-				} else {
-					servers[name] = entry
-				}
-			}
-			if hsec := fleetSvc.GetSecret(sctx, fleet.SecretHoneycomb); hsec != "" {
-				if name, entry, err := setupHoneycombMCP(hsec); err != nil {
-					log.Printf("secrets: honeycomb mcp setup failed: %v", err)
-				} else {
-					servers[name] = entry
-				}
-			}
-			// Slack is connector-gated, not secret-gated: no brain secret, no token —
-			// present only if a `slack` gateway connector exists for the org.
-			if name, entry, err := setupSlackMCP(sctx); err != nil {
-				log.Printf("secrets: slack mcp setup failed: %v", err)
-			} else if entry != nil {
-				servers[name] = entry
-			}
-			if len(servers) > 0 {
-				if p, err := writeMCPConfig(baseDir, servers); err != nil {
-					log.Printf("secrets: write mcp config failed: %v", err)
-				} else {
-					cfg.MCPConfigPath = p
-				}
-			}
+		// MCP servers (composed): merge the built-in integrations (each gated on its
+		// own brain secret / gateway connector) with the user-added servers from the
+		// brain registry into ONE mcp.json. Fleet-wide + symmetric — every sprite
+		// rehydrates the same set. Skipped when the operator supplied their own config.
+		if p, err := composeMCP(sctx, fleetSvc, cfg.WorkDir, cfg.MCPConfigPath); err != nil {
+			log.Printf("secrets: compose mcp config failed: %v", err)
+		} else if p != "" {
+			cfg.MCPConfigPath = p
 		}
 		scancel()
 	}
@@ -639,6 +604,16 @@ func main() {
 	}
 	srv := server.New(cfg, h, roster, spawner, secrets)
 	srv.SetReloadSecrets(func() { reloadBrainSecrets(fleetSvc, filepath.Join(cfg.WorkDir, ".sprite-agent")) }) // POST /api/fleet/reload-secrets
+	if fleetSvc != nil {
+		// Regenerate mcp.json after an /api/mcp registry change (the server then
+		// restarts active sessions so the new server set applies). Pass the operator
+		// override (env) — not the generated path — so it can actually recompose.
+		srv.SetRegenerateMCP(func() (string, error) {
+			rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer rcancel()
+			return composeMCP(rctx, fleetSvc, cfg.WorkDir, os.Getenv("SPRITE_AGENT_MCP_CONFIG"))
+		})
+	}
 
 	if fleetSvc != nil {
 		// Presence (P2.3): advertise human attachment so other surfaces defer (§2.4).
