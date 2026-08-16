@@ -458,6 +458,16 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 	return blocks
 }
 
+// SetMCPConfigPath updates the --mcp-config path handed to newly-spawned Claude
+// processes. Used when the MCP registry is changed at runtime and the config was
+// absent at boot (no servers yet) — a subsequent RestartActiveSessions then
+// relaunches with the new config.
+func (h *Hub) SetMCPConfigPath(path string) {
+	h.mu.Lock()
+	h.cfg.mcpConfigPath = path
+	h.mu.Unlock()
+}
+
 // RestartActiveSessions kills and respawns every session with a live Claude
 // process, so the current worker environment takes effect immediately (used when
 // env vars change). In-flight generations are interrupted, mirroring an interrupt.
