@@ -1053,6 +1053,87 @@
   envModal.addEventListener('click', (e) => { if (e.target === envModal) closeEnvModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !envModal.hidden) closeEnvModal(); });
 
+  // ---- MCP servers (fleet-wide registry: /api/mcp) ----
+  const mcpModal = $('mcp-modal');
+  const mcpList = $('mcp-list');
+  const mcpName = $('mcp-name');
+  const mcpConfig = $('mcp-config');
+  const mcpMsg = $('mcp-msg');
+  async function openMCPModal() {
+    closeSidebar();
+    mcpMsg.textContent = '';
+    mcpName.value = ''; mcpConfig.value = '';
+    renderMCPList({});
+    mcpModal.hidden = false;
+    await refreshMCP();
+    mcpName.focus();
+  }
+  function closeMCPModal() { mcpModal.hidden = true; }
+  async function refreshMCP() {
+    try {
+      const res = await fetch('/api/mcp');
+      if (!res.ok) return;
+      renderMCPList((await res.json()) || {});
+    } catch (e) {}
+  }
+  function renderMCPList(reg) {
+    const names = Object.keys(reg).sort();
+    mcpList.innerHTML = '';
+    if (!names.length) {
+      const p = document.createElement('p');
+      p.className = 'env-empty';
+      p.textContent = 'No user-added servers. (The built-in servers run automatically.)';
+      mcpList.appendChild(p);
+      return;
+    }
+    for (const name of names) {
+      const c = reg[name] || {};
+      const summary = c.command ? [c.command, ...(c.args || [])].join(' ') : (c.url || '');
+      const row = document.createElement('div');
+      row.className = 'mcp-row';
+      row.innerHTML =
+        `<div class="mcp-row-main"><span class="env-name">${escapeHtml(name)}</span>` +
+        `<span class="mcp-summary">${escapeHtml(summary)}</span></div>` +
+        `<button class="env-del" title="Remove" data-name="${escapeHtml(name)}">×</button>`;
+      mcpList.appendChild(row);
+    }
+  }
+  async function addMCP() {
+    const name = mcpName.value.trim();
+    const raw = mcpConfig.value.trim();
+    if (!name || !raw) { mcpMsg.textContent = 'Name and config are both required.'; return; }
+    let config;
+    try { config = JSON.parse(raw); } catch (e) { mcpMsg.textContent = 'Config is not valid JSON: ' + e.message; return; }
+    if (typeof config !== 'object' || Array.isArray(config)) { mcpMsg.textContent = 'Config must be a JSON object.'; return; }
+    mcpMsg.textContent = 'Adding…';
+    try {
+      const res = await fetch('/api/mcp', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config }),
+      });
+      if (!res.ok) { mcpMsg.textContent = await res.text(); return; }
+      mcpName.value = ''; mcpConfig.value = '';
+      mcpMsg.textContent = 'Added — new chats will have it.';
+      await refreshMCP();
+      mcpName.focus();
+    } catch (e) { mcpMsg.textContent = 'Failed: ' + e.message; }
+  }
+  async function deleteMCP(name) {
+    try {
+      await fetch('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' });
+      await refreshMCP();
+    } catch (e) {}
+  }
+  $('mcp-btn').addEventListener('click', openMCPModal);
+  $('mcp-add-btn').addEventListener('click', addMCP);
+  $('mcp-close').addEventListener('click', closeMCPModal);
+  mcpList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.env-del');
+    if (btn) deleteMCP(btn.dataset.name);
+  });
+  mcpModal.addEventListener('click', (e) => { if (e.target === mcpModal) closeMCPModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !mcpModal.hidden) closeMCPModal(); });
+
   // ---- summarize & continue in a new chat (escape context-compaction thrash) ----
   // A long thread eventually fills the context window; Claude Code compacts and the
   // interruptions recur. This asks the current chat for a concise handoff summary,
