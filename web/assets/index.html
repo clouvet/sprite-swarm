@@ -59,6 +59,12 @@
             <line x1="6" y1="7" x2="6.01" y2="7"></line><line x1="6" y1="17" x2="6.01" y2="17"></line>
           </svg>
         </button>
+        <button id="upgrade-btn" title="Update available" aria-label="Update available" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>
+            <line x1="5" y1="21" x2="19" y2="21"></line>
+          </svg>
+        </button>
         <button id="theme-toggle" title="Theme: system" aria-label="Theme: cycle light / dark / system">
           <svg class="icon-system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -161,6 +167,24 @@
         <div class="modal-actions">
           <button id="mcp-refresh-btn" class="modal-btn" title="Recompose this sprite's MCP config and reconnect the built-in servers (e.g. after a transient gateway hiccup)">Reconnect MCP</button>
           <button id="mcp-close" class="modal-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Update / upgrade to the latest release. -->
+    <div id="upgrade-modal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title">
+        <h3 id="upgrade-modal-title">Update available</h3>
+        <p id="upgrade-versions" class="upgrade-versions"></p>
+        <p>Updating fetches the release build and <strong>restarts</strong> the agent — your chat
+           reconnects automatically on the new version. In-flight turns finish first.</p>
+        <div class="modal-actions upgrade-actions">
+          <button id="upgrade-self" class="modal-btn">Update this sprite</button>
+          <button id="upgrade-fleet" class="modal-btn primary">Update entire fleet</button>
+        </div>
+        <p id="upgrade-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button id="upgrade-close" class="modal-btn">Close</button>
         </div>
       </div>
     </div>

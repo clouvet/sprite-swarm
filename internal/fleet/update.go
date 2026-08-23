@@ -90,6 +90,18 @@ func (s *Service) UpdateFleet(ctx context.Context, target string) (interface{}, 
 	if err := s.StageSelf(ctx); err != nil {
 		return nil, fmt.Errorf("stage binary: %w", err)
 	}
+	results, err := s.propagateUpdate(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"from_build": s.build, "targets": results}, nil
+}
+
+// propagateUpdate tells each target peer to self-update (pull whatever is currently
+// staged at ArtifactKey) — WITHOUT staging first. UpdateFleet stages its own binary
+// before calling this; the release-upgrade path stages a downloaded release binary
+// instead, so it must not re-stage. target "" or "all" = every OTHER agent.
+func (s *Service) propagateUpdate(ctx context.Context, target string) ([]UpdateResult, error) {
 	roster, err := s.roster(ctx)
 	if err != nil {
 		return nil, err
@@ -119,7 +131,7 @@ func (s *Service) UpdateFleet(ctx context.Context, target string) (interface{}, 
 		}
 		results = append(results, r)
 	}
-	return map[string]interface{}{"from_build": s.build, "targets": results}, nil
+	return results, nil
 }
 
 // ReloadFleet tells each target to re-read the brain and re-apply its env-based

@@ -95,9 +95,17 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 #fleet-header { display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 4px 8px; }
 /* Footer row: env-vars button on the left, theme toggle on the right. */
 #sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); flex-shrink: 0; }
-#env-btn, #mcp-btn { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; }
-#env-btn:hover, #mcp-btn:hover { color: var(--accent); }
-#env-btn svg, #mcp-btn svg { width: 18px; height: 18px; display: block; }
+#env-btn, #mcp-btn, #upgrade-btn { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; }
+#env-btn:hover, #mcp-btn:hover, #upgrade-btn:hover { color: var(--accent); }
+#env-btn svg, #mcp-btn svg, #upgrade-btn svg { width: 18px; height: 18px; display: block; }
+/* the update button only appears when a newer release exists — accent + a gentle
+   pulse so it reads as "action available". */
+#upgrade-btn { color: var(--accent); animation: upgrade-pulse 2s ease-in-out infinite; }
+#upgrade-btn[hidden] { display: none; }
+@keyframes upgrade-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.upgrade-versions { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; }
+.upgrade-actions { justify-content: stretch; gap: 10px; }
+.upgrade-actions .modal-btn { flex: 1; }
 #spawn-btn { background: var(--bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 #spawn-btn:hover { border-color: var(--accent); }
 #spawn-btn:disabled { opacity: .5; cursor: default; }
