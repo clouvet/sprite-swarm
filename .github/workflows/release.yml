@@ -1,10 +1,5 @@
 name: Release
 
-# Cut a versioned release by hand: Actions → Release → Run workflow → enter the
-# version (vX.Y.Z). It validates the commit (build + vet + test), then creates the
-# tag and a GitHub Release at that exact commit with auto-generated notes. The
-# installer (deploy-sprite-swarm) builds new fleets from releases/latest, so this
-# workflow is the whole release ceremony — no artifacts to upload.
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write            # let the default GITHUB_TOKEN create the tag + release
+  contents: write
 
 concurrency:
   group: release
@@ -27,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0     # full history so --generate-notes can diff since the last tag
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -47,9 +42,17 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Build release binary (linux/amd64, version-stamped)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-X github.com/clouvet/sprite-swarm/internal/buildinfo.Tag=$VERSION" \
+            -o sprite-agent ./cmd/sprite-agent
       - name: Create release
         env:
           VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+          gh release create "$VERSION" sprite-agent \
+            --target "$GITHUB_SHA" --title "$VERSION" --generate-notes

@@ -1145,6 +1145,57 @@
   mcpModal.addEventListener('click', (e) => { if (e.target === mcpModal) closeMCPModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !mcpModal.hidden) closeMCPModal(); });
 
+  // ---- release updates (check latest, upgrade this sprite or the fleet) ----
+  const upgradeBtn = $('upgrade-btn');
+  const upgradeModal = $('upgrade-modal');
+  const upgradeMsg = $('upgrade-msg');
+  let upgradeStatus = null;
+  async function checkUpgrade() {
+    try {
+      const st = await (await fetch('/api/upgrade')).json();
+      upgradeStatus = st;
+      // Only surface the button when a newer release with a downloadable build exists.
+      upgradeBtn.hidden = !st.available;
+      if (st.available) {
+        upgradeBtn.title = `Update available: ${st.latest} (on ${st.current})`;
+      }
+    } catch (e) { /* offline / not configured — leave the button hidden */ }
+  }
+  function openUpgradeModal() {
+    if (!upgradeStatus) return;
+    $('upgrade-versions').textContent = `${upgradeStatus.current}  →  ${upgradeStatus.latest}`;
+    upgradeMsg.textContent = '';
+    $('upgrade-self').disabled = false;
+    $('upgrade-fleet').disabled = false;
+    upgradeModal.hidden = false;
+  }
+  function closeUpgradeModal() { upgradeModal.hidden = true; }
+  async function doUpgrade(target) {
+    $('upgrade-self').disabled = true;
+    $('upgrade-fleet').disabled = true;
+    upgradeMsg.textContent = target === 'fleet'
+      ? 'Staging the release and rolling the fleet… this sprite will restart and reconnect.'
+      : 'Fetching the release and restarting this sprite… it will reconnect on the new version.';
+    try {
+      const res = await fetch('/api/upgrade', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
+      if (!res.ok) { upgradeMsg.textContent = 'Update failed: ' + (await res.text()); $('upgrade-self').disabled = false; $('upgrade-fleet').disabled = false; return; }
+      // The agent re-execs momentarily; the socket drops and the client auto-reconnects.
+      upgradeMsg.textContent = 'Update started — reconnecting when the agent is back…';
+      upgradeBtn.hidden = true;
+    } catch (e) { upgradeMsg.textContent = 'Update failed: ' + e.message; $('upgrade-self').disabled = false; $('upgrade-fleet').disabled = false; }
+  }
+  upgradeBtn.addEventListener('click', openUpgradeModal);
+  $('upgrade-self').addEventListener('click', () => doUpgrade('self'));
+  $('upgrade-fleet').addEventListener('click', () => doUpgrade('fleet'));
+  $('upgrade-close').addEventListener('click', closeUpgradeModal);
+  upgradeModal.addEventListener('click', (e) => { if (e.target === upgradeModal) closeUpgradeModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !upgradeModal.hidden) closeUpgradeModal(); });
+  checkUpgrade();
+  setInterval(checkUpgrade, 30 * 60 * 1000); // re-check every 30 min
+
   // ---- summarize & continue in a new chat (escape context-compaction thrash) ----
   // A long thread eventually fills the context window; Claude Code compacts and the
   // interruptions recur. This asks the current chat for a concise handoff summary,

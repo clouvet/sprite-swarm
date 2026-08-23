@@ -37,6 +37,9 @@ type Fleet interface {
 	PrepareSelfUpdate(ctx context.Context) (bool, string, error)
 	Reexec() error
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
+	UpgradeStatusValue(ctx context.Context) interface{}
+	StageRelease(ctx context.Context) (string, error)
+	UpgradeFleet(ctx context.Context) (interface{}, error)
 	ReloadFleet(ctx context.Context, target string) (interface{}, error)
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	Timezone(ctx context.Context) string
@@ -116,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions/search", s.serveSearch)
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
 	mux.HandleFunc("/api/version", s.serveVersion)
+	mux.HandleFunc("/api/upgrade", s.serveUpgrade)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/context", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
@@ -629,9 +633,15 @@ func (s *Server) serveUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Self-update: prepare (swap the on-disk binary) BEFORE responding, then
-	// re-exec just after, so the caller gets the 200 before the process is replaced.
-	willUpdate, detail, err := s.fleet.PrepareSelfUpdate(r.Context())
+	// Self-update: swap the on-disk binary from the brain, respond, then re-exec.
+	s.performSelfUpdate(w, r.Context())
+}
+
+// performSelfUpdate swaps in whatever binary is currently staged at the brain's
+// ArtifactKey, responds, then re-execs just after (so the caller gets its 200 before
+// the process is replaced). Shared by the self-update and self-upgrade paths.
+func (s *Server) performSelfUpdate(w http.ResponseWriter, ctx context.Context) {
+	willUpdate, detail, err := s.fleet.PrepareSelfUpdate(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -646,6 +656,63 @@ func (s *Server) serveUpdate(w http.ResponseWriter, r *http.Request) {
 				os.Exit(0) // boot command keeps the swapped on-disk binary
 			}
 		}()
+	}
+}
+
+// reexecOntoStaged swaps in the staged binary and re-execs, in the background —
+// used after a fleet-upgrade response so THIS sprite also moves onto the release.
+func (s *Server) reexecOntoStaged() {
+	willUpdate, detail, err := s.fleet.PrepareSelfUpdate(context.Background())
+	if err != nil || !willUpdate {
+		return
+	}
+	time.Sleep(300 * time.Millisecond)
+	log.Printf("self-upgrade: %s — re-execing", detail)
+	if err := s.fleet.Reexec(); err != nil {
+		log.Printf("self-upgrade: re-exec failed (%v); exiting for service restart", err)
+		os.Exit(0)
+	}
+}
+
+// serveUpgrade checks for and applies a release upgrade. GET reports the running
+// version vs the latest release (for the UI's "update available" affordance). POST
+// {"target":"self"} downloads + stages the latest release binary and re-execs THIS
+// sprite onto it; {"target":"fleet"} stages it and rolls every sprite (this one
+// included). Unlike /api/fleet/update, the staged bytes are the downloaded release
+// binary, not the caller's running build.
+func (s *Server) serveUpgrade(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.fleet.UpgradeStatusValue(r.Context()))
+	case http.MethodPost:
+		var body struct {
+			Target string `json:"target"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch strings.TrimSpace(body.Target) {
+		case "fleet":
+			res, err := s.fleet.UpgradeFleet(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			writeJSON(w, res)
+			go s.reexecOntoStaged() // this sprite moves onto the release too
+		case "self", "":
+			if _, err := s.fleet.StageRelease(r.Context()); err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			s.performSelfUpdate(w, r.Context())
+		default:
+			http.Error(w, `target must be "self" or "fleet"`, http.StatusBadRequest)
+		}
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
