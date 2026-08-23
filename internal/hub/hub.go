@@ -50,6 +50,7 @@ type Hub struct {
 	processMgr *process.Manager
 	detector   *process.TerminalDetector
 	watchers   map[string]*watcher.SessionWatcher
+	pending    *pendingStore // per-session queue of user turns awaiting confirmed delivery (#95)
 
 	register   chan *Client
 	unregister chan *Client
@@ -108,7 +109,17 @@ func NewHub(cfg Config) *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan *BroadcastMessage, 256),
+		pending:    newPendingStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "pending")),
 	}
+	// When a process exits, replay whatever was still queued (unacked) onto a fresh
+	// --resume process — this is the recovery for a message caught in a compaction.
+	h.processMgr.SetOnExit(func(sessionID string) {
+		h.pending.clearInFlight(sessionID)
+		h.pumpPending(sessionID)
+	})
+	// Replay any input that was queued when a previous process exited (self-update
+	// reexec, OOM). Delivery happens on the next pump (client connect / new turn).
+	h.pending.load()
 	go h.watchProjectsDirectory()
 	return h
 }
@@ -220,6 +231,11 @@ func (h *Hub) registerClient(client *Client) {
 	if sess.GetClientCount() == 1 && sess.GetState() == session.StateIdle {
 		go h.spawnClaudeForSession(client.sessionID, sess)
 	}
+
+	// Deliver anything queued from before this connection (e.g. a message that
+	// survived a compaction/restart while no client was attached). Goroutine so it
+	// never runs under h.mu — pumpPending takes h.mu.RLock via GetSession.
+	go h.pumpPending(client.sessionID)
 
 	h.sendJSON(client, map[string]interface{}{
 		"type":      "system",
@@ -365,23 +381,12 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 		}
 	}
 
-	if sess != nil && sess.GetState() == session.StateIdle {
-		log.Printf("[%s] no process, spawning before send", client.sessionID)
-		h.spawnClaudeForSession(client.sessionID, sess)
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if err := h.processMgr.SendMessage(client.sessionID, content); err != nil {
-		log.Printf("[%s] send failed: %v; respawn+retry", client.sessionID, err)
-		if sess != nil {
-			h.spawnClaudeForSession(client.sessionID, sess)
-			time.Sleep(500 * time.Millisecond)
-			if err := h.processMgr.SendMessage(client.sessionID, content); err != nil {
-				h.sendJSON(client, map[string]interface{}{"type": "error", "message": "Failed to send message to Claude: " + err.Error()})
-				return
-			}
-		}
-	}
+	// Queue the turn, then pump: if the session is idle it's delivered immediately;
+	// if a turn is generating it's HELD in Go (persisted) and delivered at the turn
+	// boundary — never shoved into the subprocess's stdin buffer where a compaction
+	// would drop it (#95). pumpPending must not run under h.mu, so no lock is held.
+	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: msg.Content})
+	h.pumpPending(client.sessionID)
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
 	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: processingMsg}
@@ -508,11 +513,6 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 	}
 	h.mu.Unlock()
 
-	if sess.GetState() == session.StateIdle {
-		h.spawnClaudeForSession(sessionID, sess)
-		time.Sleep(500 * time.Millisecond)
-	}
-
 	// Show the injected turn to any attached clients.
 	userMsg, _ := json.Marshal(map[string]interface{}{
 		"type":    "user_message",
@@ -520,13 +520,11 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 	})
 	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: userMsg}
 
-	if err := h.processMgr.SendMessage(sessionID, content); err != nil {
-		h.spawnClaudeForSession(sessionID, sess)
-		time.Sleep(500 * time.Millisecond)
-		if err := h.processMgr.SendMessage(sessionID, content); err != nil {
-			return err
-		}
-	}
+	// Queue + pump, same durable path as a human turn (#95): held across a
+	// compaction and delivered at the turn boundary, never lost in the stdin buffer.
+	h.pending.enqueue(sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: content})
+	h.pumpPending(sessionID)
+
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
 	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: processingMsg}
 	return nil
@@ -543,7 +541,7 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	log.Printf("[%s] spawning headless claude", sessionID)
 	h.stopFileWatching(sessionID)
 
-	hp, err := h.processMgr.Spawn(h.spawnOpts(sessionID))
+	hp, created, err := h.processMgr.Spawn(h.spawnOpts(sessionID))
 	if err != nil {
 		log.Printf("[%s] spawn failed: %v", sessionID, err)
 		errMsg, _ := json.Marshal(map[string]interface{}{"type": "error", "message": "Failed to start Claude process"})
@@ -551,7 +549,116 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 		return
 	}
 	sess.SetState(session.StateWebOnly)
-	go h.handleClaudeOutput(sessionID, hp)
+	// Start the output reader only for a freshly-created process, so racing spawns
+	// (connect + pump) never attach two readers to one OutputChan.
+	if created {
+		go h.handleClaudeOutput(sessionID, hp)
+	}
+}
+
+// pumpPending delivers the next queued user turn for a session when it's idle (see
+// pendingStore.pump). Safe to call from any path EXCEPT while holding h.mu — its
+// deliver callback takes GetSession (h.mu.RLock), so h.mu -> pending order would
+// invert the pending -> h.mu order used everywhere else.
+func (h *Hub) pumpPending(sessionID string) {
+	err := h.pending.pump(sessionID,
+		func(m pendingMsg) error { // deliver: send, respawning once if the process is gone/dead
+			if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {
+				sess := h.GetSession(sessionID)
+				if sess == nil {
+					return err
+				}
+				h.spawnClaudeForSession(sessionID, sess)
+				time.Sleep(500 * time.Millisecond)
+				return h.processMgr.SendMessage(sessionID, m.Content)
+			}
+			return nil
+		},
+		func(m pendingMsg) bool { // alreadyProcessed: did this turn already reach the transcript?
+			return h.transcriptHasUserTurn(sessionID, m.Text)
+		},
+		func(m pendingMsg) { // giveUp: surface a dropped message rather than lose it silently
+			log.Printf("[%s] queued message dropped after %d attempts", sessionID, maxSendAttempts)
+			errMsg, _ := json.Marshal(map[string]interface{}{
+				"type":    "error",
+				"message": "A queued message could not be delivered and was dropped. Please resend it.",
+			})
+			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errMsg}
+		},
+	)
+	if err != nil {
+		log.Printf("[%s] pumpPending: %v", sessionID, err)
+	}
+}
+
+// transcriptHasUserTurn reports whether the session's transcript's most recent user
+// turn matches text — used to tell whether a sent-but-unacked message was actually
+// processed before a death (so a replay doesn't re-run it). Best-effort: on any read
+// / parse trouble it returns false, so we err toward re-delivering (a rare duplicate)
+// rather than dropping (a lost instruction).
+func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	// Scan for the last line that is a user turn; compare its text.
+	last := ""
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if rec.Type == "user" || rec.Message.Role == "user" {
+			if t := extractText(rec.Message.Content); t != "" {
+				last = t
+			}
+		}
+	}
+	return strings.TrimSpace(last) == text
+}
+
+// extractText pulls the plaintext out of a transcript message's content, which is
+// either a JSON string or an array of blocks with {"type":"text","text":...}.
+func extractText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var b strings.Builder
+		for _, bl := range blocks {
+			if bl.Type == "text" {
+				b.WriteString(bl.Text)
+			}
+		}
+		return b.String()
+	}
+	return ""
 }
 
 // eventType peeks the "type" field of a raw JSON object.
@@ -613,6 +720,10 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 				if sess != nil {
 					sess.SetGenerating(false)
 				}
+				// Turn done: confirm the in-flight message processed (drop it from
+				// the queue) and deliver the next held message, if any.
+				h.pending.ackInFlight(sessionID)
+				h.pumpPending(sessionID)
 			}
 
 			data, err := json.Marshal(msg)
