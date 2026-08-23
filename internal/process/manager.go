@@ -15,7 +15,17 @@ import (
 type Manager struct {
 	processes   map[string]*HeadlessProcess
 	graceTimers map[string]*time.Timer // per-session grace timers
+	onExit      func(sessionID string) // called after a process is removed from the map
 	mu          sync.RWMutex
+}
+
+// SetOnExit registers a callback invoked (outside the manager lock) right after a
+// session's process is removed from the map because it exited. The hub uses it to
+// replay any input that was still queued when the process died (#95).
+func (m *Manager) SetOnExit(fn func(sessionID string)) {
+	m.mu.Lock()
+	m.onExit = fn
+	m.mu.Unlock()
 }
 
 func NewManager() *Manager {
@@ -26,20 +36,22 @@ func NewManager() *Manager {
 }
 
 // Spawn starts (or returns the existing) process for a session. It does NOT kill
-// other sessions' processes — concurrent sessions coexist.
-func (m *Manager) Spawn(opts Options) (*HeadlessProcess, error) {
+// other sessions' processes — concurrent sessions coexist. The bool is true only
+// when a NEW process was created, so the caller starts exactly one output reader
+// even when several goroutines race to spawn the same session.
+func (m *Manager) Spawn(opts Options) (*HeadlessProcess, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.cancelGraceLocked(opts.SessionID)
 
 	if existing, ok := m.processes[opts.SessionID]; ok {
-		return existing, nil
+		return existing, false, nil
 	}
 
 	hp, err := NewHeadlessProcess(opts)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	m.processes[opts.SessionID] = hp
 
@@ -51,11 +63,19 @@ func (m *Manager) Spawn(opts Options) (*HeadlessProcess, error) {
 			log.Printf("[%s] claude exited normally", opts.SessionID)
 		}
 		m.mu.Lock()
-		delete(m.processes, opts.SessionID)
+		// Only forget THIS process — a respawn may have already replaced it in the
+		// map (delete-by-key would drop the live one).
+		if m.processes[opts.SessionID] == hp {
+			delete(m.processes, opts.SessionID)
+		}
+		onExit := m.onExit
 		m.mu.Unlock()
+		if onExit != nil {
+			onExit(opts.SessionID)
+		}
 	}()
 
-	return hp, nil
+	return hp, true, nil
 }
 
 func (m *Manager) Get(sessionID string) (*HeadlessProcess, error) {
