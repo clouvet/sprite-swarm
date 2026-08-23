@@ -18,6 +18,7 @@ import (
 	"time"
 	_ "time/tzdata" // embed the IANA tz database so LoadLocation works on minimal images
 
+	"github.com/clouvet/sprite-swarm/internal/buildinfo"
 	"github.com/clouvet/sprite-swarm/internal/config"
 	"github.com/clouvet/sprite-swarm/internal/fleet"
 	"github.com/clouvet/sprite-swarm/internal/gateway"
@@ -425,6 +426,12 @@ func maybeBootSelfUpdate(fleetSvc *fleet.Service) {
 }
 
 func main() {
+	// `sprite-agent version` (or --version) prints the running binary's version and
+	// exits — a stranger running their own fleet can report exactly what they're on.
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+		fmt.Println(buildinfo.String())
+		return
+	}
 	// `sprite-agent init` stands up a brand-new fleet (prime the brain + ignite home)
 	// rather than running the agent. See launch-fleet.sh.
 	if len(os.Args) > 1 && os.Args[1] == "init" {
@@ -445,8 +452,8 @@ func main() {
 	}
 
 	cfg := config.FromEnv()
-	log.Printf("sprite-agent starting: id=%s addr=%s workdir=%s projects=%s",
-		cfg.AgentID, cfg.Addr, cfg.WorkDir, cfg.ClaudeProjectsDir)
+	log.Printf("sprite-agent %s starting: id=%s addr=%s workdir=%s projects=%s",
+		buildinfo.String(), cfg.AgentID, cfg.Addr, cfg.WorkDir, cfg.ClaudeProjectsDir)
 
 	// Scope the agent's tools/shell via a settings allow-list (DESIGN §6.2)
 	// rather than a blanket skip — materialize the embedded default unless the

@@ -26,6 +26,7 @@ type Status struct {
 	URL       string `json:"url"`               // session-service URL, if known
 	Artifact  string `json:"artifact"`          // bootstrap pointer it's running
 	Build     string `json:"build,omitempty"`   // short hash of the running binary (for staleness/self-update)
+	Version   string `json:"version,omitempty"` // human version: release tag + commit (buildinfo.String())
 	Present   bool   `json:"present"`           // a human is currently attached to this agent (presence, §2.4)
 	Session   string `json:"session,omitempty"` // the session the human is attached to, if any
 	StartedAt int64  `json:"started_at"`
