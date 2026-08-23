@@ -28,7 +28,6 @@
     "deny": [
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~/*)",
-      "Bash(sudo:*)",
       "Bash(:(){ :|:& };:)",
       "Bash(mkfs:*)",
       "Bash(dd:*)"

@@ -36,7 +36,31 @@ type listResponse struct {
 
 // list fetches the raw connector list (auth is by sprite identity, so this only
 // works when called from a sprite).
+// list fetches the sprite's connectors, retrying a few times on transient
+// failure. A single blip must not silently drop a connector-gated server: callers
+// like SlackBase() collapse any error to "" (== "no connector"), so without the
+// retry a momentary gateway hiccup at boot would disable e.g. the Slack MCP for
+// the sprite's whole uptime. Only failures pay the backoff; success returns at once.
 func list(ctx context.Context) ([]Connection, error) {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+		conns, err := listOnce(ctx)
+		if err == nil {
+			return conns, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func listOnce(ctx context.Context) ([]Connection, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase()+"/v1/gateway/list", nil)
 	if err != nil {
 		return nil, err
