@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/clouvet/sprite-swarm/internal/buildinfo"
 	"github.com/clouvet/sprite-swarm/internal/config"
 )
 
@@ -144,6 +145,7 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 		URL:       s.url,
 		Artifact:  s.artifact,
 		Build:     s.build,
+		Version:   buildinfo.String(),
 		Present:   present,
 		Session:   presentSession,
 		StartedAt: s.started,

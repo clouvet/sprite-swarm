@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clouvet/sprite-swarm/internal/buildinfo"
 	"github.com/clouvet/sprite-swarm/internal/config"
 	"github.com/clouvet/sprite-swarm/internal/hub"
 	"github.com/clouvet/sprite-swarm/internal/secret"
@@ -114,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions", s.serveSessions)
 	mux.HandleFunc("/api/sessions/search", s.serveSearch)
 	mux.HandleFunc("/api/sessions/", s.serveSessionByID)
+	mux.HandleFunc("/api/version", s.serveVersion)
 	mux.HandleFunc("/api/fleet", s.serveFleet)
 	mux.HandleFunc("/api/fleet/context", s.serveFleet)
 	mux.HandleFunc("/api/fleet/spawn", s.serveSpawn)
@@ -315,6 +317,21 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, roster)
+}
+
+// serveVersion reports the running binary's version: the release tag (or "dev"),
+// the git commit it was built from, and whether the tree was dirty. This is the
+// human-meaningful counterpart to the roster's content-hash "build" — so a fleet
+// running someone else's deploy can be asked "what version?" and answer precisely.
+func (s *Server) serveVersion(w http.ResponseWriter, r *http.Request) {
+	info := buildinfo.Get()
+	writeJSON(w, map[string]any{
+		"tag":         info.Tag,
+		"commit":      info.Commit,
+		"commit_time": info.CommitTime,
+		"dirty":       info.Dirty,
+		"version":     buildinfo.String(),
+	})
 }
 
 // serveTimezone reports (GET) or sets (POST {"tz":"America/New_York"}) the user's

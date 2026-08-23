@@ -35,11 +35,14 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 			self = " (you)"
 		}
 		line := fmt.Sprintf("- %s%s · %s · %q", e.ID, self, dot, e.Phase)
-		if e.Build != "" {
+		if e.Version != "" {
+			line += " · " + e.Version
+		} else if e.Build != "" {
 			line += " · build " + e.Build
-			if e.ID != s.id && s.build != "" && e.Build != s.build {
-				line += " (stale)"
-			}
+		}
+		// Staleness is judged on the content hash (exact bytes), not the human version.
+		if e.Build != "" && e.ID != s.id && s.build != "" && e.Build != s.build {
+			line += " (stale)"
 		}
 		if e.Present && e.ID != s.id {
 			line += "  👤 human attached → DEFER (don't act/narrate)"
