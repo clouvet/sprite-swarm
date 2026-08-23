@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/env", s.serveEnv)
 	mux.HandleFunc("/api/env/", s.serveEnvByName)
 	mux.HandleFunc("/api/mcp", s.serveMCP)
+	mux.HandleFunc("/api/mcp/refresh", s.serveMCPRefresh)
 	mux.HandleFunc("/api/mcp/", s.serveMCPByName)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.

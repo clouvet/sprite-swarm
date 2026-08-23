@@ -1124,8 +1124,19 @@
       await refreshMCP();
     } catch (e) {}
   }
+  async function reconnectMCP() {
+    const btn = $('mcp-refresh-btn');
+    btn.disabled = true;
+    mcpMsg.textContent = 'Reconnecting… (this sprite’s active chats restart)';
+    try {
+      const res = await fetch('/api/mcp/refresh', { method: 'POST' });
+      mcpMsg.textContent = res.ok ? 'Reconnected — built-in servers recomposed.' : await res.text();
+    } catch (e) { mcpMsg.textContent = 'Failed: ' + e.message; }
+    btn.disabled = false;
+  }
   $('mcp-btn').addEventListener('click', openMCPModal);
   $('mcp-add-btn').addEventListener('click', addMCP);
+  $('mcp-refresh-btn').addEventListener('click', reconnectMCP);
   $('mcp-close').addEventListener('click', closeMCPModal);
   mcpList.addEventListener('click', (e) => {
     const btn = e.target.closest('.env-del');

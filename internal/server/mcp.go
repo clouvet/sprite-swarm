@@ -70,6 +70,23 @@ func (s *Server) serveMCPByName(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"removed": name})
 }
 
+// serveMCPRefresh recomposes mcp.json and restarts this sprite's active sessions
+// WITHOUT changing the registry: POST /api/mcp/refresh. It re-runs the built-in
+// connector discovery (Slack, Grafana, …), so a server that was dropped at boot
+// because of a transient gateway hiccup reconnects — a self-heal that avoids a
+// full agent reexec. Registered as an exact path so it wins over "/api/mcp/".
+func (s *Server) serveMCPRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST /api/mcp/refresh", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.applyMCP(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]string{"refreshed": "ok"})
+}
+
 // applyMCP recomposes mcp.json (built-ins + registry) and restarts this sprite's
 // active sessions so the new server set takes effect (Claude won't hot-reload
 // --mcp-config). No-op if the regenerator isn't wired.
