@@ -1,0 +1,55 @@
+name: Release
+
+# Cut a versioned release by hand: Actions → Release → Run workflow → enter the
+# version (vX.Y.Z). It validates the commit (build + vet + test), then creates the
+# tag and a GitHub Release at that exact commit with auto-generated notes. The
+# installer (deploy-sprite-swarm) builds new fleets from releases/latest, so this
+# workflow is the whole release ceremony — no artifacts to upload.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v0.2.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write            # let the default GITHUB_TOKEN create the tag + release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: validate + release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history so --generate-notes can diff since the last tag
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Validate version + ensure it's new
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::version must look like v1.2.3 (got '$VERSION')"; exit 1; }
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::release $VERSION already exists"; exit 1
+          fi
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Create release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
