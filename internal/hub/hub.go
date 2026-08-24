@@ -661,6 +661,28 @@ func extractText(raw json.RawMessage) string {
 	return ""
 }
 
+// claudeErrorMessage builds a human message for a failed turn from the result's
+// text and subtype. It appends an incident hint when the failure looks like an
+// upstream/overload problem (common during a Claude API incident), so a user seeing
+// a dead turn knows it's likely transient rather than their fault.
+func claudeErrorMessage(resultText, subtype string) string {
+	txt := strings.TrimSpace(resultText)
+	if txt == "" {
+		txt = strings.TrimSpace(subtype)
+	}
+	if txt == "" {
+		txt = "Claude ended the turn with an error"
+	}
+	msg := "Claude error: " + txt
+	low := strings.ToLower(resultText + " " + subtype)
+	if strings.Contains(low, "overload") || strings.Contains(low, "529") ||
+		strings.Contains(low, "rate") || strings.Contains(low, "api error") ||
+		subtype == "error_during_execution" {
+		msg += " — the Claude API may be degraded (see status.claude.com). Try again in a moment."
+	}
+	return msg
+}
+
 // eventType peeks the "type" field of a raw JSON object.
 func eventType(raw json.RawMessage) string {
 	var probe struct {
@@ -720,8 +742,18 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 				if sess != nil {
 					sess.SetGenerating(false)
 				}
-				// Turn done: confirm the in-flight message processed (drop it from
-				// the queue) and deliver the next held message, if any.
+				// A failed turn (Claude API error during an incident, max-turns, etc.)
+				// arrives as a result with is_error — without this the turn just stops
+				// and the UI shows nothing. Surface it as an error the chat renders.
+				if msg.IsError || strings.HasPrefix(msg.Subtype, "error") {
+					errData, _ := json.Marshal(map[string]interface{}{
+						"type":    "error",
+						"message": claudeErrorMessage(msg.ResultText(), msg.Subtype),
+					})
+					h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errData}
+				}
+				// Turn done (success or error): confirm the in-flight message processed
+				// (drop it from the queue) and deliver the next held message, if any.
 				h.pending.ackInFlight(sessionID)
 				h.pumpPending(sessionID)
 			}
