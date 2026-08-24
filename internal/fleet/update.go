@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -101,12 +102,17 @@ func (s *Service) UpdateFleet(ctx context.Context, target string) (interface{}, 
 // staged at ArtifactKey) — WITHOUT staging first. UpdateFleet stages its own binary
 // before calling this; the release-upgrade path stages a downloaded release binary
 // instead, so it must not re-stage. target "" or "all" = every OTHER agent.
+//
+// The fan-out is CONCURRENT: a suspended peer burns the full per-call timeout, so
+// hitting ~18 sprites sequentially could take minutes and blow past any caller/edge
+// request timeout (→ 502 in the browser). Concurrency bounds the wall-clock to about
+// one timeout regardless of fleet size.
 func (s *Service) propagateUpdate(ctx context.Context, target string) ([]UpdateResult, error) {
 	roster, err := s.roster(ctx)
 	if err != nil {
 		return nil, err
 	}
-	results := []UpdateResult{}
+	var targets []RosterEntry
 	for _, e := range roster {
 		if e.ID == s.id {
 			continue
@@ -114,23 +120,37 @@ func (s *Service) propagateUpdate(ctx context.Context, target string) ([]UpdateR
 		if target != "" && target != "all" && e.ID != target {
 			continue
 		}
-		r := UpdateResult{ID: e.ID}
-		switch {
-		case e.URL == "":
-			r.Status = "no url"
-		default:
-			code, callErr := s.authedPost(ctx, strings.TrimRight(e.URL, "/")+"/api/fleet/update")
-			switch {
-			case callErr != nil:
-				r.Status = callErr.Error()
-			case code/100 == 2:
-				r.OK, r.Status = true, "updating"
-			default:
-				r.Status = fmt.Sprintf("http %d", code)
-			}
-		}
-		results = append(results, r)
+		targets = append(targets, e)
 	}
+
+	results := make([]UpdateResult, len(targets))
+	sem := make(chan struct{}, 12) // cap concurrency so a huge fleet can't fan out unbounded
+	var wg sync.WaitGroup
+	for i, e := range targets {
+		wg.Add(1)
+		go func(i int, e RosterEntry) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r := UpdateResult{ID: e.ID}
+			switch {
+			case e.URL == "":
+				r.Status = "no url"
+			default:
+				code, callErr := s.authedPost(ctx, strings.TrimRight(e.URL, "/")+"/api/fleet/update")
+				switch {
+				case callErr != nil:
+					r.Status = callErr.Error()
+				case code/100 == 2:
+					r.OK, r.Status = true, "updating"
+				default:
+					r.Status = fmt.Sprintf("http %d", code)
+				}
+			}
+			results[i] = r
+		}(i, e)
+	}
+	wg.Wait()
 	return results, nil
 }
 

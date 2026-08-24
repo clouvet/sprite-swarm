@@ -1181,7 +1181,20 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target }),
       });
-      if (!res.ok) { upgradeMsg.textContent = 'Update failed: ' + (await res.text()); $('upgrade-self').disabled = false; $('upgrade-fleet').disabled = false; return; }
+      if (!res.ok) {
+        // Don't dump platform error pages (big HTML blobs, e.g. a 502 while the
+        // sprite is busy/restarting) — show a clean, actionable message.
+        let detail = '';
+        try { detail = (await res.text()).trim(); } catch {}
+        if (!detail || detail.length > 200 || /^\s*<(!doctype|html)/i.test(detail)) {
+          detail = (res.status === 502 || res.status === 503)
+            ? 'the sprite is busy or restarting — give it a moment and try again.'
+            : 'HTTP ' + res.status;
+        }
+        upgradeMsg.textContent = 'Update failed: ' + detail;
+        $('upgrade-self').disabled = false; $('upgrade-fleet').disabled = false;
+        return;
+      }
       // The agent re-execs momentarily; the socket drops and the client auto-reconnects.
       upgradeMsg.textContent = 'Update started — reconnecting when the agent is back…';
       upgradeBtn.hidden = true;
