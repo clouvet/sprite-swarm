@@ -39,7 +39,7 @@ type Fleet interface {
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
 	UpgradeStatusValue(ctx context.Context) interface{}
 	StageRelease(ctx context.Context) (string, error)
-	UpgradeFleet(ctx context.Context) (interface{}, error)
+	PropagateFleetUpdate(ctx context.Context) (interface{}, error)
 	ReloadFleet(ctx context.Context, target string) (interface{}, error)
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	Timezone(ctx context.Context) string
@@ -695,13 +695,22 @@ func (s *Server) serveUpgrade(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		switch strings.TrimSpace(body.Target) {
 		case "fleet":
-			res, err := s.fleet.UpgradeFleet(r.Context())
+			// Stage the release binary SYNCHRONOUSLY (fast; surfaces a download error
+			// to the user), then respond and do the slow part — the peer fan-out and
+			// this sprite's own re-exec — in the BACKGROUND. Doing the fan-out inside
+			// the request would block past the platform's timeout and 502 the browser.
+			tag, err := s.fleet.StageRelease(r.Context())
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, res)
-			go s.reexecOntoStaged() // this sprite moves onto the release too
+			writeJSON(w, map[string]interface{}{"status": "started", "to": tag})
+			go func() {
+				if _, err := s.fleet.PropagateFleetUpdate(context.Background()); err != nil {
+					log.Printf("fleet upgrade: propagate failed: %v", err)
+				}
+				s.reexecOntoStaged() // this sprite moves onto the release last
+			}()
 		case "self", "":
 			if _, err := s.fleet.StageRelease(r.Context()); err != nil {
 				http.Error(w, err.Error(), http.StatusBadGateway)

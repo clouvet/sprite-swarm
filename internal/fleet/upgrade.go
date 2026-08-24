@@ -138,19 +138,17 @@ func (s *Service) StageRelease(ctx context.Context) (string, error) {
 	return info.Tag, nil
 }
 
-// UpgradeFleet stages the latest release binary and tells every peer to self-update
-// onto it — WITHOUT re-staging the caller's running binary (that's the difference
-// from UpdateFleet). The caller self-updates separately, after its handler responds.
-func (s *Service) UpgradeFleet(ctx context.Context) (interface{}, error) {
-	tag, err := s.StageRelease(ctx)
-	if err != nil {
-		return nil, err
-	}
+// PropagateFleetUpdate tells every peer to self-update onto whatever is currently
+// staged at ArtifactKey (the release binary StageRelease put there) — WITHOUT
+// re-staging the caller's running binary (the difference from UpdateFleet). The
+// server calls this in the BACKGROUND after staging + responding, because the fan-out
+// can outlast the request timeout; the caller self-updates after it returns.
+func (s *Service) PropagateFleetUpdate(ctx context.Context) (interface{}, error) {
 	results, err := s.propagateUpdate(ctx, "all")
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"to": tag, "targets": results}, nil
+	return map[string]interface{}{"targets": results}, nil
 }
 
 func downloadBinary(ctx context.Context, url string) ([]byte, error) {
