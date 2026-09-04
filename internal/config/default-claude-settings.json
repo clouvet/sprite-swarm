@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s --max-time 3 http://localhost:8080/api/fleet/context 2>/dev/null || true"
+            "command": "P=$(cat); C=$(printf '%s' \"$P\" | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"cwd\",\"\"))' 2>/dev/null); curl -s --max-time 4 --get --data-urlencode \"cwd=$C\" http://localhost:8080/api/fleet/context 2>/dev/null || true"
           }
         ]
       }

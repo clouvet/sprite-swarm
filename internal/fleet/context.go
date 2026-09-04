@@ -14,7 +14,10 @@ import (
 //
 // Presence-routing rule, made explicit to the agent: do NOT narrate or act on a
 // worker a human is currently attached to — the human is steering it (§2.4).
-func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error) {
+// cwd is the working directory of the chat this turn belongs to (the hook passes
+// it); when it's a git checkout with a PR, the current branch's live PR state is
+// injected so the agent knows if it was merged/closed. Empty cwd → no PR section.
+func (s *Service) FleetContext(ctx context.Context, memLimit int, cwd string) (string, error) {
 	roster, err := s.roster(ctx)
 	if err != nil {
 		return "", err
@@ -23,6 +26,10 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int) (string, error
 	var b strings.Builder
 	b.WriteString(s.timeContext(ctx))
 	b.WriteString("\n")
+	if pr := s.branchPRContext(cwd); pr != "" {
+		b.WriteString(pr)
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "## Fleet (live) — you are %q\n", s.id)
 	var attended []string
 	for _, e := range roster {
