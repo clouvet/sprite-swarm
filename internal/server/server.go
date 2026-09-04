@@ -52,7 +52,7 @@ type Fleet interface {
 	MemoryIndexValue(ctx context.Context) (interface{}, error)
 	GetMemoryValue(ctx context.Context, author, id string) (interface{}, error)
 	MemoryContext(ctx context.Context, limit int) (string, error)
-	FleetContext(ctx context.Context, memLimit int) (string, error)
+	FleetContext(ctx context.Context, memLimit int, cwd string) (string, error)
 	EffectivePolicyValue(ctx context.Context) (interface{}, error)
 	SpawnAllowed(ctx context.Context) (bool, string)
 }
@@ -306,7 +306,9 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/context") {
-		text, err := s.fleet.FleetContext(r.Context(), 50)
+		// The UserPromptSubmit hook passes the chat's working directory so the
+		// current branch's PR state can be injected (see FleetContext).
+		text, err := s.fleet.FleetContext(r.Context(), 50, r.URL.Query().Get("cwd"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return

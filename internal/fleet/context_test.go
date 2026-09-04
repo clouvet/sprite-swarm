@@ -24,7 +24,7 @@ func TestFleetContextRendersPresenceAndMemory(t *testing.T) {
 	worker.SetAttendanceProbe(func() (bool, string) { return true, "sess-123" })
 	worker.Register(context.Background())
 
-	ctxText, err := home.FleetContext(context.Background(), 50)
+	ctxText, err := home.FleetContext(context.Background(), 50, "")
 	if err != nil {
 		t.Fatal(err)
 	}

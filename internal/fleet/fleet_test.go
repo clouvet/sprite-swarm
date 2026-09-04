@@ -72,7 +72,7 @@ func TestUpdatePhaseVisibleToPeer(t *testing.T) {
 		t.Fatalf("peer should see worker's published phase, got %+v", wk)
 	}
 
-	ctx, err := home.FleetContext(context.Background(), 0)
+	ctx, err := home.FleetContext(context.Background(), 0, "")
 	if err != nil {
 		t.Fatalf("fleet context: %v", err)
 	}
