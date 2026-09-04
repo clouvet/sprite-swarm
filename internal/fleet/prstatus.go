@@ -66,15 +66,21 @@ func computeBranchPR(cwd string) string {
 	if branch == "" || branch == "HEAD" { // not a repo, or detached
 		return ""
 	}
-	out := strings.TrimSpace(runTool(cwd, 12*time.Second, "gh", "pr", "view", "--json", "number,title,state,mergedAt"))
+	// `gh pr list --head <branch> --state all` finds the branch's PR by head-branch
+	// name across ALL states — crucially, it still resolves a MERGED PR after its
+	// branch was auto-deleted on merge (the exact case that matters here), which
+	// `gh pr view` can't. Returns a JSON array (empty when the branch has no PR).
+	out := strings.TrimSpace(runTool(cwd, 12*time.Second,
+		"gh", "pr", "list", "--head", branch, "--state", "all",
+		"--json", "number,title,state,mergedAt", "--limit", "1"))
 	if out == "" {
-		return "" // no PR for this branch (gh exits non-zero)
-	}
-	var pr prInfo
-	if json.Unmarshal([]byte(out), &pr) != nil || pr.Number == 0 {
 		return ""
 	}
-	return formatPRLine(branch, pr)
+	var prs []prInfo
+	if json.Unmarshal([]byte(out), &prs) != nil || len(prs) == 0 {
+		return ""
+	}
+	return formatPRLine(branch, prs[0])
 }
 
 // prInfo is the subset of `gh pr view --json` we render.
