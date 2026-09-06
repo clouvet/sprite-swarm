@@ -2,6 +2,7 @@ package routines
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"strings"
@@ -103,7 +104,7 @@ func (s *Service) RunNow(ctx context.Context, id string) error {
 // runTask injects the task's prompt into its dedicated session, waits for the turn to
 // settle, and records the resulting digest (or error).
 func (s *Service) runTask(ctx context.Context, t Task) {
-	sessionID := "routine-" + t.ID
+	sessionID := routineSessionID(t.ID)
 	s.deps.Register(sessionID, "🔁 "+t.Name)
 	s.store.setStatus(t.ID, StatusRunning)
 	log.Printf("routines: running %q (%s)", t.Name, t.ID)
@@ -178,6 +179,19 @@ func (s *Service) ContextDigest() string {
 	b.WriteString(strings.TrimSpace(t.LastResult))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// routineSessionID derives a stable, valid UUID (v5-style) for a task's dedicated
+// session. It must be a real UUID — Claude rejects a non-UUID --session-id — and stable
+// per task so the session persists across runs, letting the routine diff against its own
+// previous digest in the transcript ("since last run, PR #12 merged").
+func routineSessionID(taskID string) string {
+	h := sha1.Sum([]byte("sprite-swarm/routines:" + taskID))
+	var u [16]byte
+	copy(u[:], h[:16])
+	u[6] = (u[6] & 0x0f) | 0x50 // version 5
+	u[8] = (u[8] & 0x3f) | 0x80 // RFC-4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
 // frame wraps a task's prompt with the routine contract: the agent's LAST message is

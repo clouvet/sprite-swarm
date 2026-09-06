@@ -2,6 +2,7 @@ package routines
 
 import (
 	"context"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -175,6 +176,22 @@ func TestRunTaskTimeoutNoResult(t *testing.T) {
 	got, _ := s.Get(ContextAwarenessID)
 	if got.LastStatus != StatusError || got.LastError == "" {
 		t.Fatalf("expected error status on timeout, got %+v", got)
+	}
+}
+
+func TestRoutineSessionIDIsStableUUID(t *testing.T) {
+	a := routineSessionID(ContextAwarenessID)
+	b := routineSessionID(ContextAwarenessID)
+	if a != b {
+		t.Fatalf("session id must be stable per task: %q != %q", a, b)
+	}
+	if routineSessionID("other") == a {
+		t.Fatalf("different tasks must get different session ids")
+	}
+	// Shape: 8-4-4-4-12 hex, version 5, RFC-4122 variant — Claude requires a valid UUID.
+	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !re.MatchString(a) {
+		t.Fatalf("not a valid v5 UUID: %q", a)
 	}
 }
 
