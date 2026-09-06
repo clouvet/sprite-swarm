@@ -335,6 +335,20 @@
 
   // ---- fleet (P2.4): glance view + attach-to-worker, read from the roster ----
   let fleetRoster = [];
+
+  // devBranchBadge marks a sprite built from a non-main branch (an experimental
+  // build, e.g. the Pi runtime) so it's visually distinct from mainline sprites.
+  // The bootstrap ref is "github.com/…@<branch>"; mainline sprites are "@main".
+  function devBranchBadge(artifact) {
+    if (!artifact) return '';
+    const at = String(artifact).lastIndexOf('@');
+    if (at < 0) return '';
+    const branch = artifact.slice(at + 1);
+    if (!branch || branch === 'main') return '';
+    // Show a short, distinctive label; full branch on hover.
+    const short = branch.split('/').pop().slice(0, 16);
+    return `<span class="fleet-badge dev" title="experimental build — branch: ${escapeHtml(branch)}">⎇ ${escapeHtml(short)}</span>`;
+  }
   async function loadFleet() {
     try {
       const res = await fetch('/api/fleet');
@@ -342,7 +356,8 @@
       fleetRoster = await res.json() || [];
       fleetList.innerHTML = fleetRoster.map(a => {
         const badges =
-          (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '');
+          (a.present ? '<span class="fleet-badge present" title="a human is attached">👤</span>' : '') +
+          devBranchBadge(a.artifact);
         const attachable = a.url ? ' attachable' : '';
         // Every sprite gets a destroy button.
         const reap = '<button class="fleet-reap" title="Destroy this sprite">🗑</button>';
