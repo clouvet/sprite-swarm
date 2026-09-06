@@ -43,6 +43,7 @@ type Task struct {
 	LastResult  string    `json:"last_result,omitempty"`
 	LastError   string    `json:"last_error,omitempty"`
 	LastStatus  string    `json:"last_status,omitempty"`
+	LastSession string    `json:"last_session,omitempty"`
 }
 
 // due reports whether the task should run now: never run yet, or at least its interval
@@ -89,7 +90,7 @@ const contextAwarenessPrompt = `You are refreshing this sprite's awareness of wo
 Survey, using your tools (bash, git, gh):
 1. Repos this sprite works in. Look under /home/sprite/chats/*/ for git repos (each chat has its own working directory) and any other clones under /home/sprite. For each: the repo (remote/name), current branch, and any uncommitted or unpushed local work.
 2. Pull requests. For each active repo run ` + "`gh pr list --state all --json number,title,state,headRefName,updatedAt,url`" + ` (and ` + "`gh pr view`" + ` when useful) to see open/merged/closed PRs — especially ones authored here or on branches you've worked on.
-3. What MOVED since your last run. Compare against your previous digest earlier in this conversation: did a PR get merged or closed? Did new PRs or new commits land on the default branch? Did CI status flip? Call these out explicitly (e.g. "since last run: repoA PR #12 merged, PR #14 opened").
+3. What MOVED since your last run. Compare against your previous summary provided above (if any): did a PR get merged or closed? Did new PRs or new commits land on the default branch? Did CI status flip? Call these out explicitly (e.g. "since last run: repoA PR #12 merged, PR #14 opened").
 4. Anything else locally worth knowing: a failing build, a notable new file.
 
 Keep it efficient — a ` + "`git fetch`" + ` per active repo plus ` + "`gh pr list`" + ` is enough; don't pull large histories or clone anything new. If a repo has no remote movement, say so in one line.
