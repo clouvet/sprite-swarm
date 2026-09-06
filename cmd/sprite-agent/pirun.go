@@ -205,8 +205,17 @@ func (p *piRunner) appendTranscript(msgs []map[string]any) {
 	if len(msgs) == 0 {
 		return
 	}
+	// The claude projects dir (where history/search/resume read the transcript) is
+	// normally created by `claude`; with the Pi backend nothing else creates it, so
+	// ensure it exists — otherwise OpenFile fails and the conversation vanishes on
+	// reload (streaming still worked because that goes over stdout, not the file).
+	if err := os.MkdirAll(filepath.Dir(p.transcript), 0o755); err != nil {
+		log.Printf("pi-run: transcript dir: %v", err)
+		return
+	}
 	f, err := os.OpenFile(p.transcript, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
+		log.Printf("pi-run: open transcript %s: %v", p.transcript, err)
 		return
 	}
 	defer f.Close()

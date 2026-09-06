@@ -15,13 +15,14 @@ import (
 // block opens, streams deltas, closes) while Pi streams flat delta events. One
 // Translator instance drives one session.
 type Translator struct {
-	sessionID   string
-	initSent    bool
-	blockIdx    int    // current claude content-block index
-	openBlock   string // "", "text", or "thinking"
-	assistant   []map[string]any // content blocks accumulated for the transcript
-	textBuf     strings.Builder
-	thinkBuf    strings.Builder
+	sessionID  string
+	initSent   bool
+	resultSent bool             // a result already emitted for the current agent run
+	blockIdx   int              // current claude content-block index
+	openBlock  string           // "", "text", or "thinking"
+	assistant  []map[string]any // content blocks accumulated for the transcript
+	textBuf    strings.Builder
+	thinkBuf   strings.Builder
 }
 
 // NewTranslator builds a translator for a session id (used as the transcript's
@@ -62,13 +63,19 @@ func (t *Translator) Feed(ev map[string]any) (uiEvents []map[string]any, transcr
 		if msg := t.flushAssistant(); msg != nil {
 			transcriptMsgs = append(transcriptMsgs, msg)
 		}
+	case "agent_start":
+		t.resultSent = false // new agent run
 	case "agent_end", "agent_settled":
-		// The whole agent run settled → Claude's terminal "result".
+		// The whole agent run settled → Claude's terminal "result". Both events can
+		// fire (agent_end then agent_settled); emit exactly one result per run.
 		uiEvents = append(uiEvents, t.closeOpenBlock()...)
 		if msg := t.flushAssistant(); msg != nil {
 			transcriptMsgs = append(transcriptMsgs, msg)
 		}
-		uiEvents = append(uiEvents, map[string]any{"type": "result", "subtype": "success"})
+		if !t.resultSent {
+			t.resultSent = true
+			uiEvents = append(uiEvents, map[string]any{"type": "result", "subtype": "success"})
+		}
 	case "agent_error", "extension_error":
 		msg, _ := ev["error"].(string)
 		if msg == "" {
