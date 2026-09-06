@@ -184,10 +184,18 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 	if sess := h.GetSession(sessionID); sess != nil {
 		model = sess.GetModel()
 	}
-	// The Pi backend uses provider-native model ids, not Claude aliases ("opus"),
-	// so a boot-configured Pi model overrides the UI picker's alias for pi runtime.
-	if h.cfg.runtime == "pi" && h.cfg.model != "" {
-		model = h.cfg.model
+	// The Pi backend lets the user pick ANY provider/model (the picker sends a
+	// "provider/model" value). Until the session has a pick, default to the boot
+	// provider/model. Claude runtime keeps the alias (or "" for the CLI default).
+	if h.cfg.runtime == "pi" && model == "" {
+		p, m := h.cfg.provider, h.cfg.model
+		if p == "" {
+			p = "openai"
+		}
+		if m == "" {
+			m = "gpt-4o"
+		}
+		model = p + "/" + m
 	}
 	var extraEnv []string
 	if h.cfg.secrets != nil {
@@ -389,11 +397,11 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	// so the block below respawns with the new --model (the transcript resumes, so
 	// context carries over). Idempotent when the model is unchanged.
 	//
-	// SKIP for the Pi runtime: its model is fixed at boot (SPRITE_AGENT_MODEL, a
-	// provider-native id), and the UI picker still sends Claude aliases like "opus".
-	// Acting on that mismatch would kill + respawn pi-run on every turn — a disruptive
-	// loop that also aborts an in-flight answer.
-	if h.cfg.runtime != "pi" && sess != nil && msg.Model != sess.GetModel() {
+	// On the Pi runtime the picker sends a real "provider/model" value (e.g.
+	// "openai/gpt-5" or "anthropic/claude-opus-4-8"); switching it respawns pi-run
+	// with the new provider+model. (This is safe now that the picker no longer sends
+	// bare Claude aliases, which used to mismatch and loop.)
+	if sess != nil && msg.Model != "" && msg.Model != sess.GetModel() {
 		sess.SetModel(msg.Model)
 		if hp, err := h.processMgr.Get(client.sessionID); err == nil && hp.Model != msg.Model {
 			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)

@@ -828,10 +828,14 @@
   // Reflect a session's stored model in the picker (called when opening a chat).
   // No model stored → Opus.
   function applySessionModel(model) {
-    // Pi backend: the model is fixed at boot and the Claude picker/aliases don't
-    // apply, so always reflect the real provider model (a session's stored "opus"
-    // must not override it — that leaves the picker on a non-existent option).
-    if (runtimeInfo.runtime === 'pi' && runtimeInfo.model) model = runtimeInfo.model;
+    // Pi backend: the picker holds "provider/model" values. Honor a session's stored
+    // choice when it's one of the catalog options; otherwise fall back to the boot
+    // provider/model (a stale Claude alias like "opus" must not select a dead option).
+    if (runtimeInfo.runtime === 'pi' && modelSelect) {
+      const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-4o');
+      const valid = Array.from(modelSelect.options).some(o => o.value === model);
+      model = valid ? model : boot;
+    }
     currentModel = model || 'opus';
     if (modelSelect) modelSelect.value = currentModel;
     syncModelLabel();
@@ -944,6 +948,9 @@
   // so an unlisted variant still gets a sane denominator.
   function windowForModel(model) {
     if (!model) return 0;
+    // Pi picker values are "provider/model"; size by the model id.
+    const slash = model.indexOf('/');
+    if (slash > 0) model = model.slice(slash + 1);
     if (MODEL_WINDOWS[model]) return MODEL_WINDOWS[model];
     if (/^gpt-4\.1/.test(model)) return 1047576;
     if (/^gpt-4o|^gpt-4-turbo/.test(model)) return 128000;
@@ -956,30 +963,60 @@
   // runtimeInfo is filled from /api/version on load; defaults to Claude.
   let runtimeInfo = { runtime: 'claude', provider: '', model: '' };
   const ctxWindow = () => {
-    // Pi backend: the model is fixed at boot, and the Claude picker alias doesn't
-    // apply — size the meter to the real provider model.
-    if (runtimeInfo.runtime === 'pi') return windowForModel(runtimeInfo.model) || 128000;
+    // Pi backend: the picker holds "provider/model"; size the meter to whichever
+    // provider model is currently selected (falls back to the boot model).
+    if (runtimeInfo.runtime === 'pi') {
+      return windowForModel(currentModel || runtimeInfo.model) || 128000;
+    }
     return MODEL_WINDOWS[currentModel] || 1000000;
   };
+  // Pi backend model catalog: any provider/model Pi can reach (auth is resolved at
+  // boot — OpenAI via key, Anthropic via the fleet connector). Values are
+  // "provider/model" so a switch respawns pi-run with that provider.
+  const PI_MODEL_GROUPS = [
+    { label: 'Claude', models: [
+      ['anthropic/claude-opus-4-8', 'Opus'],
+      ['anthropic/claude-sonnet-4-6', 'Sonnet'],
+      ['anthropic/claude-fable-5', 'Fable'],
+      ['anthropic/claude-haiku-4-5', 'Haiku'],
+    ] },
+    { label: 'OpenAI', models: [
+      ['openai/gpt-4o', 'GPT-4o'],
+      ['openai/gpt-4.1', 'GPT-4.1'],
+      ['openai/gpt-5', 'GPT-5'],
+      ['openai/gpt-6', 'GPT-6'],
+    ] },
+  ];
   async function loadRuntimeInfo() {
     try {
       const v = await (await fetch('/api/version')).json();
-      if (v && v.runtime) {
-        runtimeInfo = { runtime: v.runtime, provider: v.provider || '', model: v.model || '' };
-        // Reflect the real backend model in the picker label so it's not misleading.
-        if (runtimeInfo.runtime === 'pi' && runtimeInfo.model && modelSelect) {
-          const opt = document.createElement('option');
-          opt.value = runtimeInfo.model;
-          opt.textContent = (runtimeInfo.provider ? runtimeInfo.provider + ' · ' : '') + runtimeInfo.model;
-          modelSelect.innerHTML = '';
-          modelSelect.appendChild(opt);
-          modelSelect.value = runtimeInfo.model;
-          modelSelect.disabled = true; // model is fixed at boot for the Pi backend
-          currentModel = runtimeInfo.model;
-          syncModelLabel(); // update the visible label now (init already ran with "opus")
+      if (!v || !v.runtime) return;
+      runtimeInfo = { runtime: v.runtime, provider: v.provider || '', model: v.model || '' };
+      if (runtimeInfo.runtime === 'pi' && modelSelect) {
+        // Replace the Claude picker with the full Pi catalog (grouped), still a real,
+        // enabled selector — switching respawns pi-run with the new provider/model.
+        const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-4o');
+        modelSelect.innerHTML = '';
+        let hasBoot = false;
+        for (const g of PI_MODEL_GROUPS) {
+          const og = document.createElement('optgroup'); og.label = g.label;
+          for (const [val, name] of g.models) {
+            const o = document.createElement('option'); o.value = val; o.textContent = name;
+            if (val === boot) hasBoot = true;
+            og.appendChild(o);
+          }
+          modelSelect.appendChild(og);
         }
-        if (lastContextTokens) updateContextMeter(lastContextTokens);
+        if (!hasBoot) { // boot model not in the catalog → add it so it's selectable
+          const o = document.createElement('option'); o.value = boot; o.textContent = runtimeInfo.model;
+          modelSelect.appendChild(o);
+        }
+        modelSelect.disabled = false;
+        modelSelect.value = boot;
+        currentModel = boot;
+        syncModelLabel();
       }
+      if (lastContextTokens) updateContextMeter(lastContextTokens);
     } catch (e) { /* default to Claude windows */ }
   }
   loadRuntimeInfo();

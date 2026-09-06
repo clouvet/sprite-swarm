@@ -119,7 +119,12 @@ func buildPiArgs(opts Options, cwd string) (string, []string) {
 	if err != nil || self == "" {
 		self = "sprite-agent"
 	}
-	provider := opts.Provider
+	// The model may be a "provider/model" pick from the UI (e.g. "openai/gpt-5" or
+	// "anthropic/claude-opus-4-8"); split it so a mid-session provider switch works.
+	provider, model := opts.Provider, opts.Model
+	if i := strings.Index(opts.Model, "/"); i > 0 {
+		provider, model = opts.Model[:i], opts.Model[i+1:]
+	}
 	if provider == "" {
 		provider = "openai"
 	}
@@ -129,8 +134,8 @@ func buildPiArgs(opts Options, cwd string) (string, []string) {
 		"--workdir", cwd,
 		"--provider", provider,
 	}
-	if opts.Model != "" {
-		args = append(args, "--model", opts.Model)
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	if opts.AppendSystem != "" {
 		args = append(args, "--append-system", opts.AppendSystem)
