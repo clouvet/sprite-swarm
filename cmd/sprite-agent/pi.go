@@ -101,6 +101,8 @@ func setupPiRuntime(ctx context.Context, fleetSvc *fleet.Service, cfg *config.Co
 		cfg.Model = p.Default
 	}
 	ensurePiInstalled(ctx)
+	// Bridge the fleet's composed MCP servers into Pi (Pi has no built-in MCP).
+	setupPiMCPBridge(ctx, cfg.MCPConfigPath)
 	log.Printf("pi: runtime ready (provider=%s model=%s)", cfg.Provider, cfg.Model)
 }
 

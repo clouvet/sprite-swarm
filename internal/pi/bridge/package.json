@@ -1,0 +1,9 @@
+{
+  "name": "sprite-mcp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bridges the sprite fleet's composed MCP servers into the Pi runtime as native tools.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
