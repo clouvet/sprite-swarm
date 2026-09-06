@@ -374,7 +374,8 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		Label      string            `json:"label"`
 		NamePrefix string            `json:"name_prefix"`
 		Labels     map[string]string `json:"labels"`
-		Env        map[string]string `json:"env"` // extra boot env, e.g. {"SPRITE_AGENT_BOOT_UPDATE":"0"} to pin the new sprite's build
+		Env        map[string]string `json:"env"`  // extra boot env, e.g. {"SPRITE_AGENT_BOOT_UPDATE":"0"} to pin the new sprite's build
+		Ref        string            `json:"ref"` // optional git ref/branch of sprite-swarm to build the new sprite from (experimental builds); staged under a ref-specific key, never the fleet artifact
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if !s.spawner.Available() {
@@ -401,7 +402,7 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		body.NamePrefix = "wk-"
 	}
 	res, err := s.spawner.Spawn(r.Context(), spawn.Request{
-		Name: body.Name, NamePrefix: body.NamePrefix, Labels: body.Labels, Env: body.Env,
+		Name: body.Name, NamePrefix: body.NamePrefix, Labels: body.Labels, Env: body.Env, Ref: body.Ref,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)

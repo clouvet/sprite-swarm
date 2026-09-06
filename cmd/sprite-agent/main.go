@@ -280,6 +280,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"sprite boots this same artifact and registers into the shared brain automatically. " +
 			"To pin a sprite so it won't auto-adopt the fleet's staged binary when it next wakes, spawn it " +
 			"with \"env\":{\"SPRITE_AGENT_BOOT_UPDATE\":\"0\"}. " +
+			"EXPERIMENTAL BUILDS: to spawn a sprite running a specific git branch of sprite-swarm instead of " +
+			"the fleet build (e.g. to try an experimental runtime/provider), pass \"ref\":\"<branch>\" — home " +
+			"builds that branch and stages it under a ref-specific key (never the fleet artifact), and the new " +
+			"sprite is auto-pinned so it stays on that branch and can't affect the fleet. Pass provider/runtime " +
+			"config for that branch via \"env\". Only do this when the human explicitly asks to spawn from a branch. " +
 			"DELEGATING WORK follows ONE fixed protocol — use it exactly, never improvise a way to get " +
 			"results: " +
 			"(1) ASSIGN — POST /api/fleet/dispatch {\"target\":\"<id>\",\"task\":\"…\"}; the response has a " +

@@ -51,9 +51,16 @@ func uploadViaConnector(ctx context.Context, gatewayBase string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("spawn: locate own binary: %w", err)
 	}
-	f, err := os.Open(self)
+	return uploadFileViaConnector(ctx, gatewayBase, self, artifactKey)
+}
+
+// uploadFileViaConnector uploads localPath to key in the brain through the s3
+// connector (identity-authed) and returns the GET URL. Used to stage both the
+// spawner's own binary (artifactKey) and one-off ref builds (a ref-specific key).
+func uploadFileViaConnector(ctx context.Context, gatewayBase, localPath, key string) (string, error) {
+	f, err := os.Open(localPath)
 	if err != nil {
-		return "", fmt.Errorf("spawn: open own binary: %w", err)
+		return "", fmt.Errorf("spawn: open %s: %w", localPath, err)
 	}
 	defer f.Close()
 	fi, err := f.Stat()
@@ -61,7 +68,7 @@ func uploadViaConnector(ctx context.Context, gatewayBase string) (string, error)
 		return "", err
 	}
 	base := strings.TrimRight(gatewayBase, "/")
-	url := base + "/" + artifactKey
+	url := base + "/" + key
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)
 	if err != nil {
 		return "", err
