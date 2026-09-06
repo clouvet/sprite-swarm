@@ -132,6 +132,13 @@ func (a *apiSpawner) buildCreateRequest(req Request) createSpriteRequest {
 	name := spriteName(req, a.newID())
 	env := BootstrapEnv(a.cfg, name)
 	mergeEnv(env, req.Env) // caller-supplied boot env, minus reserved bootstrap keys
+	if strings.TrimSpace(req.Ref) != "" {
+		// A ref-spawned sprite runs a one-off build of an arbitrary branch. PIN it:
+		// it must NOT boot-self-update to the shared fleet artifact (that would revert
+		// it to the fleet build), and its identity note reflects the ref it runs.
+		env["SPRITE_AGENT_BOOT_UPDATE"] = "0"
+		env["SPRITE_AGENT_ARTIFACT"] = "github.com/clouvet/sprite-swarm@" + strings.TrimSpace(req.Ref)
+	}
 	return createSpriteRequest{
 		Name:   name,
 		Labels: labels,
@@ -171,10 +178,22 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 		// returns); the worker registers into the brain on boot, so the roster the UI
 		// polls reflects it. Return the created sprite immediately.
 		name := res.Name
+		ref := req.Ref
 		go func() {
-			bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			// A ref build clones+compiles the branch, so give it more headroom.
+			timeout := 6 * time.Minute
+			if strings.TrimSpace(ref) != "" {
+				timeout = 12 * time.Minute
+			}
+			bg, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
-			url, err := a.stageSelf(bg)
+			// Default: stage the spawner's own (fleet) binary. With a ref: build that
+			// branch and stage it under a ref-specific key — never the shared artifact.
+			stage := a.stageSelf
+			if strings.TrimSpace(ref) != "" {
+				stage = func(c context.Context) (string, error) { return a.stageRef(c, ref) }
+			}
+			url, err := stage(bg)
 			if err != nil {
 				log.Printf("spawn: staging artifact for %s failed: %v", name, err)
 				return

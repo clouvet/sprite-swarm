@@ -25,6 +25,7 @@ type Request struct {
 	NamePrefix string            // restricted-token prefix (e.g. "wk-")
 	Labels     map[string]string // sprites-api labels (authoritative membership)
 	Env        map[string]string // extra boot env for the new sprite (e.g. SPRITE_AGENT_BOOT_UPDATE=0 to pin its build); reserved bootstrap keys can't be overridden
+	Ref        string            // optional git ref/branch of sprite-swarm to build the new sprite from (e.g. "experimental/pi-runtime"); empty = run the spawner's own binary. A ref build is staged under a ref-specific brain key, never the shared fleet artifact, and the new sprite is pinned (SPRITE_AGENT_BOOT_UPDATE=0) so it can't drift to the fleet build.
 }
 
 // reservedBootEnv are keys the bootstrap owns; caller-supplied Env can't override
