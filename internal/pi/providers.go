@@ -28,7 +28,12 @@ type Provider struct {
 // each provider's built-in definition; a brain-uploaded key is exported under that
 // name so Pi's built-in provider picks it up with no models.json entry needed.
 var Providers = []Provider{
-	{Name: "openai", EnvVar: "OPENAI_API_KEY", SecretName: "openai-api-key", Default: "gpt-5-codex"},
+	// Defaults are known-good ids for each provider's DEFAULT api type
+	// (openai-completions / anthropic-messages / google-generative-ai). Override with
+	// SPRITE_AGENT_MODEL. Note: some OpenAI models (e.g. gpt-5-codex) need the
+	// Responses/Codex api type and won't work under plain openai-completions — pick a
+	// chat-completions model here for a working default.
+	{Name: "openai", EnvVar: "OPENAI_API_KEY", SecretName: "openai-api-key", Default: "gpt-4o"},
 	{Name: "anthropic", EnvVar: "ANTHROPIC_API_KEY", SecretName: "anthropic-api-key", Default: "claude-opus-4-8"},
 	{Name: "google", EnvVar: "GEMINI_API_KEY", SecretName: "google-api-key", Default: "gemini-2.5-pro"},
 }

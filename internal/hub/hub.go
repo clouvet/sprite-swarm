@@ -388,7 +388,12 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	// use it, and if a process is already running under a different model, drop it
 	// so the block below respawns with the new --model (the transcript resumes, so
 	// context carries over). Idempotent when the model is unchanged.
-	if sess != nil && msg.Model != sess.GetModel() {
+	//
+	// SKIP for the Pi runtime: its model is fixed at boot (SPRITE_AGENT_MODEL, a
+	// provider-native id), and the UI picker still sends Claude aliases like "opus".
+	// Acting on that mismatch would kill + respawn pi-run on every turn — a disruptive
+	// loop that also aborts an in-flight answer.
+	if h.cfg.runtime != "pi" && sess != nil && msg.Model != sess.GetModel() {
 		sess.SetModel(msg.Model)
 		if hp, err := h.processMgr.Get(client.sessionID); err == nil && hp.Model != msg.Model {
 			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)

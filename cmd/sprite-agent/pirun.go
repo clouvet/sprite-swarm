@@ -94,6 +94,12 @@ func (p *piRunner) run(ctx context.Context, provider, model string) error {
 	cmd.Stderr = os.Stderr
 	p.piIn = stdin
 	if err := cmd.Start(); err != nil {
+		// Surface a launch failure to the chat (a "result" error) instead of exiting
+		// silently — otherwise the turn just hangs with no explanation.
+		p.emit([]map[string]any{{
+			"type": "result", "subtype": "error_during_execution", "is_error": true,
+			"result": fmt.Sprintf("Pi runtime failed to start (%s): %v — is the pi CLI installed?", piBin, err),
+		}})
 		return fmt.Errorf("start pi (%s): %w", piBin, err)
 	}
 
