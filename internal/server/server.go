@@ -331,12 +331,21 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 // running someone else's deploy can be asked "what version?" and answer precisely.
 func (s *Server) serveVersion(w http.ResponseWriter, r *http.Request) {
 	info := buildinfo.Get()
+	runtime := s.cfg.Runtime
+	if runtime == "" {
+		runtime = "claude"
+	}
 	writeJSON(w, map[string]any{
 		"tag":         info.Tag,
 		"commit":      info.Commit,
 		"commit_time": info.CommitTime,
 		"dirty":       info.Dirty,
 		"version":     buildinfo.String(),
+		// Backend identity so the UI can adapt (e.g. size the context meter to the
+		// actual provider/model rather than assuming Anthropic windows).
+		"runtime":  runtime,
+		"provider": s.cfg.Provider,
+		"model":    s.cfg.Model,
 	})
 }
 

@@ -925,17 +925,67 @@
 
   // ---- context meter: how full the conversation is vs the model's window ----
   // Denominator is the ACTIVE model's context window; warn/danger fire well below
-  // the hard ceiling so there's room to compact. Opus / Sonnet / Fable are 1M,
-  // Haiku is 200K.
-  const MODEL_WINDOWS = { opus: 1000000, sonnet: 1000000, fable: 1000000, haiku: 200000 };
-  const ctxWindow = () => MODEL_WINDOWS[currentModel] || 1000000;
+  // the hard ceiling so there's room to compact. Anthropic: Opus/Sonnet/Fable 1M,
+  // Haiku 200K. On the Pi backend the window comes from the actual OpenAI (etc.)
+  // model, not the Claude picker alias.
+  const MODEL_WINDOWS = {
+    // Anthropic (Claude picker aliases)
+    opus: 1000000, sonnet: 1000000, fable: 1000000, haiku: 200000,
+    // OpenAI (Pi backend) — by model id
+    'gpt-4o': 128000, 'gpt-4o-mini': 128000, 'gpt-4-turbo': 128000,
+    'gpt-4.1': 1047576, 'gpt-4.1-mini': 1047576, 'gpt-4.1-nano': 1047576,
+    'o3': 200000, 'o4-mini': 200000, 'gpt-5': 400000, 'gpt-5-codex': 400000,
+  };
+  // windowForModel resolves a model id to a context window, with family fallbacks
+  // so an unlisted variant still gets a sane denominator.
+  function windowForModel(model) {
+    if (!model) return 0;
+    if (MODEL_WINDOWS[model]) return MODEL_WINDOWS[model];
+    if (/^gpt-4\.1/.test(model)) return 1047576;
+    if (/^gpt-4o|^gpt-4-turbo/.test(model)) return 128000;
+    if (/^o[0-9]/.test(model)) return 200000;
+    if (/^gpt-5/.test(model)) return 400000;
+    if (/opus|sonnet|fable/.test(model)) return 1000000;
+    if (/haiku/.test(model)) return 200000;
+    return 128000; // conservative default for an unknown non-Claude model
+  }
+  // runtimeInfo is filled from /api/version on load; defaults to Claude.
+  let runtimeInfo = { runtime: 'claude', provider: '', model: '' };
+  const ctxWindow = () => {
+    // Pi backend: the model is fixed at boot, and the Claude picker alias doesn't
+    // apply — size the meter to the real provider model.
+    if (runtimeInfo.runtime === 'pi') return windowForModel(runtimeInfo.model) || 128000;
+    return MODEL_WINDOWS[currentModel] || 1000000;
+  };
+  async function loadRuntimeInfo() {
+    try {
+      const v = await (await fetch('/api/version')).json();
+      if (v && v.runtime) {
+        runtimeInfo = { runtime: v.runtime, provider: v.provider || '', model: v.model || '' };
+        // Reflect the real backend model in the picker label so it's not misleading.
+        if (runtimeInfo.runtime === 'pi' && runtimeInfo.model && modelSelect) {
+          const opt = document.createElement('option');
+          opt.value = runtimeInfo.model;
+          opt.textContent = (runtimeInfo.provider ? runtimeInfo.provider + ' · ' : '') + runtimeInfo.model;
+          modelSelect.innerHTML = '';
+          modelSelect.appendChild(opt);
+          modelSelect.value = runtimeInfo.model;
+          modelSelect.disabled = true; // model is fixed at boot for the Pi backend
+        }
+        if (lastContextTokens) updateContextMeter(lastContextTokens);
+      }
+    } catch (e) { /* default to Claude windows */ }
+  }
+  loadRuntimeInfo();
   function fmtTokens(n) {
     if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return Math.round(n / 1e3) + 'K';
     return String(n);
   }
+  let lastContextTokens = 0;
   function updateContextMeter(tokens) {
     if (!ctxMeter || !tokens) return;
+    lastContextTokens = tokens;
     const pct = Math.min(100, Math.round((tokens / ctxWindow()) * 100));
     ctxMeterFill.style.width = pct + '%';
     ctxMeter.classList.toggle('warn', pct >= 60 && pct < 85);
