@@ -828,6 +828,10 @@
   // Reflect a session's stored model in the picker (called when opening a chat).
   // No model stored → Opus.
   function applySessionModel(model) {
+    // Pi backend: the model is fixed at boot and the Claude picker/aliases don't
+    // apply, so always reflect the real provider model (a session's stored "opus"
+    // must not override it — that leaves the picker on a non-existent option).
+    if (runtimeInfo.runtime === 'pi' && runtimeInfo.model) model = runtimeInfo.model;
     currentModel = model || 'opus';
     if (modelSelect) modelSelect.value = currentModel;
     syncModelLabel();
@@ -971,6 +975,8 @@
           modelSelect.appendChild(opt);
           modelSelect.value = runtimeInfo.model;
           modelSelect.disabled = true; // model is fixed at boot for the Pi backend
+          currentModel = runtimeInfo.model;
+          syncModelLabel(); // update the visible label now (init already ran with "opus")
         }
         if (lastContextTokens) updateContextMeter(lastContextTokens);
       }
