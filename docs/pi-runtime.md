@@ -27,17 +27,27 @@ Home builds the branch, stages it under a **ref-specific** brain key (never the 
 artifact), and the new sprite is auto-pinned (`SPRITE_AGENT_BOOT_UPDATE=0`) — so the
 fleet and home stay on their release. Open the new sprite's URL and chat as normal.
 
-## Provider auth — key wins, else connector (same as Claude)
+## Provider auth — subscription wins, then key, then connector (same posture as Claude)
 
-Per provider, in priority order:
-1. **Brain-uploaded key** (wins): a secret named `openai-api-key` (or
-   `anthropic-api-key`, `google-api-key`). Exported as the provider env var
-   (`OPENAI_API_KEY`, …) for Pi's built-in provider. Upload with
-   `sprite-agent put-secret openai-api-key <file>`.
-2. **Gateway connector** (fallback): an `openai` (etc.) connector. A
+Resolved at boot in priority order:
+1. **Subscription** (wins, like Claude's plan token): Pi stores subscription logins
+   (ChatGPT Plus/Pro, Claude Pro/Max) in `~/.pi/agent/auth.json`. A sprite is headless,
+   so you can't run the interactive `/login` browser flow on it — instead **log in on
+   your own machine** (`pi`, then `/login`, pick the provider), then upload the
+   resulting `~/.pi/agent/auth.json` to the brain as the secret **`pi-auth-json`**
+   (`sprite-agent put-secret pi-auth-json <file>`). At boot the sprite writes it back
+   to `~/.pi/agent/auth.json` (0600) and Pi uses/auto-refreshes it.
+   - ⚠️ **Caveat (upstream, 2026):** Pi's ChatGPT/Codex subscription OAuth is still
+     rough — there are open reports of it dropping the `id_token` → "invalid ID token
+     format" at run time. Claude Pro/Max subscription is more mature. Treat OpenAI
+     *subscription* as experimental; use an API key if it misbehaves.
+2. **Brain-uploaded API key**: a secret `openai-api-key` (or `anthropic-api-key`,
+   `google-api-key`), exported as the provider env var (`OPENAI_API_KEY`, …). Metered,
+   but reliable today. `sprite-agent put-secret openai-api-key <file>`.
+3. **Gateway connector** (fallback): an `openai` (etc.) connector. A
    `~/.pi/agent/models.json` override points the provider's `baseUrl` at the gateway,
    which auths by sprite identity — no key on the sprite.
-3. Otherwise the provider is unavailable (logged loudly at boot).
+4. Otherwise the provider is unavailable (logged loudly at boot).
 
 ## Architecture (why the UI/features don't change)
 

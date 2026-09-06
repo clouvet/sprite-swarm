@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/clouvet/sprite-swarm/internal/config"
@@ -37,6 +39,13 @@ func setupPiRuntime(ctx context.Context, fleetSvc *fleet.Service, cfg *config.Co
 		}
 		return fleetSvc.GetSecret(c, name)
 	}
+
+	// Subscription auth WINS (like Claude's subscription token over the connector): if
+	// the operator uploaded their Pi auth.json (from `pi` + `/login` on their machine,
+	// stored in the brain as "pi-auth-json"), materialize it so Pi uses the ChatGPT/
+	// Claude subscription instead of a metered API key. Pi prefers subscription creds
+	// when present.
+	loadPiSubscriptionAuth(ctx, getSecret)
 
 	// Resolve every known provider (so a connector for a secondary one still works if
 	// present), and require the PRIMARY (selected) one to be available.
@@ -78,6 +87,33 @@ func setupPiRuntime(ctx context.Context, fleetSvc *fleet.Service, cfg *config.Co
 	}
 	ensurePiInstalled(ctx)
 	log.Printf("pi: runtime ready (provider=%s model=%s)", cfg.Provider, cfg.Model)
+}
+
+// loadPiSubscriptionAuth writes a brain-stored Pi auth.json (subscription logins,
+// e.g. ChatGPT Plus/Pro or Claude Pro/Max) to ~/.pi/agent/auth.json (0600) so a
+// headless sprite can use the subscription — you can't run the interactive `/login`
+// browser flow on a sprite, so you log in on your own machine and upload the
+// resulting auth.json (secret "pi-auth-json"). No secret → no-op (fall back to the
+// API key / connector). Pi auto-refreshes the tokens from here.
+func loadPiSubscriptionAuth(ctx context.Context, getSecret func(context.Context, string) string) {
+	blob := strings.TrimSpace(getSecret(ctx, "pi-auth-json"))
+	if blob == "" {
+		return
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sprite"
+	}
+	dir := filepath.Join(home, ".pi", "agent")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("pi: subscription auth dir: %v", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(blob), 0o600); err != nil {
+		log.Printf("pi: write subscription auth.json: %v", err)
+		return
+	}
+	log.Printf("pi: loaded subscription auth from brain (wins over metered API keys)")
 }
 
 // ensurePiInstalled installs the pi CLI globally on first boot if it's not present.
