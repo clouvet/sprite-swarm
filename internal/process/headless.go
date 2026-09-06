@@ -29,6 +29,12 @@ type Options struct {
 	MCPConfigPath  string // --mcp-config <file> when non-empty
 	AppendSystem   string // --append-system-prompt when non-empty (fleet affordance, DESIGN §5)
 	Model          string // --model <model> when non-empty; "" uses the CLI default
+	// Runtime selects the agent backend. "" / "claude" launches Claude Code (the
+	// default everywhere). "pi" launches `sprite-agent pi-run`, a drop-in that drives
+	// the Pi multi-provider runtime and translates to the same stream-json + transcript
+	// (experimental/pi-runtime branch). Provider names the LLM provider for Pi.
+	Runtime  string
+	Provider string
 	// ExtraEnv is "NAME=VALUE" pairs injected into the Claude process environment
 	// (worker-scoped secrets), so tools/apps the agent runs inherit them.
 	ExtraEnv []string
@@ -105,6 +111,33 @@ func buildArgs(opts Options) []string {
 	return args
 }
 
+// buildPiArgs assembles the `sprite-agent pi-run` invocation (the Pi backend). It
+// re-invokes THIS binary, which speaks the same stream-json in/out as claude, so the
+// caller reads it identically. Provider/model come from the sprite's runtime config.
+func buildPiArgs(opts Options, cwd string) (string, []string) {
+	self, err := os.Executable()
+	if err != nil || self == "" {
+		self = "sprite-agent"
+	}
+	provider := opts.Provider
+	if provider == "" {
+		provider = "openai"
+	}
+	args := []string{"pi-run",
+		"--session-id", opts.SessionID,
+		"--projects-dir", opts.ProjectsDir,
+		"--workdir", cwd,
+		"--provider", provider,
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.AppendSystem != "" {
+		args = append(args, "--append-system", opts.AppendSystem)
+	}
+	return self, args
+}
+
 // resumableTranscript reports whether the on-disk transcript holds a real
 // conversation we can hand to `claude --resume`. A file that merely EXISTS is
 // not enough: interrupting the first turn of a brand-new chat (stop the stream
@@ -150,8 +183,15 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 		cwd = "/home/sprite"
 	}
 
+	// Select the backend. Default: the `claude` CLI. Experimental: our own binary
+	// re-invoked as `pi-run`, a claude-protocol drop-in over the Pi runtime — so
+	// everything downstream (stream parsing, transcript, UI) is unchanged.
+	bin := "claude"
 	args := buildArgs(opts)
-	execCmd := exec.CommandContext(ctx, "claude", args...)
+	if opts.Runtime == "pi" {
+		bin, args = buildPiArgs(opts, cwd)
+	}
+	execCmd := exec.CommandContext(ctx, bin, args...)
 	execCmd.Dir = cwd
 	execCmd.Env = append(os.Environ(), opts.ExtraEnv...)
 

@@ -455,6 +455,12 @@ func main() {
 		runSlackMCP()
 		return
 	}
+	// `pi-run` is the experimental Pi runtime backend: a claude-protocol drop-in that
+	// drives `pi --mode rpc` (launched by the hub when SPRITE_AGENT_RUNTIME=pi).
+	if len(os.Args) > 1 && os.Args[1] == "pi-run" {
+		runPiRun(os.Args[2:])
+		return
+	}
 
 	cfg := config.FromEnv()
 	log.Printf("sprite-agent %s starting: id=%s addr=%s workdir=%s projects=%s",
@@ -551,11 +557,18 @@ func main() {
 		maybeBootSelfUpdate(fleetSvc)
 	}
 
-	// Resolve Claude auth now that any brain secrets are loaded: prefer the
-	// subscription (CLAUDE_CODE_OAUTH_TOKEN) over the API connector; then a
-	// boot-time self-check so a misconfigured fleet says so loudly in the logs.
-	setupClaudeAuth()
-	go checkClaudeAuth()
+	// Resolve the agent backend's auth now that brain secrets are loaded. Default:
+	// Claude (subscription token over the API connector, then a self-check). The
+	// experimental Pi runtime resolves its provider auth instead (key wins, else a
+	// connector) and installs the pi CLI.
+	if cfg.Runtime == "pi" {
+		pctx, pcancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		setupPiRuntime(pctx, fleetSvc, &cfg)
+		pcancel()
+	} else {
+		setupClaudeAuth()
+		go checkClaudeAuth()
+	}
 
 	// No sprites token (env or brain)? Fall back to a custom_api connector fronting
 	// the Sprites API — spawn/reap then route through the gateway, authed by sprite
@@ -599,6 +612,9 @@ func main() {
 		SettingsPath:   cfg.SettingsPath,
 		MCPConfigPath:  cfg.MCPConfigPath,
 		AppendSystem:   fleetAffordance(cfg, spawner.Available(), os.Getenv("GH_TOKEN") != ""),
+		Runtime:        cfg.Runtime,
+		Provider:       cfg.Provider,
+		Model:          cfg.Model,
 		Secrets:        secrets,
 	})
 	go h.Run()

@@ -37,6 +37,9 @@ type Config struct {
 	SettingsPath   string
 	MCPConfigPath  string
 	AppendSystem   string
+	Runtime        string // "" / "claude" (default) or "pi" (experimental backend)
+	Provider       string // Pi LLM provider
+	Model          string // Pi model id (fixed at boot; overrides the UI model picker)
 	Secrets        *secret.Store // worker-scoped env vars injected into Claude processes
 }
 
@@ -77,6 +80,9 @@ type providers struct {
 	settingsPath   string
 	mcpConfigPath  string
 	appendSystem   string
+	runtime        string
+	provider       string
+	model          string
 	secrets        *secret.Store
 }
 
@@ -99,6 +105,9 @@ func NewHub(cfg Config) *Hub {
 			settingsPath:   cfg.SettingsPath,
 			mcpConfigPath:  cfg.MCPConfigPath,
 			appendSystem:   cfg.AppendSystem,
+			runtime:        cfg.Runtime,
+			provider:       cfg.Provider,
+			model:          cfg.Model,
 			secrets:        cfg.Secrets,
 		},
 		sessions:   make(map[string]*session.Session),
@@ -175,6 +184,11 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 	if sess := h.GetSession(sessionID); sess != nil {
 		model = sess.GetModel()
 	}
+	// The Pi backend uses provider-native model ids, not Claude aliases ("opus"),
+	// so a boot-configured Pi model overrides the UI picker's alias for pi runtime.
+	if h.cfg.runtime == "pi" && h.cfg.model != "" {
+		model = h.cfg.model
+	}
 	var extraEnv []string
 	if h.cfg.secrets != nil {
 		extraEnv = h.cfg.secrets.Env()
@@ -189,6 +203,8 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 		MCPConfigPath:  h.cfg.mcpConfigPath,
 		AppendSystem:   h.cfg.appendSystem,
 		Model:          model,
+		Runtime:        h.cfg.runtime,
+		Provider:       h.cfg.provider,
 		ExtraEnv:       extraEnv,
 	}
 }

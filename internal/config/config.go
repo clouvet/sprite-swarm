@@ -43,6 +43,14 @@ type Config struct {
 	SettingsPath   string
 	MCPConfigPath  string
 
+	// Runtime selects the agent backend: "" / "claude" = Claude Code (default);
+	// "pi" = the experimental Pi multi-provider runtime. Provider/Model configure
+	// Pi. Set via SPRITE_AGENT_RUNTIME / SPRITE_AGENT_PROVIDER / SPRITE_AGENT_MODEL,
+	// typically at spawn time for a ref-built experimental sprite.
+	Runtime  string
+	Provider string
+	Model    string
+
 	// Brain (S3/Tigris) pointer. When BrainBucket is empty the brain is
 	// disabled and the agent runs solo (still fully functional for chat).
 	Brain BrainConfig
@@ -114,6 +122,9 @@ func FromEnv() Config {
 		PermissionMode:      getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
 		SettingsPath:        os.Getenv("SPRITE_AGENT_SETTINGS"),
 		MCPConfigPath:       os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
+		Runtime:             os.Getenv("SPRITE_AGENT_RUNTIME"),
+		Provider:            os.Getenv("SPRITE_AGENT_PROVIDER"),
+		Model:               os.Getenv("SPRITE_AGENT_MODEL"),
 		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
 		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),

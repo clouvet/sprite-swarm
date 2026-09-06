@@ -118,6 +118,18 @@ func SlackBase(ctx context.Context) string {
 	return conns["slack"].GatewayBase
 }
 
+// ConnectorBase returns the gateway base URL of the connector for `provider` (e.g.
+// "openai", "anthropic", "google"), or "" if none is configured. Generic form of
+// AnthropicBaseURL — used by the Pi runtime to route a provider through the gateway
+// (identity-authed, token-free) when no brain-uploaded key is present.
+func ConnectorBase(ctx context.Context, provider string) string {
+	conns, err := Discover(ctx)
+	if err != nil {
+		return ""
+	}
+	return conns[provider].GatewayBase
+}
+
 // CustomAPIBaseFor returns the gateway base URL of the custom_api connector that
 // fronts the given upstream (e.g. a Grafana URL), or "" if none. A sprite then
 // calls that base by its identity and the gateway injects the connector's stored
