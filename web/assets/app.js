@@ -207,13 +207,34 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 
-  function renderSessions() {
-    sessionsList.innerHTML = sessions.map(s => `
+  // A greyscale thumbtack (monochrome — inherits currentColor, no accent).
+  const PIN_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M16 3v2l-1 1v4l3 3v2h-5v6h-2v-6H4v-2l3-3V6L6 5V3z"/></svg>';
+
+  function sessionRow(s) {
+    return `
       <div class="session-item ${currentSession && currentSession.id === s.id ? 'active' : ''}" data-id="${s.id}">
-        <div class="session-name"><span>${escapeHtml(s.name || 'Chat')}</span><button class="session-delete" onclick="deleteSession('${s.id}', event)">×</button></div>
+        <div class="session-name"><span>${escapeHtml(s.name || 'Chat')}</span><span class="session-actions">`
+        + `<button class="session-pin ${s.pinned ? 'pinned' : ''}" title="${s.pinned ? 'Unpin' : 'Pin'}" onclick="togglePin('${s.id}', event)">${PIN_SVG}</button>`
+        + `<button class="session-delete" title="Delete" onclick="deleteSession('${s.id}', event)">×</button></span></div>
         <div class="session-preview">${escapeHtml(s.lastMessage || 'No messages yet')}</div>
         <div class="session-time">${formatTime(s.lastMessageAt)}</div>
-      </div>`).join('');
+      </div>`;
+  }
+
+  function renderSessions() {
+    // Pinned chats float to the top (then most-recent first); a divider separates the
+    // groups when both are present.
+    const ordered = sessions.slice().sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      return (b.lastMessageAt || 0) - (a.lastMessageAt || 0);
+    });
+    const pinnedCount = ordered.filter(s => s.pinned).length;
+    let html = '';
+    ordered.forEach((s, i) => {
+      if (pinnedCount && i === pinnedCount && i < ordered.length) html += '<div class="session-divider"></div>';
+      html += sessionRow(s);
+    });
+    sessionsList.innerHTML = html;
     sessionsList.querySelectorAll('.session-item').forEach(el => {
       el.addEventListener('click', () => {
         const s = sessions.find(x => x.id === el.dataset.id);
@@ -221,6 +242,25 @@
       });
     });
   }
+
+  async function togglePin(id, ev) {
+    ev.stopPropagation();
+    const s = sessions.find(x => x.id === id);
+    if (!s) return;
+    const next = !s.pinned;
+    s.pinned = next; // optimistic; reorder immediately
+    renderSessions();
+    try {
+      await fetch('/api/sessions/' + id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: next }),
+      });
+    } catch (e) {
+      s.pinned = !next; // revert on failure
+      renderSessions();
+    }
+  }
+  window.togglePin = togglePin;
 
   // ---- session search: this sprite first, then the rest of the fleet streams in ----
   // A single monotonic seq drops out-of-order responses; the local result lands

@@ -284,15 +284,16 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPatch, http.MethodPut:
 		var body struct {
-			Name  string  `json:"name"`
-			Model *string `json:"model"` // pointer so "" (default model) is distinguishable from absent
+			Name   string  `json:"name"`
+			Model  *string `json:"model"`  // pointer so "" (default model) is distinguishable from absent
+			Pinned *bool   `json:"pinned"` // pointer so false is distinguishable from absent
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
-		if body.Name == "" && body.Model == nil {
-			http.Error(w, "name or model required", http.StatusBadRequest)
+		if body.Name == "" && body.Model == nil && body.Pinned == nil {
+			http.Error(w, "name, model, or pinned required", http.StatusBadRequest)
 			return
 		}
 		if body.Name != "" {
@@ -300,6 +301,9 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Model != nil {
 			s.store.SetModel(id, *body.Model)
+		}
+		if body.Pinned != nil {
+			s.store.SetPinned(id, *body.Pinned)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
