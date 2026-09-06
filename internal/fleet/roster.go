@@ -29,6 +29,7 @@ type Status struct {
 	Version   string `json:"version,omitempty"` // human version: release tag + commit (buildinfo.String())
 	Present   bool   `json:"present"`           // a human is currently attached to this agent (presence, §2.4)
 	Session   string `json:"session,omitempty"` // the session the human is attached to, if any
+	Pinned    bool   `json:"pinned,omitempty"`  // SPRITE_AGENT_BOOT_UPDATE=0: won't auto-adopt the fleet binary; a bulk roll skips it
 	StartedAt int64  `json:"started_at"`
 	UpdatedAt int64  `json:"updated_at"`
 }
