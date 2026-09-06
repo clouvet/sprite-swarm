@@ -76,7 +76,7 @@ func DefaultTasks() []Task {
 			Name:        "Context awareness",
 			Kind:        KindDefault,
 			Enabled:     true,
-			IntervalMin: 30,
+			IntervalMin: 240, // every 4 hours
 			Prompt:      contextAwarenessPrompt,
 		},
 	}
