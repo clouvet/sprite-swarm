@@ -72,7 +72,14 @@ type Server struct {
 	// regenerateMCP recomposes mcp.json from the built-ins + brain registry and
 	// returns its path; wired by main (which owns the setup funcs). nil = no-op.
 	regenerateMCP func() (string, error)
+	// routines is the per-sprite scheduled-tasks service; nil when routines are
+	// disabled. Wired by main after New via SetRoutines.
+	routines Routines
 }
+
+// SetRoutines wires the scheduled-tasks (Routines) service; enables the /api/tasks
+// endpoints and the standing-context injection in FleetContext. Set once, after New.
+func (s *Server) SetRoutines(r Routines) { s.routines = r }
 
 // SetRegenerateMCP wires the mcp.json regenerator (main owns the compose logic).
 func (s *Server) SetRegenerateMCP(fn func() (string, error)) { s.regenerateMCP = fn }
@@ -149,6 +156,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/mcp", s.serveMCP)
 	mux.HandleFunc("/api/mcp/refresh", s.serveMCPRefresh)
 	mux.HandleFunc("/api/mcp/", s.serveMCPByName)
+	mux.HandleFunc("/api/tasks", s.serveTasks)
+	mux.HandleFunc("/api/tasks/", s.serveTaskByID)
 
 	// Static PWA from the embedded FS, with index fallback for the SPA root.
 	fileServer := http.FileServer(http.FS(web.FS()))
@@ -313,6 +322,13 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		// Prepend the standing digest the background awareness routine gathered, so a
+		// chat already knows where things stand (repos/PRs that moved) without a check.
+		if s.routines != nil {
+			if digest := s.routines.ContextDigest(); digest != "" {
+				text = digest + "\n" + text
+			}
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(text))
 		return
@@ -374,7 +390,7 @@ func (s *Server) serveSpawn(w http.ResponseWriter, r *http.Request) {
 		Label      string            `json:"label"`
 		NamePrefix string            `json:"name_prefix"`
 		Labels     map[string]string `json:"labels"`
-		Env        map[string]string `json:"env"`  // extra boot env, e.g. {"SPRITE_AGENT_BOOT_UPDATE":"0"} to pin the new sprite's build
+		Env        map[string]string `json:"env"` // extra boot env, e.g. {"SPRITE_AGENT_BOOT_UPDATE":"0"} to pin the new sprite's build
 		Ref        string            `json:"ref"` // optional git ref/branch of sprite-swarm to build the new sprite from (experimental builds); staged under a ref-specific key, never the fleet artifact
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
