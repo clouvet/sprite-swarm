@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,21 +46,33 @@ func setupPiRuntime(ctx context.Context, fleetSvc *fleet.Service, cfg *config.Co
 	// Subscription auth WINS (like Claude's subscription token over the connector): if
 	// the operator uploaded their Pi auth.json (from `pi` + `/login` on their machine,
 	// stored in the brain as "pi-auth-json"), materialize it so Pi uses the ChatGPT/
-	// Claude subscription instead of a metered API key. Pi prefers subscription creds
-	// when present.
-	loadPiSubscriptionAuth(ctx, getSecret)
+	// Claude subscription instead of a metered API key. Returns the set of providers the
+	// file covers so we can let it win over the connector below.
+	subscribed := loadPiSubscriptionAuth(ctx, getSecret)
 
 	// Resolve every known provider (so a connector for a secondary one still works if
-	// present), and require the PRIMARY (selected) one to be available.
+	// present), and require the PRIMARY (selected) one to be available. For a provider the
+	// uploaded subscription already covers, DROP the connector override: its models.json
+	// baseUrl would otherwise redirect that provider to the gateway and shadow the OAuth
+	// subscription. This is what makes the subscription cleanly win (the Claude posture).
 	var auths []pi.Auth
 	for _, prov := range pi.Providers {
-		auths = append(auths, pi.Resolve(ctx, prov, getSecret, gateway.ConnectorBase))
+		a := pi.Resolve(ctx, prov, getSecret, gateway.ConnectorBase)
+		if subscribed[prov.Name] && !a.ViaKey {
+			// Subscription covers it: neutralize the connector so no baseUrl override is
+			// written. (A brain-uploaded key still wins per Pi's own precedence, so we
+			// leave a ViaKey auth alone.)
+			a = pi.Auth{Provider: prov.Name}
+		}
+		auths = append(auths, a)
 	}
 	primary := pi.Resolve(ctx, p, getSecret, gateway.ConnectorBase)
 	switch {
+	case subscribed[p.Name] && !primary.ViaKey:
+		log.Printf("pi: provider %q authed via uploaded subscription (wins over connector)", p.Name)
 	case !primary.Available:
-		log.Printf("pi: provider %q has NO auth — upload a brain key %q or add a %q gateway connector; the runtime will fail to answer",
-			p.Name, p.SecretName, p.Name)
+		log.Printf("pi: provider %q has NO auth — upload a brain key %q, a subscription auth.json (%q), or add a %q gateway connector; the runtime will fail to answer",
+			p.Name, p.SecretName, "pi-auth-json", p.Name)
 	case primary.ViaKey:
 		log.Printf("pi: provider %q authed via brain-uploaded key (wins over connector)", p.Name)
 	default:
@@ -96,10 +110,13 @@ func setupPiRuntime(ctx context.Context, fleetSvc *fleet.Service, cfg *config.Co
 // browser flow on a sprite, so you log in on your own machine and upload the
 // resulting auth.json (secret "pi-auth-json"). No secret → no-op (fall back to the
 // API key / connector). Pi auto-refreshes the tokens from here.
-func loadPiSubscriptionAuth(ctx context.Context, getSecret func(context.Context, string) string) {
+//
+// Returns the set of provider ids the file authenticates (its top-level keys, e.g.
+// "anthropic", "openai"), so the caller can let the subscription win over a connector.
+func loadPiSubscriptionAuth(ctx context.Context, getSecret func(context.Context, string) string) map[string]bool {
 	blob := strings.TrimSpace(getSecret(ctx, "pi-auth-json"))
 	if blob == "" {
-		return
+		return nil
 	}
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -108,13 +125,29 @@ func loadPiSubscriptionAuth(ctx context.Context, getSecret func(context.Context,
 	dir := filepath.Join(home, ".pi", "agent")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("pi: subscription auth dir: %v", err)
-		return
+		return nil
 	}
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(blob), 0o600); err != nil {
 		log.Printf("pi: write subscription auth.json: %v", err)
-		return
+		return nil
 	}
-	log.Printf("pi: loaded subscription auth from brain (wins over metered API keys)")
+	// Parse the top-level provider keys so setupPiRuntime knows which providers the
+	// subscription covers. A parse failure is non-fatal — the file is still written and
+	// Pi will use it; we just can't special-case the connector for those providers.
+	covered := map[string]bool{}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(blob), &parsed); err != nil {
+		log.Printf("pi: loaded subscription auth from brain (could not parse provider keys: %v)", err)
+		return nil
+	}
+	names := make([]string, 0, len(parsed))
+	for k := range parsed {
+		covered[k] = true
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	log.Printf("pi: loaded subscription auth from brain for %v (wins over metered keys/connector)", names)
+	return covered
 }
 
 // piMinVersion is the lowest pi we accept: the first release whose bundled model
