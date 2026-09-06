@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,7 +109,53 @@ func (s *Service) UpgradeStatus(ctx context.Context) UpgradeStatus {
 // is always eligible to move onto a real release). Assetless releases (e.g. before
 // the workflow attached a binary) are not upgradeable, so they aren't offered.
 func upgradeAvailable(info ReleaseInfo, currentTag string) bool {
-	return info.AssetURL != "" && info.Tag != "" && info.Tag != currentTag
+	if info.AssetURL == "" {
+		return false
+	}
+	// Only a sprite ON a release is offered a NEWER release. A "dev" build — home, or
+	// any sprite spawned from a branch (experimental) — is intentionally off-release:
+	// offering it a release would be a downgrade for home and would yank an
+	// experimental sprite back onto main. So require BOTH tags to be real semver
+	// releases and the latest to be strictly newer. (Releases are cut from main, so
+	// this inherently scopes upgrades to the branch the sprite is on.)
+	cur, okCur := parseSemver(currentTag)
+	lat, okLat := parseSemver(info.Tag)
+	if !okCur || !okLat {
+		return false
+	}
+	return semverLess(cur, lat)
+}
+
+// parseSemver parses a "vX.Y.Z" tag into its numeric parts; ok=false for anything
+// that isn't a plain release tag (e.g. "dev", "v1.2", "v1.2.3-rc1").
+func parseSemver(tag string) ([3]int, bool) {
+	tag = strings.TrimSpace(tag)
+	if !strings.HasPrefix(tag, "v") {
+		return [3]int{}, false
+	}
+	parts := strings.Split(tag[1:], ".")
+	if len(parts) != 3 {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return [3]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+// semverLess reports whether a < b.
+func semverLess(a, b [3]int) bool {
+	for i := 0; i < 3; i++ {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
 }
 
 // UpgradeStatusValue is the interface{}-returning wrapper (the server avoids
