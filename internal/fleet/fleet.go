@@ -38,8 +38,8 @@ type Service struct {
 	tzFetched       time.Time             // when tzName was last read from the brain
 	lastContext     time.Time             // last FleetContext render, for per-turn time-gap detection
 
-	taskMu   sync.Mutex                                // serializes inbox drains (one at a time)
-	seen     map[string]bool                           // task ids already injected (loaded once, persisted on change)
+	taskMu   sync.Mutex                               // serializes inbox drains (one at a time)
+	seen     map[string]bool                          // task ids already injected (loaded once, persisted on change)
 	injectFn func(sessionID, task, kind string) error // delivers a task/note into a local session
 	busy     func() bool                              // reports if a session is generating (serialize dispatched work)
 }
@@ -148,6 +148,7 @@ func (s *Service) writeStatus(ctx context.Context, phase string) error {
 		Version:   buildinfo.String(),
 		Present:   present,
 		Session:   presentSession,
+		Pinned:    bootUpdatePinned(),
 		StartedAt: s.started,
 		UpdatedAt: now.Unix(),
 	}

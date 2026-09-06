@@ -80,3 +80,46 @@ func TestUpdateFleetFansOut(t *testing.T) {
 		t.Fatalf("update call lacked the bearer: %q", sawAuth)
 	}
 }
+
+func TestSelectUpdateTargets(t *testing.T) {
+	roster := []RosterEntry{
+		{Status: Status{ID: "self"}},
+		{Status: Status{ID: "main-a"}},
+		{Status: Status{ID: "main-b"}},
+		{Status: Status{ID: "exp-pinned", Pinned: true}},
+	}
+	ids := func(es []RosterEntry) []string {
+		out := []string{}
+		for _, e := range es {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+
+	// Bulk "all": self excluded, pinned skipped (reported), rest targeted.
+	tg, sk := selectUpdateTargets(roster, "self", "all")
+	if got := ids(tg); len(got) != 2 || got[0] != "main-a" || got[1] != "main-b" {
+		t.Fatalf("bulk targets = %v, want [main-a main-b]", got)
+	}
+	if len(sk) != 1 || sk[0].ID != "exp-pinned" || sk[0].OK {
+		t.Fatalf("bulk skipped = %+v, want exp-pinned not-ok", sk)
+	}
+
+	// Bulk "" behaves the same as "all".
+	tg2, sk2 := selectUpdateTargets(roster, "self", "")
+	if len(tg2) != 2 || len(sk2) != 1 {
+		t.Fatalf(`empty target: targets=%v skipped=%d`, ids(tg2), len(sk2))
+	}
+
+	// Explicit single target STILL updates a pinned sprite (operator asked by name).
+	tg3, sk3 := selectUpdateTargets(roster, "self", "exp-pinned")
+	if len(tg3) != 1 || tg3[0].ID != "exp-pinned" || len(sk3) != 0 {
+		t.Fatalf("explicit pinned target: targets=%v skipped=%v", ids(tg3), sk3)
+	}
+
+	// Self is never a target, even if named.
+	tg4, _ := selectUpdateTargets(roster, "self", "self")
+	if len(tg4) != 0 {
+		t.Fatalf("self should never be targeted, got %v", ids(tg4))
+	}
+}

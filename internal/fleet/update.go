@@ -112,16 +112,7 @@ func (s *Service) propagateUpdate(ctx context.Context, target string) ([]UpdateR
 	if err != nil {
 		return nil, err
 	}
-	var targets []RosterEntry
-	for _, e := range roster {
-		if e.ID == s.id {
-			continue
-		}
-		if target != "" && target != "all" && e.ID != target {
-			continue
-		}
-		targets = append(targets, e)
-	}
+	targets, skipped := selectUpdateTargets(roster, s.id, target)
 
 	results := make([]UpdateResult, len(targets))
 	sem := make(chan struct{}, 12) // cap concurrency so a huge fleet can't fan out unbounded
@@ -151,7 +142,39 @@ func (s *Service) propagateUpdate(ctx context.Context, target string) ([]UpdateR
 		}(i, e)
 	}
 	wg.Wait()
-	return results, nil
+	return append(results, skipped...), nil
+}
+
+// bootUpdatePinned reports whether this sprite is pinned against auto-adopting the
+// fleet's staged binary (SPRITE_AGENT_BOOT_UPDATE=0/false) — mirrors main's
+// shouldBootSelfUpdate. Pinned sprites are published as such and skipped by a bulk roll.
+func bootUpdatePinned() bool {
+	v := os.Getenv("SPRITE_AGENT_BOOT_UPDATE")
+	return v == "0" || strings.EqualFold(v, "false")
+}
+
+// selectUpdateTargets splits the roster into the peers a fleet-update should call and the
+// ones it should skip. Self is always excluded. A BULK update (target "" or "all") skips
+// PINNED peers — a pinned sprite (e.g. an experimental/ref build) opted out of adopting
+// the fleet binary, so a mass roll must not clobber it; each is reported as skipped for
+// visibility. An EXPLICIT single-id update still targets that sprite even if pinned (the
+// operator asked for it by name). Pure so it can be unit-tested without a brain.
+func selectUpdateTargets(roster []RosterEntry, selfID, target string) (targets []RosterEntry, skipped []UpdateResult) {
+	bulk := target == "" || target == "all"
+	for _, e := range roster {
+		if e.ID == selfID {
+			continue
+		}
+		if !bulk && e.ID != target {
+			continue
+		}
+		if bulk && e.Pinned {
+			skipped = append(skipped, UpdateResult{ID: e.ID, OK: false, Status: "skipped: pinned (won't adopt fleet binary)"})
+			continue
+		}
+		targets = append(targets, e)
+	}
+	return targets, skipped
 }
 
 // ReloadFleet tells each target to re-read the brain and re-apply its env-based

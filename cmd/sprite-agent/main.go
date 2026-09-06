@@ -315,7 +315,9 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"this node). " +
 			"To roll out a new build after this binary is updated: POST /api/fleet/update {\"target\":\"<id>\"|\"all\"} " +
 			"stages your current binary and tells that worker (or every other agent) to self-update in place — they " +
-			"re-exec, keeping their VM disk (repo/branch/uncommitted work). POST /api/fleet/update with no body updates " +
+			"re-exec, keeping their VM disk (repo/branch/uncommitted work). An \"all\" roll SKIPS pinned sprites " +
+			"(SPRITE_AGENT_BOOT_UPDATE=0, e.g. experimental/ref builds) so it won't clobber their binary — target " +
+			"one by id to update it anyway. POST /api/fleet/update with no body updates " +
 			"only this node. The roster's \"build\" hash shows who's stale (marked in the fleet context). " +
 			"To HOST A WEB APP on its own public URL, do NOT try to serve it on an agent sprite — the agent " +
 			"already owns the http port (you'll hit a 409). Instead: build the app, tar its FILES at the archive " +

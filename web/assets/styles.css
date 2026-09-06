@@ -89,6 +89,13 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .session-time { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
 .session-delete { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; }
 .session-delete:hover { color: #ff6b6b; }
+/* Pin: fully greyscale (no accent) — hidden until row hover, always shown when pinned. */
+.session-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.session-pin { background: none; border: none; padding: 0; display: inline-flex; align-items: center; line-height: 0; cursor: pointer; color: var(--text-muted); opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.session-item:hover .session-pin { opacity: .65; }
+.session-pin:hover { opacity: 1; color: var(--text-secondary); }
+.session-pin.pinned { opacity: 1; color: var(--text-secondary); }
+.session-divider { height: 1px; background: var(--border); margin: 6px 8px 8px; }
 
 /* ---- fleet section (sprite-agent) ---- */
 #fleet-section { border-top: 1px solid var(--border); padding: 8px; max-height: 38%; overflow-y: auto; }
