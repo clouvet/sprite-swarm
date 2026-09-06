@@ -832,7 +832,7 @@
     // choice when it's one of the catalog options; otherwise fall back to the boot
     // provider/model (a stale Claude alias like "opus" must not select a dead option).
     if (runtimeInfo.runtime === 'pi' && modelSelect) {
-      const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-4o');
+      const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6');
       const valid = Array.from(modelSelect.options).some(o => o.value === model);
       model = valid ? model : boot;
     }
@@ -943,6 +943,7 @@
     'gpt-4o': 128000, 'gpt-4o-mini': 128000, 'gpt-4-turbo': 128000,
     'gpt-4.1': 1047576, 'gpt-4.1-mini': 1047576, 'gpt-4.1-nano': 1047576,
     'o3': 200000, 'o4-mini': 200000, 'gpt-5': 400000, 'gpt-5-codex': 400000,
+    'gpt-6': 400000,
   };
   // windowForModel resolves a model id to a context window, with family fallbacks
   // so an unlisted variant still gets a sane denominator.
@@ -955,7 +956,7 @@
     if (/^gpt-4\.1/.test(model)) return 1047576;
     if (/^gpt-4o|^gpt-4-turbo/.test(model)) return 128000;
     if (/^o[0-9]/.test(model)) return 200000;
-    if (/^gpt-5/.test(model)) return 400000;
+    if (/^gpt-[56]/.test(model)) return 400000;
     if (/opus|sonnet|fable/.test(model)) return 1000000;
     if (/haiku/.test(model)) return 200000;
     return 128000; // conservative default for an unknown non-Claude model
@@ -975,14 +976,14 @@
   // "provider/model" so a switch respawns pi-run with that provider.
   const PI_MODEL_GROUPS = [
     { label: 'Claude', models: [
-      ['anthropic/claude-opus-4-8', 'Opus'],
-      ['anthropic/claude-sonnet-4-6', 'Sonnet'],
       ['anthropic/claude-fable-5', 'Fable'],
       ['anthropic/claude-haiku-4-5', 'Haiku'],
+      ['anthropic/claude-opus-4-8', 'Opus'],
+      ['anthropic/claude-sonnet-4-6', 'Sonnet'],
     ] },
     { label: 'OpenAI', models: [
-      ['openai/gpt-4o', 'GPT-4o'],
       ['openai/gpt-4.1', 'GPT-4.1'],
+      ['openai/gpt-4o', 'GPT-4o'],
       ['openai/gpt-5', 'GPT-5'],
       ['openai/gpt-6', 'GPT-6'],
     ] },
@@ -995,7 +996,7 @@
       if (runtimeInfo.runtime === 'pi' && modelSelect) {
         // Replace the Claude picker with the full Pi catalog (grouped), still a real,
         // enabled selector — switching respawns pi-run with the new provider/model.
-        const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-4o');
+        const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6');
         modelSelect.innerHTML = '';
         let hasBoot = false;
         for (const g of PI_MODEL_GROUPS) {

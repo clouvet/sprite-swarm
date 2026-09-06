@@ -33,7 +33,7 @@ var Providers = []Provider{
 	// SPRITE_AGENT_MODEL. Note: some OpenAI models (e.g. gpt-5-codex) need the
 	// Responses/Codex api type and won't work under plain openai-completions — pick a
 	// chat-completions model here for a working default.
-	{Name: "openai", EnvVar: "OPENAI_API_KEY", SecretName: "openai-api-key", Default: "gpt-4o"},
+	{Name: "openai", EnvVar: "OPENAI_API_KEY", SecretName: "openai-api-key", Default: "gpt-6"},
 	{Name: "anthropic", EnvVar: "ANTHROPIC_API_KEY", SecretName: "anthropic-api-key", Default: "claude-opus-4-8"},
 	{Name: "google", EnvVar: "GEMINI_API_KEY", SecretName: "google-api-key", Default: "gemini-2.5-pro"},
 }
