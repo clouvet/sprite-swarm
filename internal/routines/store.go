@@ -32,11 +32,12 @@ type persisted struct {
 
 // runState is the mutable, per-run record kept for each task id.
 type runState struct {
-	LastRun    time.Time `json:"last_run,omitempty"`
-	LastResult string    `json:"last_result,omitempty"`
-	LastError  string    `json:"last_error,omitempty"`
-	LastStatus string    `json:"last_status,omitempty"`
-	Disabled   bool      `json:"disabled,omitempty"` // human-disabled (applies to defaults)
+	LastRun     time.Time `json:"last_run,omitempty"`
+	LastResult  string    `json:"last_result,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+	LastStatus  string    `json:"last_status,omitempty"`
+	LastSession string    `json:"last_session,omitempty"` // session id of the most recent run (rolled away on the next run)
+	Disabled    bool      `json:"disabled,omitempty"`     // human-disabled (applies to defaults)
 }
 
 // NewStore loads (or initializes) the routines store at dir/routines.json.
@@ -78,6 +79,7 @@ func (s *Store) merged(base Task) Task {
 		base.LastResult = rs.LastResult
 		base.LastError = rs.LastError
 		base.LastStatus = rs.LastStatus
+		base.LastSession = rs.LastSession
 		if base.Kind == KindDefault {
 			base.Enabled = !rs.Disabled
 		}
@@ -219,13 +221,16 @@ func (s *Store) setStatus(id, status string) {
 }
 
 // recordRun stores the outcome of a run: result text on success, error string on
-// failure, and the run timestamp either way.
-func (s *Store) recordRun(id string, now time.Time, result, errStr string) {
+// failure, the run timestamp, and the session the run used (so the next run can roll
+// the previous one away). On failure the previous LastResult is preserved as the
+// diff baseline — a failed run shouldn't blank the standing context.
+func (s *Store) recordRun(id string, now time.Time, result, errStr, sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rs := s.run(id)
 	rs.LastRun = now
 	rs.LastError = errStr
+	rs.LastSession = sessionID
 	if errStr != "" {
 		rs.LastStatus = StatusError
 	} else {

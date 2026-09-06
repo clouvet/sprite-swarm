@@ -649,9 +649,10 @@ func main() {
 			log.Printf("routines: disabled (store init: %v)", err)
 		} else {
 			rt := routines.NewService(rstore, routines.Deps{
-				Inject:   h.InjectMessage,
-				Result:   h.SessionResult,
-				Register: srv.RegisterSession,
+				Inject:        h.InjectMessage,
+				Result:        h.SessionResult,
+				Register:      srv.RegisterSession,
+				DeleteSession: srv.DeleteSession,
 			}, time.Minute)
 			srv.SetRoutines(rt)
 			go rt.Start(context.Background())
