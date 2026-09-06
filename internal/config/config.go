@@ -51,6 +51,10 @@ type Config struct {
 	Provider string
 	Model    string
 
+	// RoutinesEnabled turns on the per-sprite Scheduled Tasks (Routines) scheduler.
+	// Default on; set SPRITE_AGENT_ROUTINES=0 to disable (e.g. for a debugging sprite).
+	RoutinesEnabled bool
+
 	// Brain (S3/Tigris) pointer. When BrainBucket is empty the brain is
 	// disabled and the agent runs solo (still fully functional for chat).
 	Brain BrainConfig
@@ -115,21 +119,22 @@ func FromEnv() Config {
 	workDir := getenv("SPRITE_AGENT_WORKDIR", "/home/sprite")
 
 	c := Config{
-		Addr:                getenv("SPRITE_AGENT_ADDR", ":8080"),
-		AgentID:             getenv("SPRITE_AGENT_ID", hostname()),
-		WorkDir:             workDir,
-		DangerousSkip:       boolEnv("SPRITE_AGENT_DANGEROUS_SKIP", true),
-		PermissionMode:      getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
-		SettingsPath:        os.Getenv("SPRITE_AGENT_SETTINGS"),
-		MCPConfigPath:       os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
-		Runtime:             os.Getenv("SPRITE_AGENT_RUNTIME"),
-		Provider:            os.Getenv("SPRITE_AGENT_PROVIDER"),
-		Model:               os.Getenv("SPRITE_AGENT_MODEL"),
+		Addr:                 getenv("SPRITE_AGENT_ADDR", ":8080"),
+		AgentID:              getenv("SPRITE_AGENT_ID", hostname()),
+		WorkDir:              workDir,
+		DangerousSkip:        boolEnv("SPRITE_AGENT_DANGEROUS_SKIP", true),
+		PermissionMode:       getenv("SPRITE_AGENT_PERMISSION_MODE", "acceptEdits"),
+		SettingsPath:         os.Getenv("SPRITE_AGENT_SETTINGS"),
+		MCPConfigPath:        os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
+		Runtime:              os.Getenv("SPRITE_AGENT_RUNTIME"),
+		Provider:             os.Getenv("SPRITE_AGENT_PROVIDER"),
+		Model:                os.Getenv("SPRITE_AGENT_MODEL"),
+		RoutinesEnabled:      boolEnv("SPRITE_AGENT_ROUTINES", true),
 		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
 		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
-		ArtifactRef:         getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-swarm@main"),
-		PublicURL:           os.Getenv("SPRITE_AGENT_URL"),
+		ArtifactRef:          getenv("SPRITE_AGENT_ARTIFACT", "github.com/clouvet/sprite-swarm@main"),
+		PublicURL:            os.Getenv("SPRITE_AGENT_URL"),
 		Brain: BrainConfig{
 			Bucket:     os.Getenv("S3_BUCKET"),
 			Region:     getenv("S3_REGION", "auto"),

@@ -25,6 +25,7 @@ import (
 	"github.com/clouvet/sprite-swarm/internal/hub"
 	"github.com/clouvet/sprite-swarm/internal/keepalive"
 	"github.com/clouvet/sprite-swarm/internal/memsync"
+	"github.com/clouvet/sprite-swarm/internal/routines"
 	"github.com/clouvet/sprite-swarm/internal/secret"
 	"github.com/clouvet/sprite-swarm/internal/server"
 	"github.com/clouvet/sprite-swarm/internal/spawn"
@@ -391,6 +392,17 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"/api/mcp/<name> removes one. It's stored fleet-wide in the brain and applied by regenerating mcp.json + " +
 		"restarting THIS sprite's sessions (so a NEW chat here picks it up); other sprites get it on their next " +
 		"boot/roll. Advise scoped/read-only keys for any token in the config (it lands in the 0644 mcp.json).")
+	b.WriteString(" SCHEDULED TASKS (ROUTINES): you run per-sprite routines on a timer to stay aware of " +
+		"context OUTSIDE your chats — a built-in 'Context awareness' routine already surveys this sprite's " +
+		"repos/PRs on a schedule and its digest is injected into your context automatically (that's the " +
+		"'Standing context' section you may see), so when the human asks 'where do things stand?' you " +
+		"usually already know — just re-check for anything that landed since. When the human asks to " +
+		"SCHEDULE/ADD a recurring task (e.g. 'every hour summarize the #eng Slack channel'), POST /api/tasks " +
+		"{\"name\":\"<short name>\",\"prompt\":\"<what to do each run — write it as instructions to yourself>\"," +
+		"\"interval_min\":<minutes>} to localhost:8080. To LIST routines GET /api/tasks; to DELETE one, GET " +
+		"the list, find its id, then DELETE /api/tasks/<id> (default routines can't be deleted — disable with " +
+		"PATCH /api/tasks/<id> {\"enabled\":false}); to run one now POST /api/tasks/<id>/run. These are " +
+		"specific to THIS sprite. Manage them whenever the human asks in chat; you don't need any special UI.")
 	return b.String()
 }
 
@@ -641,6 +653,26 @@ func main() {
 			defer rcancel()
 			return composeMCP(rctx, fleetSvc, cfg.WorkDir, os.Getenv("SPRITE_AGENT_MCP_CONFIG"))
 		})
+	}
+
+	// Scheduled Tasks (Routines): per-sprite background turns that keep the sprite aware
+	// of context outside its chats — the default routine surveys repos/PRs and produces a
+	// standing digest that the server injects into per-turn context. Runs a headless turn
+	// via the hub's inject seam; the human manages routines from chat via /api/tasks.
+	if cfg.RoutinesEnabled {
+		rdir := filepath.Join(cfg.WorkDir, ".sprite-agent", "routines")
+		if rstore, err := routines.NewStore(rdir); err != nil {
+			log.Printf("routines: disabled (store init: %v)", err)
+		} else {
+			rt := routines.NewService(rstore, routines.Deps{
+				Inject:   h.InjectMessage,
+				Result:   h.SessionResult,
+				Register: srv.RegisterSession,
+			}, time.Minute)
+			srv.SetRoutines(rt)
+			go rt.Start(context.Background())
+			log.Printf("routines: enabled (%d default task(s) + custom; manage via /api/tasks)", len(routines.DefaultTasks()))
+		}
 	}
 
 	if fleetSvc != nil {
