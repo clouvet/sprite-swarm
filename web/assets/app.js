@@ -832,7 +832,7 @@
     // choice when it's one of the catalog options; otherwise fall back to the boot
     // provider/model (a stale Claude alias like "opus" must not select a dead option).
     if (runtimeInfo.runtime === 'pi' && modelSelect) {
-      const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6');
+      const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6-astra');
       const valid = Array.from(modelSelect.options).some(o => o.value === model);
       model = valid ? model : boot;
     }
@@ -943,7 +943,7 @@
     'gpt-4o': 128000, 'gpt-4o-mini': 128000, 'gpt-4-turbo': 128000,
     'gpt-4.1': 1047576, 'gpt-4.1-mini': 1047576, 'gpt-4.1-nano': 1047576,
     'o3': 200000, 'o4-mini': 200000, 'gpt-5': 400000, 'gpt-5-codex': 400000,
-    'gpt-6': 400000,
+    'gpt-6-astra': 400000,
   };
   // windowForModel resolves a model id to a context window, with family fallbacks
   // so an unlisted variant still gets a sane denominator.
@@ -982,10 +982,15 @@
       ['anthropic/claude-sonnet-4-6', 'Sonnet'],
     ] },
     { label: 'OpenAI', models: [
-      ['openai/gpt-4.1', 'GPT-4.1'],
-      ['openai/gpt-4o', 'GPT-4o'],
       ['openai/gpt-5', 'GPT-5'],
-      ['openai/gpt-6', 'GPT-6'],
+      ['openai/gpt-5.1', 'GPT-5.1'],
+      ['openai/gpt-5.2', 'GPT-5.2'],
+      ['openai/gpt-5.4', 'GPT-5.4'],
+      ['openai/gpt-5.5', 'GPT-5.5'],
+      ['openai/gpt-5.6-luna', 'GPT-5.6 Luna'],
+      ['openai/gpt-5.6-sol', 'GPT-5.6 Sol'],
+      ['openai/gpt-5.6-terra', 'GPT-5.6 Terra'],
+      ['openai/gpt-6-astra', 'GPT-6 Astra'],
     ] },
   ];
   async function loadRuntimeInfo() {
@@ -996,7 +1001,7 @@
       if (runtimeInfo.runtime === 'pi' && modelSelect) {
         // Replace the Claude picker with the full Pi catalog (grouped), still a real,
         // enabled selector — switching respawns pi-run with the new provider/model.
-        const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6');
+        const boot = (runtimeInfo.provider || 'openai') + '/' + (runtimeInfo.model || 'gpt-6-astra');
         modelSelect.innerHTML = '';
         let hasBoot = false;
         for (const g of PI_MODEL_GROUPS) {

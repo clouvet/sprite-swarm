@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,15 +117,19 @@ func loadPiSubscriptionAuth(ctx context.Context, getSecret func(context.Context,
 	log.Printf("pi: loaded subscription auth from brain (wins over metered API keys)")
 }
 
-// ensurePiInstalled installs the pi CLI globally on first boot if it's not present.
-// The package is @earendil-works/pi-coding-agent; it requires Node/npm on the base
-// image. Installs into a user-writable prefix so no root is needed.
+// piMinVersion is the lowest pi we accept: the first release whose bundled model
+// catalog carries the current OpenAI (GPT-5.x / GPT-6 Astra) and Claude ids. A baked
+// image ships an older pi, so we upgrade it — otherwise the picker offers models pi
+// treats as unknown "custom" ids and the turn silently hangs.
+const piMinVersion = "0.85.1"
+
+// ensurePiInstalled makes a pi CLI of at least piMinVersion available. If the resolved
+// pi is missing or too old (e.g. the base image's baked copy), it installs the latest
+// @earendil-works/pi-coding-agent into a user-writable prefix that resolvePiBinary
+// prefers — no root needed. Requires Node/npm on the base image.
 func ensurePiInstalled(ctx context.Context) {
-	if p := resolvePiBinary(); p != "pi" {
-		return // an absolute path resolved → already installed
-	}
-	if _, err := exec.LookPath("pi"); err == nil {
-		return
+	if v := piVersion(resolvePiBinary()); v != "" && !semverLessStr(v, piMinVersion) {
+		return // a current-enough pi is already resolvable, wherever it lives
 	}
 	npm, err := exec.LookPath("npm")
 	if err != nil {
@@ -132,16 +137,73 @@ func ensurePiInstalled(ctx context.Context) {
 			"Install @earendil-works/pi-coding-agent manually, or bake it into the image.")
 		return
 	}
-	log.Printf("pi: installing @earendil-works/pi-coding-agent (first boot; ~1-2 min)…")
+	log.Printf("pi: installing/upgrading @earendil-works/pi-coding-agent (need >= %s; ~1-2 min)…", piMinVersion)
 	ic, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ic, npm, "install", "-g", "@earendil-works/pi-coding-agent")
+	cmd := exec.CommandContext(ic, npm, "install", "-g", "@earendil-works/pi-coding-agent@latest")
+	// npm_config_prefix works in the service context (unlike an nvm-sourced interactive
+	// shell); it lands in /home/sprite/.npm-global/bin/pi, which resolvePiBinary checks first.
 	cmd.Env = append(os.Environ(), "npm_config_prefix=/home/sprite/.npm-global")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("pi: install failed: %v: %s", err, tailBytes(out, 600))
 	} else {
-		log.Printf("pi: installed the pi CLI")
+		log.Printf("pi: installed pi %s", piVersion(resolvePiBinary()))
 	}
+}
+
+// piVersion returns the `pi --version` string (e.g. "0.85.1"), or "" if the binary
+// can't be run. bin may be an absolute path or "pi" (unresolved).
+func piVersion(bin string) string {
+	if bin == "" {
+		return ""
+	}
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// semverLessStr reports whether version a < b for plain "X.Y.Z" strings. A version
+// that doesn't parse sorts as older (so an unrecognized pi is treated as too old and
+// gets upgraded rather than trusted).
+func semverLessStr(a, b string) bool {
+	pa, oka := parse3(a)
+	pb, okb := parse3(b)
+	if !oka {
+		return true
+	}
+	if !okb {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			return pa[i] < pb[i]
+		}
+	}
+	return false
+}
+
+// parse3 parses the leading "X.Y.Z" of a version string into three ints, ignoring any
+// pre-release/build suffix. ok=false if the first three dot-parts aren't all numeric.
+func parse3(v string) ([3]int, bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+	if i := strings.IndexAny(v, "-+ \t"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(parts[i])
+		if err != nil || n < 0 {
+			return [3]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 func tailBytes(b []byte, n int) string {

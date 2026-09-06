@@ -193,7 +193,7 @@ func (h *Hub) spawnOpts(sessionID string) process.Options {
 			p = "openai"
 		}
 		if m == "" {
-			m = "gpt-6"
+			m = "gpt-6-astra"
 		}
 		model = p + "/" + m
 	}
