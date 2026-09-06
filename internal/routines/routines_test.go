@@ -81,11 +81,17 @@ func TestStoreRecordRunPersists(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := NewStore(dir)
 	now := time.Now()
-	s.recordRun(ContextAwarenessID, now, "the digest", "")
+	s.recordRun(ContextAwarenessID, now, "the digest", "", "sess-1")
 	s2, _ := NewStore(dir)
 	got, _ := s2.Get(ContextAwarenessID)
-	if got.LastResult != "the digest" || got.LastStatus != StatusOK {
+	if got.LastResult != "the digest" || got.LastStatus != StatusOK || got.LastSession != "sess-1" {
 		t.Fatalf("run state did not persist: %+v", got)
+	}
+	// A later FAILED run preserves the previous digest as the diff baseline.
+	s2.recordRun(ContextAwarenessID, now, "", "boom", "sess-2")
+	got, _ = s2.Get(ContextAwarenessID)
+	if got.LastResult != "the digest" || got.LastStatus != StatusError || got.LastSession != "sess-2" {
+		t.Fatalf("failed run should preserve prior digest: %+v", got)
 	}
 }
 
@@ -179,19 +185,61 @@ func TestRunTaskTimeoutNoResult(t *testing.T) {
 	}
 }
 
-func TestRoutineSessionIDIsStableUUID(t *testing.T) {
-	a := routineSessionID(ContextAwarenessID)
-	b := routineSessionID(ContextAwarenessID)
-	if a != b {
-		t.Fatalf("session id must be stable per task: %q != %q", a, b)
+func TestNewSessionIDIsUniqueV4(t *testing.T) {
+	a := newSessionID()
+	if a == newSessionID() {
+		t.Fatalf("each run must get a fresh session id")
 	}
-	if routineSessionID("other") == a {
-		t.Fatalf("different tasks must get different session ids")
-	}
-	// Shape: 8-4-4-4-12 hex, version 5, RFC-4122 variant — Claude requires a valid UUID.
-	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	// Shape: 8-4-4-4-12 hex, version 4, RFC-4122 variant — Claude requires a valid UUID.
+	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	if !re.MatchString(a) {
-		t.Fatalf("not a valid v5 UUID: %q", a)
+		t.Fatalf("not a valid v4 UUID: %q", a)
+	}
+}
+
+// TestRunRollsPreviousSessionAndSeedsDigest checks that the second run seeds the first
+// run's digest into its prompt and rolls the first run's session away.
+func TestRunRollsPreviousSessionAndSeedsDigest(t *testing.T) {
+	s := newTestStore(t)
+	var mu sync.Mutex
+	var lastInjected, lastSession, deleted string
+	digest := ""
+	deps := Deps{
+		Inject: func(id, content string) error {
+			mu.Lock()
+			lastInjected, lastSession, digest = content, id, "DIGEST run for "+id
+			mu.Unlock()
+			return nil
+		},
+		Result: func(id string) (string, int64, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			if id != lastSession {
+				return "", 0, false
+			}
+			return digest, 100, true
+		},
+		Register:      func(id, name string) {},
+		DeleteSession: func(id string) { mu.Lock(); deleted = id; mu.Unlock() },
+		Timeout:       5 * time.Second,
+	}
+	svc := NewService(s, deps, time.Minute)
+	svc.poll = 10 * time.Millisecond
+
+	task, _ := s.Get(ContextAwarenessID)
+	svc.runTask(context.Background(), task) // first run
+	firstSession := lastSession
+	if !contains(lastInjected, "first run") {
+		t.Fatalf("first run should say it's the first run, got: %q", lastInjected[:120])
+	}
+
+	task, _ = s.Get(ContextAwarenessID)     // reload: now has LastResult + LastSession
+	svc.runTask(context.Background(), task) // second run
+	if !contains(lastInjected, "PREVIOUS_SUMMARY") || !contains(lastInjected, "DIGEST run for "+firstSession) {
+		t.Fatalf("second run should seed the previous digest, got: %q", lastInjected)
+	}
+	if deleted != firstSession {
+		t.Fatalf("second run should roll away the first session %q, deleted %q", firstSession, deleted)
 	}
 }
 

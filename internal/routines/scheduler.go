@@ -2,6 +2,7 @@ package routines
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
 	"log"
@@ -12,12 +13,13 @@ import (
 // Deps are the runtime hooks the scheduler needs, wired by main so this package stays
 // free of hub/server imports. Inject runs a turn in a session; Result reads that
 // session's latest assistant message (text, ts-millis, ok); Register labels the session
-// in the UI list.
+// in the UI list; DeleteSession removes a session (used to roll the previous run away).
 type Deps struct {
-	Inject   func(sessionID, content string) error
-	Result   func(sessionID string) (string, int64, bool)
-	Register func(sessionID, name string)
-	Timeout  time.Duration // max wait for one run to produce its digest
+	Inject        func(sessionID, content string) error
+	Result        func(sessionID string) (string, int64, bool)
+	Register      func(sessionID, name string)
+	DeleteSession func(sessionID string)
+	Timeout       time.Duration // max wait for one run to produce its digest
 }
 
 // Service ticks over a sprite's routines and fires the ones that are due.
@@ -101,25 +103,42 @@ func (s *Service) RunNow(ctx context.Context, id string) error {
 	return nil
 }
 
-// runTask injects the task's prompt into its dedicated session, waits for the turn to
-// settle, and records the resulting digest (or error).
+// runTask runs one routine turn in a FRESH session, seeded with the previous run's
+// stored digest so it can report what changed — then rolls the previous run's session
+// away. Because the diff baseline comes from stored state (not the transcript), a run
+// never replays accumulated history, and the human can delete the chat anytime without
+// losing anything.
 func (s *Service) runTask(ctx context.Context, t Task) {
-	sessionID := routineSessionID(t.ID)
+	sessionID := newSessionID()
+	prevSession := t.LastSession // the session the last run used, if any
 	s.deps.Register(sessionID, "🔁 "+t.Name)
 	s.store.setStatus(t.ID, StatusRunning)
-	log.Printf("routines: running %q (%s)", t.Name, t.ID)
+	log.Printf("routines: running %q (%s) in %s", t.Name, t.ID, sessionID)
 
-	_, beforeTS, _ := s.deps.Result(sessionID)
-	if err := s.deps.Inject(sessionID, frame(t)); err != nil {
-		s.store.recordRun(t.ID, time.Now(), "", "inject: "+err.Error())
+	if err := s.deps.Inject(sessionID, frame(t, t.LastResult)); err != nil {
+		s.store.recordRun(t.ID, time.Now(), "", "inject: "+err.Error(), sessionID)
 		return
 	}
-	text, err := s.waitResult(ctx, sessionID, beforeTS)
+	text, err := s.waitResult(ctx, sessionID, 0) // fresh session: any assistant message is this run's
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.store.recordRun(t.ID, time.Now(), text, errStr)
+	s.store.recordRun(t.ID, time.Now(), text, errStr, sessionID)
+
+	// Roll the previous run's chat away so a routine leaves just one rolling entry in
+	// the list instead of accumulating one per run. Best-effort; 4h-old, no live process.
+	if s.deps.DeleteSession != nil {
+		switch {
+		case prevSession != "" && prevSession != sessionID:
+			s.deps.DeleteSession(prevSession)
+		case prevSession == "":
+			// First run under the fresh-session scheme: clean up the one chat the old
+			// fixed-session version left behind (a no-op if there isn't one).
+			s.deps.DeleteSession(legacyStableSessionID(t.ID))
+		}
+	}
+
 	if errStr != "" {
 		log.Printf("routines: %q finished with error: %s", t.ID, errStr)
 	} else {
@@ -181,11 +200,20 @@ func (s *Service) ContextDigest() string {
 	return b.String()
 }
 
-// routineSessionID derives a stable, valid UUID (v5-style) for a task's dedicated
-// session. It must be a real UUID — Claude rejects a non-UUID --session-id — and stable
-// per task so the session persists across runs, letting the routine diff against its own
-// previous digest in the transcript ("since last run, PR #12 merged").
-func routineSessionID(taskID string) string {
+// newSessionID mints a fresh random v4 UUID for a run's session. It must be a real UUID
+// — Claude rejects a non-UUID --session-id — and a new one each run means no accumulated
+// transcript is replayed to the model (the diff baseline comes from stored state instead).
+func newSessionID() string {
+	var u [16]byte
+	_, _ = rand.Read(u[:])
+	u[6] = (u[6] & 0x0f) | 0x40 // version 4
+	u[8] = (u[8] & 0x3f) | 0x80 // RFC-4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+}
+
+// legacyStableSessionID reproduces the pre-change deterministic (v5) session id a task
+// used to run under, so the first fresh-session run can delete that one leftover chat.
+func legacyStableSessionID(taskID string) string {
 	h := sha1.Sum([]byte("sprite-swarm/routines:" + taskID))
 	var u [16]byte
 	copy(u[:], h[:16])
@@ -194,13 +222,23 @@ func routineSessionID(taskID string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
-// frame wraps a task's prompt with the routine contract: the agent's LAST message is
-// captured as the digest and injected into future chats.
-func frame(t Task) string {
-	return "[Scheduled routine: " + t.Name + "] This runs automatically on a timer to keep you aware of " +
+// frame wraps a task's prompt with the routine contract and seeds the previous run's
+// summary (from stored state) so the agent can report what changed — this runs in a
+// fresh session with no prior history, so the baseline must be provided here.
+func frame(t Task, prevDigest string) string {
+	var b strings.Builder
+	b.WriteString("[Scheduled routine: " + t.Name + "] This runs automatically on a timer to keep you aware of " +
 		"context outside your chats. Do the work below, then put a concise, self-contained summary as your " +
 		"LAST message in this session — it is captured as standing context and injected into your future " +
-		"chats, so write it for future-you. Do not dispatch or message anyone; just finish here.\n\n" + t.Prompt
+		"chats, so write it for future-you. Do not dispatch or message anyone; just finish here.\n\n")
+	if d := strings.TrimSpace(prevDigest); d != "" {
+		b.WriteString("Your previous run produced the summary below. Compare against it and LEAD with what has " +
+			"changed since:\n<<<PREVIOUS_SUMMARY\n" + d + "\nPREVIOUS_SUMMARY>>>\n\n")
+	} else {
+		b.WriteString("This is your first run — there's no previous summary to diff against; produce a full baseline.\n\n")
+	}
+	b.WriteString(t.Prompt)
+	return b.String()
 }
 
 // humanAge renders a coarse "N minutes/hours ago" for the digest header.

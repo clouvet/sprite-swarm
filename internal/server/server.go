@@ -1055,6 +1055,14 @@ func (s *Server) RegisterSession(id, name string) {
 	s.store.EnsureNamed(id, name)
 }
 
+// DeleteSession removes a session from the list and evicts it from the hub — the same
+// teardown as DELETE /api/sessions/<id>. Used by the routines scheduler to roll a
+// previous run's chat away so a routine keeps just one rolling entry.
+func (s *Server) DeleteSession(id string) {
+	s.store.Delete(id)
+	s.hub.RemoveSession(id)
+}
+
 func shortID(id string) string {
 	if len(id) > 8 {
 		return id[:8]
