@@ -140,15 +140,28 @@ func ensurePiInstalled(ctx context.Context) {
 	log.Printf("pi: installing/upgrading @earendil-works/pi-coding-agent (need >= %s; ~1-2 min)…", piMinVersion)
 	ic, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ic, npm, "install", "-g", "@earendil-works/pi-coding-agent@latest")
-	// npm_config_prefix works in the service context (unlike an nvm-sourced interactive
-	// shell); it lands in /home/sprite/.npm-global/bin/pi, which resolvePiBinary checks first.
-	cmd.Env = append(os.Environ(), "npm_config_prefix=/home/sprite/.npm-global")
+	// Use the --prefix FLAG, not npm_config_prefix: the base image's npm is an nvm shim
+	// that hard-errors when npm_config_prefix is set. The flag lands the CLI at
+	// /home/sprite/.npm-global/bin/pi, which resolvePiBinary checks first.
+	cmd := exec.CommandContext(ic, npm, "install", "-g", "--prefix", "/home/sprite/.npm-global", "@earendil-works/pi-coding-agent@latest")
+	cmd.Env = stripEnv(os.Environ(), "npm_config_prefix") // in case a parent set it
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("pi: install failed: %v: %s", err, tailBytes(out, 600))
 	} else {
 		log.Printf("pi: installed pi %s", piVersion(resolvePiBinary()))
 	}
+}
+
+// stripEnv returns env with any KEY=... entries for the given key removed.
+func stripEnv(env []string, key string) []string {
+	out := env[:0:0]
+	for _, e := range env {
+		if strings.HasPrefix(e, key+"=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // piVersion returns the `pi --version` string (e.g. "0.85.1"), or "" if the binary
