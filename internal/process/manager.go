@@ -62,20 +62,29 @@ func (m *Manager) Spawn(opts Options) (*HeadlessProcess, bool, error) {
 		} else {
 			log.Printf("[%s] claude exited normally", opts.SessionID)
 		}
-		m.mu.Lock()
-		// Only forget THIS process — a respawn may have already replaced it in the
-		// map (delete-by-key would drop the live one).
-		if m.processes[opts.SessionID] == hp {
-			delete(m.processes, opts.SessionID)
-		}
-		onExit := m.onExit
-		m.mu.Unlock()
-		if onExit != nil {
-			onExit(opts.SessionID)
-		}
+		m.handleExit(opts.SessionID, hp)
 	}()
 
 	return hp, true, nil
+}
+
+// handleExit runs after a process's Wait returns. It forgets the process only if it
+// was still the live one, and fires the death-replay onExit ONLY for that genuine case
+// (compaction/crash). A process that was intentionally killed or already replaced — e.g.
+// a model-change respawn — is NOT current here, so onExit is skipped: its turn is
+// delivered by whatever replaced it, and firing onExit would re-pump and double-deliver
+// (the #95 replay racing the respawn's own pump).
+func (m *Manager) handleExit(sessionID string, hp *HeadlessProcess) {
+	m.mu.Lock()
+	current := m.processes[sessionID] == hp
+	if current {
+		delete(m.processes, sessionID)
+	}
+	onExit := m.onExit
+	m.mu.Unlock()
+	if onExit != nil && current {
+		onExit(sessionID)
+	}
 }
 
 func (m *Manager) Get(sessionID string) (*HeadlessProcess, error) {
