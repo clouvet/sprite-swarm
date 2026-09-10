@@ -13,7 +13,7 @@ const (
 	// Hanoi. Not a secret — lives beside the other fleet/config values.
 	tzKey     = "fleet/config/timezone"
 	defaultTZ = "Asia/Ho_Chi_Minh" // Hanoi (UTC+7)
-	tzTTL     = 60 * time.Second    // cache so the per-turn context hook stays fast
+	tzTTL     = 60 * time.Second   // cache so the per-turn context hook stays fast
 )
 
 // Timezone returns the configured IANA zone (default Hanoi), cached ~60s.

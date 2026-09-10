@@ -228,9 +228,11 @@ func (h *Hub) registerClient(client *Client) {
 		go h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating)
 	}
 
-	if sess.GetClientCount() == 1 && sess.GetState() == session.StateIdle {
-		go h.spawnClaudeForSession(client.sessionID, sess)
-	}
+	// Don't eager-spawn a process on connect. The picker sends the chosen model with
+	// the first turn, so a process spawned here at the default model would just be
+	// killed and respawned when that turn arrives (wasting a spawn and slowing the
+	// first turn). The first turn spawns once, with the right model. (Any turn queued
+	// from before this connection is still delivered by the pump below, which spawns.)
 
 	// Deliver anything queued from before this connection (e.g. a message that
 	// survived a compaction/restart while no client was attached). Goroutine so it
