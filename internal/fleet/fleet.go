@@ -42,6 +42,14 @@ type Service struct {
 	seen     map[string]bool                          // task ids already injected (loaded once, persisted on change)
 	injectFn func(sessionID, task, kind string) error // delivers a task/note into a local session
 	busy     func() bool                              // reports if a session is generating (serialize dispatched work)
+
+	// Fleet-context body cache (roster + memory index) — the slow, brain-backed part
+	// of FleetContext. Served from cache so the per-turn context hook never blocks on
+	// the brain; refreshed in the background (heartbeat tick + on staleness).
+	fcMu         sync.Mutex
+	fcBody       string
+	fcAt         time.Time
+	fcRefreshing bool
 }
 
 // New builds a Service backed by the brain. Prefers the gateway connector
@@ -215,6 +223,9 @@ func (s *Service) StartHeartbeat(ctx context.Context) {
 				if err := s.writeStatus(hbCtx, ""); err != nil {
 					log.Printf("fleet: status refresh failed: %v", err)
 				}
+				// Keep the per-turn context body cache warm (roster + memory), off the
+				// request path — so a chat turn never blocks on the brain for it.
+				s.RefreshFleetBody(hbCtx)
 				cancel()
 			}
 		}
