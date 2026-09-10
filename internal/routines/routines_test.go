@@ -17,21 +17,14 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestStoreDefaultsAndCustomCRUD(t *testing.T) {
+func TestStoreNoDefaultsAndCustomCRUD(t *testing.T) {
 	s := newTestStore(t)
 
-	// The default context-awareness routine is present and enabled.
-	list := s.List()
-	if len(list) != 1 || list[0].ID != ContextAwarenessID || !list[0].Enabled {
-		t.Fatalf("expected 1 enabled default, got %+v", list)
+	// No built-in routines ship today.
+	if got := s.List(); len(got) != 0 {
+		t.Fatalf("expected 0 default tasks, got %+v", got)
 	}
 
-	// Default tasks can't be deleted.
-	if err := s.Delete(ContextAwarenessID); err == nil {
-		t.Fatalf("expected error deleting a default task")
-	}
-
-	// Create a custom task.
 	c, err := s.Create("Slack digest", "Summarize #eng", 45)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -39,8 +32,8 @@ func TestStoreDefaultsAndCustomCRUD(t *testing.T) {
 	if c.Kind != KindCustom || c.IntervalMin != 45 || !c.Enabled {
 		t.Fatalf("unexpected custom task: %+v", c)
 	}
-	if got := s.List(); len(got) != 2 {
-		t.Fatalf("expected 2 tasks after create, got %d", len(got))
+	if got := s.List(); len(got) != 1 {
+		t.Fatalf("expected 1 task after create, got %d", len(got))
 	}
 
 	// Missing name/prompt is rejected.
@@ -48,48 +41,38 @@ func TestStoreDefaultsAndCustomCRUD(t *testing.T) {
 		t.Fatalf("expected error on empty name")
 	}
 
+	// Enable/disable persists.
+	if _, err := s.Patch(c.ID, nil, nil, nil, boolp(false)); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	if s.List()[0].Enabled {
+		t.Fatalf("task should be disabled after patch")
+	}
+
 	// Delete the custom task.
 	if err := s.Delete(c.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if got := s.List(); len(got) != 1 {
-		t.Fatalf("expected 1 task after delete, got %d", len(got))
-	}
-}
-
-func TestStoreDisableDefaultPersists(t *testing.T) {
-	dir := t.TempDir()
-	s, _ := NewStore(dir)
-	if _, err := s.Patch(ContextAwarenessID, nil, nil, nil, boolp(false)); err != nil {
-		t.Fatalf("Patch: %v", err)
-	}
-	if s.List()[0].Enabled {
-		t.Fatalf("default should be disabled after patch")
-	}
-	// Reload from disk: the disable flag survives, prompt still comes from code.
-	s2, _ := NewStore(dir)
-	got := s2.List()[0]
-	if got.Enabled {
-		t.Fatalf("disable flag did not persist")
-	}
-	if got.Prompt != contextAwarenessPrompt {
-		t.Fatalf("default prompt should come from code after reload")
+	if got := s.List(); len(got) != 0 {
+		t.Fatalf("expected 0 tasks after delete, got %d", len(got))
 	}
 }
 
 func TestStoreRecordRunPersists(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := NewStore(dir)
+	c, _ := s.Create("Task", "do it", 30)
 	now := time.Now()
-	s.recordRun(ContextAwarenessID, now, "the digest", "", "sess-1")
+	s.recordRun(c.ID, now, "the digest", "", "sess-1")
+
 	s2, _ := NewStore(dir)
-	got, _ := s2.Get(ContextAwarenessID)
+	got, _ := s2.Get(c.ID)
 	if got.LastResult != "the digest" || got.LastStatus != StatusOK || got.LastSession != "sess-1" {
 		t.Fatalf("run state did not persist: %+v", got)
 	}
 	// A later FAILED run preserves the previous digest as the diff baseline.
-	s2.recordRun(ContextAwarenessID, now, "", "boom", "sess-2")
-	got, _ = s2.Get(ContextAwarenessID)
+	s2.recordRun(c.ID, now, "", "boom", "sess-2")
+	got, _ = s2.Get(c.ID)
 	if got.LastResult != "the digest" || got.LastStatus != StatusError || got.LastSession != "sess-2" {
 		t.Fatalf("failed run should preserve prior digest: %+v", got)
 	}
@@ -121,17 +104,15 @@ func TestDue(t *testing.T) {
 
 func TestRunTaskCapturesDigest(t *testing.T) {
 	s := newTestStore(t)
+	c, _ := s.Create("Task", "do it", 30)
 
 	var mu sync.Mutex
-	injected := ""
-	registered := ""
-	// Result returns nothing until Inject fires, then a stable new timestamp.
+	injected, registered := "", ""
 	var haveResult bool
 	deps := Deps{
 		Inject: func(id, content string) error {
 			mu.Lock()
-			injected = content
-			haveResult = true
+			injected, haveResult = content, true
 			mu.Unlock()
 			return nil
 		},
@@ -147,28 +128,23 @@ func TestRunTaskCapturesDigest(t *testing.T) {
 		Timeout:  10 * time.Second,
 	}
 	svc := NewService(s, deps, time.Minute)
-	svc.poll = 20 * time.Millisecond // fast for the test
+	svc.poll = 20 * time.Millisecond
 
-	task, _ := s.Get(ContextAwarenessID)
+	task, _ := s.Get(c.ID)
 	svc.runTask(context.Background(), task)
 
-	if injected == "" {
-		t.Fatalf("expected a prompt to be injected")
+	if injected == "" || registered == "" {
+		t.Fatalf("expected inject + register (injected=%q registered=%q)", injected, registered)
 	}
-	if registered == "" {
-		t.Fatalf("expected the session to be registered/labeled")
-	}
-	got, _ := s.Get(ContextAwarenessID)
+	got, _ := s.Get(c.ID)
 	if got.LastResult != "REPO DIGEST: repoA PR #12 merged" || got.LastStatus != StatusOK {
 		t.Fatalf("digest not captured: %+v", got)
-	}
-	if d := svc.ContextDigest(); d == "" || !contains(d, "PR #12 merged") {
-		t.Fatalf("ContextDigest missing the digest: %q", d)
 	}
 }
 
 func TestRunTaskTimeoutNoResult(t *testing.T) {
 	s := newTestStore(t)
+	c, _ := s.Create("Task", "do it", 30)
 	deps := Deps{
 		Inject:   func(id, content string) error { return nil },
 		Result:   func(id string) (string, int64, bool) { return "", 0, false }, // never produces
@@ -177,9 +153,9 @@ func TestRunTaskTimeoutNoResult(t *testing.T) {
 	}
 	svc := NewService(s, deps, time.Minute)
 	svc.poll = 20 * time.Millisecond
-	task, _ := s.Get(ContextAwarenessID)
+	task, _ := s.Get(c.ID)
 	svc.runTask(context.Background(), task)
-	got, _ := s.Get(ContextAwarenessID)
+	got, _ := s.Get(c.ID)
 	if got.LastStatus != StatusError || got.LastError == "" {
 		t.Fatalf("expected error status on timeout, got %+v", got)
 	}
@@ -190,7 +166,6 @@ func TestNewSessionIDIsUniqueV4(t *testing.T) {
 	if a == newSessionID() {
 		t.Fatalf("each run must get a fresh session id")
 	}
-	// Shape: 8-4-4-4-12 hex, version 4, RFC-4122 variant — Claude requires a valid UUID.
 	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	if !re.MatchString(a) {
 		t.Fatalf("not a valid v4 UUID: %q", a)
@@ -201,9 +176,9 @@ func TestNewSessionIDIsUniqueV4(t *testing.T) {
 // run's digest into its prompt and rolls the first run's session away.
 func TestRunRollsPreviousSessionAndSeedsDigest(t *testing.T) {
 	s := newTestStore(t)
+	c, _ := s.Create("Task", "do the work", 30)
 	var mu sync.Mutex
-	var lastInjected, lastSession, deleted string
-	digest := ""
+	var lastInjected, lastSession, deleted, digest string
 	deps := Deps{
 		Inject: func(id, content string) error {
 			mu.Lock()
@@ -226,14 +201,14 @@ func TestRunRollsPreviousSessionAndSeedsDigest(t *testing.T) {
 	svc := NewService(s, deps, time.Minute)
 	svc.poll = 10 * time.Millisecond
 
-	task, _ := s.Get(ContextAwarenessID)
+	task, _ := s.Get(c.ID)
 	svc.runTask(context.Background(), task) // first run
 	firstSession := lastSession
 	if !contains(lastInjected, "first run") {
-		t.Fatalf("first run should say it's the first run, got: %q", lastInjected[:120])
+		t.Fatalf("first run should say it's the first run, got: %q", lastInjected)
 	}
 
-	task, _ = s.Get(ContextAwarenessID)     // reload: now has LastResult + LastSession
+	task, _ = s.Get(c.ID)                   // reload: now has LastResult + LastSession
 	svc.runTask(context.Background(), task) // second run
 	if !contains(lastInjected, "PREVIOUS_SUMMARY") || !contains(lastInjected, "DIGEST run for "+firstSession) {
 		t.Fatalf("second run should seed the previous digest, got: %q", lastInjected)
@@ -245,7 +220,7 @@ func TestRunRollsPreviousSessionAndSeedsDigest(t *testing.T) {
 
 func boolp(b bool) *bool { return &b }
 func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (indexOf(s, sub) >= 0)
+	return len(s) >= len(sub) && indexOf(s, sub) >= 0
 }
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {

@@ -326,13 +326,6 @@ func (s *Server) serveFleet(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		// Prepend the standing digest the background awareness routine gathered, so a
-		// chat already knows where things stand (repos/PRs that moved) without a check.
-		if s.routines != nil {
-			if digest := s.routines.ContextDigest(); digest != "" {
-				text = digest + "\n" + text
-			}
-		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(text))
 		return
