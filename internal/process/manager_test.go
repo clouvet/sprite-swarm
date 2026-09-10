@@ -89,3 +89,40 @@ func TestGracePeriodKeepsGeneratingProcessAlive(t *testing.T) {
 		t.Fatal("process should be reaped once it finishes generating with no client")
 	}
 }
+
+// onExit (the pending-replay hook) must fire only when the process that died was
+// still the live one — a genuine compaction/crash. A killed or already-replaced
+// process must NOT fire it, else a model-change respawn double-delivers the turn.
+func TestHandleExitFiresOnlyForCurrentProcess(t *testing.T) {
+	m := NewManager()
+	var calls int
+	m.SetOnExit(func(string) { calls++ })
+
+	// Genuine death: the exiting process is still registered → fire + forget it.
+	hp := fakeProcess("s")
+	m.mu.Lock()
+	m.processes["s"] = hp
+	m.mu.Unlock()
+	m.handleExit("s", hp)
+	if calls != 1 {
+		t.Fatalf("onExit should fire once for the current process, got %d", calls)
+	}
+	if m.has("s") {
+		t.Fatalf("current process should be removed on exit")
+	}
+
+	// Replaced/killed: the exiting process is stale (a replacement is registered) →
+	// must NOT fire onExit and must NOT drop the live replacement.
+	live := fakeProcess("s")
+	m.mu.Lock()
+	m.processes["s"] = live
+	m.mu.Unlock()
+	stale := fakeProcess("s")
+	m.handleExit("s", stale)
+	if calls != 1 {
+		t.Fatalf("onExit must NOT fire for a replaced/killed process, got %d", calls)
+	}
+	if !m.has("s") {
+		t.Fatalf("the live replacement must survive a stale process's exit")
+	}
+}
