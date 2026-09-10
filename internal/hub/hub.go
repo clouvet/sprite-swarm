@@ -395,11 +395,20 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 // maxInlineFile caps how much of a text attachment we inline into the turn.
 const maxInlineFile = 256 * 1024
 
+// inlineableText reports whether an attachment's media type is textual enough to inline
+// into the turn (small ones). Covers text/* plus JSON/JSONL, which are text but carry an
+// application/* type. Anything larger than maxInlineFile is path-referenced instead.
+func inlineableText(mediaType string) bool {
+	return strings.HasPrefix(mediaType, "text/") ||
+		mediaType == "application/json" ||
+		mediaType == "application/jsonl"
+}
+
 // buildContent returns what to feed Claude as the user turn, combining any number
 // of attachments with the text:
 //   - no attachments       → the plain text string
 //   - any image present    → content-block array: one image block per image, then a
-//                            trailing text block (message text + any inlined/saved files)
+//     trailing text block (message text + any inlined/saved files)
 //   - no images            → text string: message text + inlined text files + saved paths
 //
 // Per attachment: images become base64 image blocks; text/* files are inlined; other
@@ -437,7 +446,7 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 					"type": "base64", "media_type": att.Type, "data": base64.StdEncoding.EncodeToString(data),
 				},
 			})
-		case strings.HasPrefix(att.Type, "text/") && len(data) <= maxInlineFile:
+		case inlineableText(att.Type) && len(data) <= maxInlineFile:
 			textParts = append(textParts, "--- Attached file: "+name+" ---\n"+string(data))
 		default:
 			textParts = append(textParts, "[Attached file \""+name+"\" saved at "+path+
