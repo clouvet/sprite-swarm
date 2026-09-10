@@ -179,27 +179,6 @@ func (s *Service) waitResult(ctx context.Context, sessionID string, beforeTS int
 	return "", fmt.Errorf("timed out after %s with no result", s.deps.Timeout)
 }
 
-// ContextDigest returns the standing digest from the context-awareness routine, framed
-// for injection into per-turn chat context. Empty until the routine has run once.
-func (s *Service) ContextDigest() string {
-	t, ok := s.store.Get(ContextAwarenessID)
-	if !ok || strings.TrimSpace(t.LastResult) == "" {
-		return ""
-	}
-	age := "just now"
-	if !t.LastRun.IsZero() {
-		age = humanAge(time.Since(t.LastRun))
-	}
-	var b strings.Builder
-	b.WriteString("## Standing context (from your background awareness routine, updated ")
-	b.WriteString(age)
-	b.WriteString(")\n")
-	b.WriteString("You gathered this on a schedule so you already know where things stand. Something may have landed since — re-check if the human asks for the very latest.\n\n")
-	b.WriteString(strings.TrimSpace(t.LastResult))
-	b.WriteString("\n")
-	return b.String()
-}
-
 // newSessionID mints a fresh random v4 UUID for a run's session. It must be a real UUID
 // — Claude rejects a non-UUID --session-id — and a new one each run means no accumulated
 // transcript is replayed to the model (the diff baseline comes from stored state instead).
@@ -239,18 +218,4 @@ func frame(t Task, prevDigest string) string {
 	}
 	b.WriteString(t.Prompt)
 	return b.String()
-}
-
-// humanAge renders a coarse "N minutes/hours ago" for the digest header.
-func humanAge(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%d min ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d h ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%d d ago", int(d.Hours()/24))
-	}
 }

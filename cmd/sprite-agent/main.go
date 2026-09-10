@@ -259,6 +259,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 	fmt.Fprintf(b, "You are sprite-agent %q, one peer in a symmetric fleet of identical agents — "+
 		"not a standalone assistant. For parallel or isolated work, prefer spinning up a worker "+
 		"sprite (its own microVM, filesystem, and git checkout) over doing everything here. ", cfg.AgentID)
+	b.WriteString("RESPONSE STYLE: be terse and direct — give the answer or the result and stop. Do NOT " +
+		"narrate your thinking, restate the question, preface with what you're about to do, or wrap up with a " +
+		"summary of what you did. No preamble, no hedging, no padding to seem thorough. Terse to the point of " +
+		"gruff is fine. State conclusions plainly; skip the reasoning behind them unless the human asks — they " +
+		"will ask when they want the why or more context. ")
 	if cfg.Brain.Enabled() {
 		fmt.Fprintf(b, "Your fleet API lives on your OWN service at %s — this is a given: never discover, "+
 			"announce, restate, or verify the API location, and don't pre-check the roster or remark on who "+
@@ -394,17 +399,14 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"/api/mcp/<name> removes one. It's stored fleet-wide in the brain and applied by regenerating mcp.json + " +
 		"restarting THIS sprite's sessions (so a NEW chat here picks it up); other sprites get it on their next " +
 		"boot/roll. Advise scoped/read-only keys for any token in the config (it lands in the 0644 mcp.json).")
-	b.WriteString(" SCHEDULED TASKS (ROUTINES): you run per-sprite routines on a timer to stay aware of " +
-		"context OUTSIDE your chats — a built-in 'Context awareness' routine already surveys this sprite's " +
-		"repos/PRs on a schedule and its digest is injected into your context automatically (that's the " +
-		"'Standing context' section you may see), so when the human asks 'where do things stand?' you " +
-		"usually already know — just re-check for anything that landed since. When the human asks to " +
-		"SCHEDULE/ADD a recurring task (e.g. 'every hour summarize the #eng Slack channel'), POST /api/tasks " +
-		"{\"name\":\"<short name>\",\"prompt\":\"<what to do each run — write it as instructions to yourself>\"," +
-		"\"interval_min\":<minutes>} to localhost:8080. To LIST routines GET /api/tasks; to DELETE one, GET " +
-		"the list, find its id, then DELETE /api/tasks/<id> (default routines can't be deleted — disable with " +
-		"PATCH /api/tasks/<id> {\"enabled\":false}); to run one now POST /api/tasks/<id>/run. These are " +
-		"specific to THIS sprite. Manage them whenever the human asks in chat; you don't need any special UI.")
+	b.WriteString(" SCHEDULED TASKS (ROUTINES): the human can have you run per-sprite routines on a timer " +
+		"(e.g. 'every hour summarize the #eng Slack channel'). When they ask to SCHEDULE/ADD one, POST " +
+		"/api/tasks {\"name\":\"<short name>\",\"prompt\":\"<what to do each run — write it as instructions to " +
+		"yourself>\",\"interval_min\":<minutes>} to localhost:8080. To LIST GET /api/tasks; to DELETE one, GET " +
+		"the list, find its id, then DELETE /api/tasks/<id>; enable/disable with PATCH /api/tasks/<id> " +
+		"{\"enabled\":false}; run one now with POST /api/tasks/<id>/run. Routines are specific to THIS sprite; " +
+		"manage them only when the human asks — no special UI needed. (A routine only runs while the sprite is " +
+		"awake.)")
 	return b.String()
 }
 
@@ -658,7 +660,7 @@ func main() {
 			}, time.Minute)
 			srv.SetRoutines(rt)
 			go rt.Start(context.Background())
-			log.Printf("routines: enabled (%d default task(s) + custom; manage via /api/tasks)", len(routines.DefaultTasks()))
+			log.Printf("routines: enabled (custom tasks via /api/tasks; no built-in routines)")
 		}
 	}
 
