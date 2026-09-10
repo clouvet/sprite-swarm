@@ -24,13 +24,15 @@ func (s *Server) serveConfig(w http.ResponseWriter, r *http.Request) {
 
 // allowedDocExt maps accepted non-image file extensions to a media type.
 var allowedDocExt = map[string]string{
-	".txt":  "text/plain",
-	".md":   "text/markdown",
-	".csv":  "text/csv",
-	".doc":  "application/msword",
-	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	".xls":  "application/vnd.ms-excel",
-	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".txt":   "text/plain",
+	".md":    "text/markdown",
+	".csv":   "text/csv",
+	".json":  "application/json",
+	".jsonl": "application/jsonl",
+	".doc":   "application/msword",
+	".docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xls":   "application/vnd.ms-excel",
+	".xlsx":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 
 // serveUpload accepts a multipart file (POST /api/upload?session=<id>) — an image
