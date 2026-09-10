@@ -108,5 +108,4 @@ func (s *Server) serveTaskByID(w http.ResponseWriter, r *http.Request) {
 type Routines interface {
 	Store() *routines.Store
 	RunNow(ctx context.Context, id string) error
-	ContextDigest() string
 }
