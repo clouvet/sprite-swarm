@@ -1389,39 +1389,49 @@
   }
 
   // ---- send ----
+  // Guards against a double submit: send() awaits (ensureSession/WS open) before it
+  // clears the input, so two fast Enter presses would otherwise both read the same text
+  // and post it twice. Re-entrant calls no-op until the first one finishes.
+  let sending = false;
   async function send() {
+    if (sending) return;
     const text = inputEl.value.trim();
     const atts = pendingAttachments.slice();
     if (!text && !atts.length) return;
-    if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
+    sending = true;
+    try {
+      if (isRecording) { voiceInputSent = true; try { recognition.stop(); } catch (e) {} }
 
-    // Composing a brand-new chat: create + connect the session first (text/attachment
-    // are captured above, so ensureSession won't clobber them).
-    if (!currentSession) {
-      if (!(await ensureSession())) { addSystem('Could not start a chat.'); return; }
-    }
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      await waitForWsOpen(5000);
-      if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem('Not connected — try again.'); return; }
-    }
+      // Composing a brand-new chat: create + connect the session first (text/attachment
+      // are captured above, so ensureSession won't clobber them).
+      if (!currentSession) {
+        if (!(await ensureSession())) { addSystem('Could not start a chat.'); return; }
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        await waitForWsOpen(5000);
+        if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem('Not connected — try again.'); return; }
+      }
 
-    maybeAutoTitle(text);
-    // Fresh turn: drop any stale elapsed timer left by a prior turn that never
-    // finalized (e.g. its 'result' was lost during a compaction), so the working
-    // indicator counts from NOW instead of resuming an old genStart.
-    if (genTimer) { clearInterval(genTimer); genTimer = null; }
-    genStart = 0;
-    addUser(text, attachmentRender(atts));
-    showThinking();
-    const payload = { type: 'user', content: text, model: currentModel };
-    if (atts.length) {
-      payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
+      maybeAutoTitle(text);
+      // Fresh turn: drop any stale elapsed timer left by a prior turn that never
+      // finalized (e.g. its 'result' was lost during a compaction), so the working
+      // indicator counts from NOW instead of resuming an old genStart.
+      if (genTimer) { clearInterval(genTimer); genTimer = null; }
+      genStart = 0;
+      addUser(text, attachmentRender(atts));
+      showThinking();
+      const payload = { type: 'user', content: text, model: currentModel };
+      if (atts.length) {
+        payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
+      }
+      ws.send(JSON.stringify(payload));
+      inputEl.value = ''; autoGrow();
+      clearDraft();
+      clearAttachments();
+      setGenerating(true);
+    } finally {
+      sending = false;
     }
-    ws.send(JSON.stringify(payload));
-    inputEl.value = ''; autoGrow();
-    clearDraft();
-    clearAttachments();
-    setGenerating(true);
   }
   // attachmentRender turns pending attachments into addUser opts: images render as
   // thumbnails, everything else as file chips.

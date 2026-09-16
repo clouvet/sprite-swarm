@@ -1,6 +1,10 @@
 package hub
 
-import "testing"
+import (
+	"sync"
+	"testing"
+	"time"
+)
 
 // BroadcastAll must reach clients on EVERY session (so a session_created signal
 // lands in the sidebar of someone watching a different chat), and must drop a
@@ -31,4 +35,64 @@ func TestBroadcastAll(t *testing.T) {
 	if h.clients["B"][full] {
 		t.Fatal("expected the full client to be dropped")
 	}
+}
+
+// broadcastToSession is now called directly from many goroutines (not a single loop),
+// concurrently with client add/drop. This must never race or panic (double-close /
+// send-on-closed). Run with -race.
+func TestConcurrentBroadcastAndClientChurn(t *testing.T) {
+	h := &Hub{clients: make(map[string]map[*Client]bool)}
+	const sid = "S"
+	h.clients[sid] = map[*Client]bool{}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	for i := 0; i < 8; i++ { // broadcasters
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: []byte("x")})
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ { // churn: add a draining client, broadcast, drop it
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				c := &Client{sessionID: sid, send: make(chan []byte, 4)}
+				done := make(chan struct{})
+				go func() {
+					for {
+						select {
+						case <-c.send:
+						case <-done:
+							return
+						}
+					}
+				}()
+				h.mu.Lock()
+				h.clients[sid][c] = true
+				h.mu.Unlock()
+				h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: []byte("y")})
+				h.dropClient(sid, c)
+				close(done)
+			}
+		}()
+	}
+	time.Sleep(300 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
