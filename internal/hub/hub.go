@@ -57,7 +57,6 @@ type Hub struct {
 
 	register   chan *Client
 	unregister chan *Client
-	broadcast  chan *BroadcastMessage
 
 	// onActivity, when set, is called with a session id + short preview whenever a
 	// turn happens, so the session list (lastMessage/lastMessageAt) stays current.
@@ -117,7 +116,6 @@ func NewHub(cfg Config) *Hub {
 		watchers:   make(map[string]*watcher.SessionWatcher),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		broadcast:  make(chan *BroadcastMessage, 256),
 		pending:    newPendingStore(filepath.Join(cfg.WorkDir, ".sprite-agent", "pending")),
 	}
 	// When a process exits, replay whatever was still queued (unacked) onto a fresh
@@ -155,8 +153,6 @@ func (h *Hub) Run() {
 			h.registerClient(client)
 		case client := <-h.unregister:
 			h.unregisterClient(client)
-		case message := <-h.broadcast:
-			h.broadcastToSession(message)
 		}
 	}
 }
@@ -303,48 +299,72 @@ func (h *Hub) BroadcastAll(data []byte) {
 	if h.cfg.secrets != nil {
 		data = h.cfg.secrets.Mask(data)
 	}
+	// Send under RLock (mutually exclusive with close-under-Lock); drop full clients
+	// after, once each. Same discipline as broadcastToSession.
+	var full []*Client
 	h.mu.RLock()
-	targets := make([]*Client, 0)
 	for _, clients := range h.clients {
 		for client := range clients {
-			targets = append(targets, client)
+			select {
+			case client.send <- data:
+			default:
+				full = append(full, client)
+			}
 		}
 	}
 	h.mu.RUnlock()
-	for _, client := range targets {
-		select {
-		case client.send <- data:
-		default:
-			close(client.send)
-			h.mu.Lock()
-			delete(h.clients[client.sessionID], client)
-			h.mu.Unlock()
-		}
+	for _, client := range full {
+		h.dropClient(client.sessionID, client)
 	}
 }
 
+// broadcastToSession delivers a message to a session's clients. It is called DIRECTLY by
+// producers (the Claude output reader, watchers, user turns) from many goroutines — NOT
+// funneled through a single channel/loop — so a slow client can never back-pressure a
+// turn: each per-client send is non-blocking (a client whose buffer is full is dropped).
+//
+// It snapshots the client set under the lock and iterates the snapshot; iterating the
+// live map without the lock would race with registerClient/unregisterClient (which run
+// concurrently). Callers must NOT hold h.mu (this takes it).
 func (h *Hub) broadcastToSession(message *BroadcastMessage) {
-	h.mu.RLock()
-	clients := h.clients[message.SessionID]
-	h.mu.RUnlock()
-
 	// Redact worker-secret values before they reach any client (best-effort).
 	data := message.Data
 	if h.cfg.secrets != nil {
 		data = h.cfg.secrets.Mask(data)
 	}
 
-	for client := range clients {
+	// The non-blocking send happens under RLock; close(client.send) only happens under
+	// the write lock (here and in unregisterClient), so a send can never race a close on
+	// the same channel (which would panic). Clients whose buffer is full are collected
+	// and dropped after, once each, guarded by a presence check.
+	var full []*Client
+	h.mu.RLock()
+	for client := range h.clients[message.SessionID] {
 		if message.Exclude != nil && client == message.Exclude {
 			continue
 		}
 		select {
 		case client.send <- data:
 		default:
+			full = append(full, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, client := range full {
+		h.dropClient(message.SessionID, client)
+	}
+}
+
+// dropClient removes a slow/gone client and closes its send channel exactly once (the
+// presence check under the write lock makes concurrent callers idempotent).
+func (h *Hub) dropClient(sessionID string, client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if set, ok := h.clients[sessionID]; ok {
+		if _, present := set[client]; present {
+			delete(set, client)
 			close(client.send)
-			h.mu.Lock()
-			delete(h.clients[message.SessionID], client)
-			h.mu.Unlock()
 		}
 	}
 }
@@ -378,7 +398,7 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 		echo["attachments"] = refs
 	}
 	data, _ := json.Marshal(map[string]interface{}{"type": "user_message", "message": echo})
-	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: data, Exclude: client}
+	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: data, Exclude: client})
 
 	// Keep the session list's preview/timestamp current.
 	if h.onActivity != nil {
@@ -420,7 +440,7 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	h.pumpPending(client.sessionID)
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
-	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: processingMsg}
+	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: processingMsg})
 }
 
 // maxInlineFile caps how much of a text attachment we inline into the turn.
@@ -521,7 +541,7 @@ func (h *Hub) RestartActiveSessions() {
 		log.Printf("[%s] env changed; restarting session", sid)
 		_ = h.processMgr.Kill(sid)
 		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
-		h.broadcast <- &BroadcastMessage{SessionID: sid, Data: resultMsg}
+		h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: resultMsg})
 		if sess := h.GetSession(sid); sess != nil {
 			go h.spawnClaudeForSession(sid, sess)
 		}
@@ -534,7 +554,7 @@ func (h *Hub) handleInterrupt(client *Client) {
 		log.Printf("[%s] interrupt error: %v", client.sessionID, err)
 	}
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
-	h.broadcast <- &BroadcastMessage{SessionID: client.sessionID, Data: resultMsg}
+	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
 	if sess := h.GetSession(client.sessionID); sess != nil {
 		go h.spawnClaudeForSession(client.sessionID, sess)
 	}
@@ -558,7 +578,7 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 		"type":    "user_message",
 		"message": map[string]interface{}{"role": "user", "content": content},
 	})
-	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: userMsg}
+	h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: userMsg})
 
 	// Queue + pump, same durable path as a human turn (#95): held across a
 	// compaction and delivered at the turn boundary, never lost in the stdin buffer.
@@ -566,7 +586,7 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 	h.pumpPending(sessionID)
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
-	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: processingMsg}
+	h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: processingMsg})
 	return nil
 }
 
@@ -585,7 +605,7 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	if err != nil {
 		log.Printf("[%s] spawn failed: %v", sessionID, err)
 		errMsg, _ := json.Marshal(map[string]interface{}{"type": "error", "message": "Failed to start Claude process"})
-		h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errMsg}
+		h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errMsg})
 		return
 	}
 	sess.SetState(session.StateWebOnly)
@@ -623,7 +643,7 @@ func (h *Hub) pumpPending(sessionID string) {
 				"type":    "error",
 				"message": "A queued message could not be delivered and was dropped. Please resend it.",
 			})
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errMsg}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errMsg})
 		},
 	)
 	if err != nil {
@@ -766,7 +786,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 						sess.SetGenerating(false)
 					}
 				}
-				h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: inner}
+				h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: inner})
 				continue
 			}
 
@@ -790,7 +810,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 						"type":    "error",
 						"message": claudeErrorMessage(msg.ResultText(), msg.Subtype),
 					})
-					h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errData}
+					h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errData})
 				}
 				// Turn done (success or error): confirm the in-flight message processed
 				// (drop it from the queue) and deliver the next held message, if any.
@@ -802,7 +822,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 			if err != nil {
 				continue
 			}
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: data}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: data})
 
 		case err, ok := <-hp.ErrorChan:
 			if !ok {
@@ -810,7 +830,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 			}
 			log.Printf("[%s] process error: %v", sessionID, err)
 			errMsg, _ := json.Marshal(map[string]interface{}{"type": "error", "message": err.Error()})
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: errMsg}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errMsg})
 
 		case <-hp.Done():
 			log.Printf("[%s] process context cancelled", sessionID)
@@ -940,7 +960,7 @@ func (h *Hub) handleWatcherEvents(sessionID string, w *watcher.SessionWatcher) {
 					"timestamp": event.Timestamp.Unix() * 1000,
 				},
 			})
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: data}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: data})
 		case "assistant":
 			data, _ := json.Marshal(map[string]interface{}{
 				"type": "assistant",
@@ -950,16 +970,11 @@ func (h *Hub) handleWatcherEvents(sessionID string, w *watcher.SessionWatcher) {
 					"timestamp": event.Timestamp.Unix() * 1000,
 				},
 			})
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: data}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: data})
 			resultData, _ := json.Marshal(map[string]interface{}{"type": "result"})
-			h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: resultData}
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: resultData})
 		}
 	}
-}
-
-func (h *Hub) notifyLocked(sessionID, message string) {
-	data, _ := json.Marshal(map[string]interface{}{"type": "system", "message": message})
-	h.broadcast <- &BroadcastMessage{SessionID: sessionID, Data: data}
 }
 
 // sendHistoryToClient replays the transcript to a newly connected client.
