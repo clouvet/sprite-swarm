@@ -72,6 +72,11 @@
   let ws = null;
   let currentSession = null;
   let currentWsSessionId = null;
+  // The session whose transcript is currently painted in the DOM. When a reconnect
+  // targets this same session we send ?resume=1 so the server skips the destructive
+  // history replay mid-turn. Set once we've put anything on screen for a session
+  // (history rendered, or the user's own first message echoed).
+  let renderedHistorySession = null;
   let intentionalDisconnect = false;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
@@ -358,6 +363,7 @@
     stickToBottom = true; // opening a chat starts pinned to the latest
     chatTitle.textContent = s.name || 'Chat';
     messagesEl.innerHTML = '';
+    renderedHistorySession = null; // deliberate wipe: this connect wants full history, not a resume
     currentAssistantEl = null;
     assistantText = '';
     setGenerating(false); // clear any stale turn state (stuck stop button / timer) when switching chats
@@ -519,7 +525,12 @@
     intentionalDisconnect = false;
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/ws?session=${sessionId}`);
+    // resume=1 tells the server we already have this session on screen, so a mid-turn
+    // reconnect (constant on flaky wifi) shouldn't wipe the transcript and restart the
+    // in-flight blocks — the live stream just continues. A fresh load or a switch to a
+    // session we haven't rendered omits it and gets the full history.
+    const resume = renderedHistorySession === sessionId ? '&resume=1' : '';
+    ws = new WebSocket(`${proto}//${location.host}/ws?session=${sessionId}${resume}`);
 
     ws.onopen = () => {
       statusEl.className = 'connected'; // 👾 indicator (no text)
@@ -635,6 +646,8 @@
           if (m.role === 'user') addUser(m.content, { images: m.images });
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
+        renderedHistorySession = currentWsSessionId; // reconnects now resume, not re-wipe
+
         // Restore this chat's own context meter from its transcript, so a dormant
         // chat shows ITS real size — not whatever value was live when we switched.
         if (msg.contextTokens) updateContextMeter(msg.contextTokens);
@@ -1485,6 +1498,9 @@
       if (genTimer) { clearInterval(genTimer); genTimer = null; }
       genStart = 0;
       addUser(text, attachmentRender(atts));
+      // The DOM now holds this session's conversation, even on a brand-new chat that
+      // never received a history event — so a mid-turn reconnect resumes, not re-wipes.
+      renderedHistorySession = currentWsSessionId;
       showThinking();
       const payload = { type: 'user', content: text, model: currentModel };
       if (atts.length) {
