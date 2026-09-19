@@ -121,7 +121,7 @@ func NewHub(cfg Config) *Hub {
 	// When a process exits, replay whatever was still queued (unacked) onto a fresh
 	// --resume process — this is the recovery for a message caught in a compaction.
 	h.processMgr.SetOnExit(func(sessionID string) {
-		h.pending.clearInFlight(sessionID)
+		h.pending.resetDelivery(sessionID) // mark unconfirmed messages for replay
 		h.pumpPending(sessionID)
 	})
 	// Replay any input that was queued when a previous process exited (self-update
@@ -451,18 +451,19 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 			// otherwise two claude --resume processes briefly share this transcript.
 			h.processMgr.KillAndWait(client.sessionID)
 			sess.SetState(session.StateIdle)
-			// We deliberately killed the in-flight turn. The process manager's onExit no
-			// longer clears the pending marker for a killed process (that would double-
-			// deliver a genuine death), so clear it here — otherwise the pump below sees a
-			// stale in-flight and never delivers this turn, hanging the UI on "thinking".
-			h.pending.clearInFlight(client.sessionID)
+			// We deliberately killed the in-flight turn. onExit is skipped for a killed
+			// process (it isn't current), so mark its unconfirmed messages for replay
+			// here — otherwise the aborted turn's message would never resume on the new
+			// process. The transcript dedup in deliver() prevents re-running a completed one.
+			h.pending.resetDelivery(client.sessionID)
 		}
 	}
 
-	// Queue the turn, then pump: if the session is idle it's delivered immediately;
-	// if a turn is generating it's HELD in Go (persisted) and delivered at the turn
-	// boundary — never shoved into the subprocess's stdin buffer where a compaction
-	// would drop it (#95). pumpPending must not run under h.mu, so no lock is held.
+	// Queue the turn, then pump: it's persisted first (so a compaction can't drop it,
+	// #95) and delivered to the subprocess immediately — even mid-turn, so claude picks
+	// it up within the running turn instead of at the boundary (mid-turn steering). The
+	// queue holds it only until the transcript confirms it. pumpPending must not run
+	// under h.mu, so no lock is held.
 	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: msg.Content})
 	h.pumpPending(client.sessionID)
 
@@ -567,7 +568,7 @@ func (h *Hub) RestartActiveSessions() {
 	for _, sid := range h.processMgr.ActiveSessionIDs() {
 		log.Printf("[%s] env changed; restarting session", sid)
 		h.processMgr.KillAndWait(sid) // fully dead before respawn — no two procs on one transcript
-		h.pending.clearInFlight(sid)  // intentional kill: onExit won't clear it (see model-change)
+		h.pending.resetDelivery(sid)  // intentional kill: onExit won't fire; replay the aborted turn
 		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 		h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: resultMsg})
 		if sess := h.GetSession(sid); sess != nil {
@@ -582,7 +583,7 @@ func (h *Hub) handleInterrupt(client *Client) {
 	// Fully reap the old process before respawning, so the fresh --resume process
 	// isn't racing a still-dying one on the same transcript.
 	h.processMgr.KillAndWait(client.sessionID)
-	h.pending.clearInFlight(client.sessionID) // intentional kill: onExit won't clear it
+	h.pending.resetDelivery(client.sessionID) // intentional kill: onExit won't fire; replay the aborted turn
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
 	if sess := h.GetSession(client.sessionID); sess != nil {
@@ -610,8 +611,9 @@ func (h *Hub) InjectMessage(sessionID, content string) error {
 	})
 	h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: userMsg})
 
-	// Queue + pump, same durable path as a human turn (#95): held across a
-	// compaction and delivered at the turn boundary, never lost in the stdin buffer.
+	// Queue + pump, same durable path as a human turn (#95): persisted so a
+	// compaction can't drop it, delivered to the subprocess promptly, and held in the
+	// queue only until the transcript confirms it.
 	h.pending.enqueue(sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: content})
 	h.pumpPending(sessionID)
 
@@ -646,12 +648,13 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	}
 }
 
-// pumpPending delivers the next queued user turn for a session when it's idle (see
-// pendingStore.pump). Safe to call from any path EXCEPT while holding h.mu — its
+// pumpPending hands every undelivered queued message to the session's process —
+// immediately, even mid-turn, so claude picks it up within the running turn (see
+// pendingStore.deliver). Safe to call from any path EXCEPT while holding h.mu — its
 // deliver callback takes GetSession (h.mu.RLock), so h.mu -> pending order would
 // invert the pending -> h.mu order used everywhere else.
 func (h *Hub) pumpPending(sessionID string) {
-	err := h.pending.pump(sessionID,
+	err := h.pending.deliver(sessionID,
 		func(m pendingMsg) error { // deliver: send, respawning once if the process is gone/dead
 			if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {
 				sess := h.GetSession(sessionID)
@@ -697,8 +700,9 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 		return false
 	}
 	defer f.Close()
-	// Scan for the last line that is a user turn; compare its text.
-	last := ""
+	// Scan for ANY user turn matching text. It used to compare only the last user
+	// turn, but with mid-turn steering several messages can be delivered within one
+	// turn, so an already-processed one may not be the most recent — match anywhere.
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -717,12 +721,12 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 			continue
 		}
 		if rec.Type == "user" || rec.Message.Role == "user" {
-			if t := extractText(rec.Message.Content); t != "" {
-				last = t
+			if strings.TrimSpace(extractText(rec.Message.Content)) == text {
+				return true
 			}
 		}
 	}
-	return strings.TrimSpace(last) == text
+	return false
 }
 
 // extractText pulls the plaintext out of a transcript message's content, which is
@@ -893,9 +897,12 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 					})
 					h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errData})
 				}
-				// Turn done (success or error): confirm the in-flight message processed
-				// (drop it from the queue) and deliver the next held message, if any.
-				h.pending.ackInFlight(sessionID)
+				// Turn done (success or error): drop from the queue any delivered
+				// message whose turn is now in the transcript, then deliver anything
+				// that arrived during finalization.
+				h.pending.confirm(sessionID, func(m pendingMsg) bool {
+					return h.transcriptHasUserTurn(sessionID, m.Text)
+				})
 				h.pumpPending(sessionID)
 			}
 
