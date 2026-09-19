@@ -411,6 +411,11 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)
 			_ = h.processMgr.Kill(client.sessionID)
 			sess.SetState(session.StateIdle)
+			// We deliberately killed the in-flight turn. The process manager's onExit no
+			// longer clears the pending marker for a killed process (that would double-
+			// deliver a genuine death), so clear it here — otherwise the pump below sees a
+			// stale in-flight and never delivers this turn, hanging the UI on "thinking".
+			h.pending.clearInFlight(client.sessionID)
 		}
 	}
 
@@ -522,11 +527,13 @@ func (h *Hub) RestartActiveSessions() {
 	for _, sid := range h.processMgr.ActiveSessionIDs() {
 		log.Printf("[%s] env changed; restarting session", sid)
 		_ = h.processMgr.Kill(sid)
+		h.pending.clearInFlight(sid) // intentional kill: onExit won't clear it (see model-change)
 		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 		h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: resultMsg})
 		if sess := h.GetSession(sid); sess != nil {
 			go h.spawnClaudeForSession(sid, sess)
 		}
+		h.pumpPending(sid) // deliver anything queued onto the fresh process
 	}
 }
 
@@ -535,6 +542,7 @@ func (h *Hub) handleInterrupt(client *Client) {
 	if err := h.processMgr.Kill(client.sessionID); err != nil {
 		log.Printf("[%s] interrupt error: %v", client.sessionID, err)
 	}
+	h.pending.clearInFlight(client.sessionID) // intentional kill: onExit won't clear it
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
 	if sess := h.GetSession(client.sessionID); sess != nil {
