@@ -1,20 +1,19 @@
 package hub
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 // harness drives a pendingStore with recording callbacks.
 type harness struct {
-	delivered []string // Text of each delivered message, in order
-	dropped   []string // Text of each given-up message
-	processed map[string]bool
+	delivered  []string // Text of each delivered message, in order
+	dropped    []string // Text of each given-up message
+	processed  map[string]bool
 	deliverErr error
 }
 
-func (h *harness) pump(p *pendingStore, id string) error {
-	return p.pump(id,
+func (h *harness) deliver(p *pendingStore, id string) error {
+	return p.deliver(id,
 		func(m pendingMsg) error {
 			if h.deliverErr != nil {
 				return h.deliverErr
@@ -27,75 +26,105 @@ func (h *harness) pump(p *pendingStore, id string) error {
 	)
 }
 
+func (h *harness) confirm(p *pendingStore, id string) {
+	p.confirm(id, func(m pendingMsg) bool { return h.processed[m.Text] })
+}
+
 func enq(p *pendingStore, id, text string) {
 	p.enqueue(id, pendingMsg{ID: p.nextID(), Content: text, Text: text})
 }
 
-func TestPumpDeliversWhenIdle(t *testing.T) {
+func TestDeliversWhenIdle(t *testing.T) {
 	p := newPendingStore("")
-	h := &harness{}
+	h := &harness{processed: map[string]bool{}}
 	enq(p, "s", "hello")
-	if err := h.pump(p, "s"); err != nil {
+	if err := h.deliver(p, "s"); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.delivered) != 1 || h.delivered[0] != "hello" {
 		t.Fatalf("delivered = %v", h.delivered)
 	}
-	// Turn completes → ack clears the queue.
-	p.ackInFlight("s")
+	// Turn completes and the turn is in the transcript → confirm drops it.
+	h.processed["hello"] = true
+	h.confirm(p, "s")
 	if n := p.pending("s"); n != 0 {
-		t.Fatalf("pending after ack = %d, want 0", n)
+		t.Fatalf("pending after confirm = %d, want 0", n)
 	}
 }
 
-func TestPumpHoldsWhileGenerating(t *testing.T) {
+// Mid-turn steering: a message enqueued while a turn is generating is handed to the
+// process immediately, NOT held to the turn boundary (the inverse of the old design).
+func TestDeliversMidTurnImmediately(t *testing.T) {
 	p := newPendingStore("")
-	h := &harness{}
+	h := &harness{processed: map[string]bool{}}
 	enq(p, "s", "first")
-	_ = h.pump(p, "s") // first is now in flight
-	enq(p, "s", "second")
-	_ = h.pump(p, "s") // must HOLD second — a turn is in flight
-	if len(h.delivered) != 1 {
-		t.Fatalf("delivered = %v, want only [first] (second held)", h.delivered)
+	_ = h.deliver(p, "s") // first delivered; a turn is now generating
+	enq(p, "s", "second") // typed mid-turn
+	_ = h.deliver(p, "s")
+	if len(h.delivered) != 2 || h.delivered[1] != "second" {
+		t.Fatalf("delivered = %v, want both delivered immediately [first second]", h.delivered)
 	}
 	if n := p.pending("s"); n != 2 {
-		t.Fatalf("pending = %d, want 2 (both queued)", n)
+		t.Fatalf("pending = %d, want 2 (both delivered but unconfirmed)", n)
 	}
-	// Turn boundary: ack first, pump delivers second.
-	p.ackInFlight("s")
-	_ = h.pump(p, "s")
-	if len(h.delivered) != 2 || h.delivered[1] != "second" {
-		t.Fatalf("delivered = %v, want [first second]", h.delivered)
+	// Both turns land in the transcript → confirm clears the queue.
+	h.processed["first"], h.processed["second"] = true, true
+	h.confirm(p, "s")
+	if n := p.pending("s"); n != 0 {
+		t.Fatalf("pending after confirm = %d, want 0", n)
 	}
 }
 
 func TestReplayAfterDeath(t *testing.T) {
 	p := newPendingStore("")
-	h := &harness{}
+	h := &harness{processed: map[string]bool{}}
 	enq(p, "s", "do the thing")
-	_ = h.pump(p, "s") // in flight, Sent=true
-	// Process dies before a result: clear in-flight, message stays queued.
-	p.clearInFlight("s")
+	_ = h.deliver(p, "s") // delivered
+	// Process dies before a result: mark unconfirmed messages for replay.
+	p.resetDelivery("s")
 	// Not in the transcript (processed=false) → redeliver.
-	_ = h.pump(p, "s")
+	_ = h.deliver(p, "s")
 	if len(h.delivered) != 2 {
 		t.Fatalf("delivered = %v, want the message replayed (2 deliveries)", h.delivered)
 	}
 }
 
-func TestDedupSkipsAlreadyProcessed(t *testing.T) {
+func TestDedupSkipsAlreadyProcessedOnReplay(t *testing.T) {
 	p := newPendingStore("")
+	// Processed from the start, but a FIRST delivery must still send it — the dedup
+	// only applies to a replay, else a new message matching an old turn would vanish.
 	h := &harness{processed: map[string]bool{"already ran": true}}
 	enq(p, "s", "already ran")
-	_ = h.pump(p, "s") // delivered once, in flight
-	p.clearInFlight("s")
-	// It made it into the transcript before the death → must NOT be re-sent.
-	_ = h.pump(p, "s")
+	_ = h.deliver(p, "s") // first delivery ignores alreadyProcessed
+	if len(h.delivered) != 1 {
+		t.Fatalf("delivered = %v, want the first delivery to go through", h.delivered)
+	}
+	p.resetDelivery("s")
+	// Now it's a replay AND it's in the transcript → must NOT be re-sent, and drop it.
+	_ = h.deliver(p, "s")
 	if len(h.delivered) != 1 {
 		t.Fatalf("delivered = %v, want no replay (dedup)", h.delivered)
 	}
 	if n := p.pending("s"); n != 0 {
 		t.Fatalf("pending = %d, want 0 (dropped as processed)", n)
+	}
+}
+
+// confirm must never drop a message that hasn't been delivered yet, even if its text
+// coincidentally matches a processed turn — otherwise a fresh message is lost.
+func TestConfirmSpareUndelivered(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{"dup": true}}
+	enq(p, "s", "dup") // queued, never delivered
+	h.confirm(p, "s")
+	if n := p.pending("s"); n != 1 {
+		t.Fatalf("pending = %d, want 1 (undelivered message must survive confirm)", n)
+	}
+	if err := h.deliver(p, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.delivered) != 1 || h.delivered[0] != "dup" {
+		t.Fatalf("delivered = %v, want it delivered after all", h.delivered)
 	}
 }
 
@@ -105,14 +134,14 @@ func TestAttemptCapGivesUp(t *testing.T) {
 	defer func() { maxSendAttempts = old }()
 
 	p := newPendingStore("")
-	h := &harness{}
+	h := &harness{processed: map[string]bool{}}
 	enq(p, "s", "poison")
-	// Each death→pump cycle re-delivers and counts an attempt.
-	_ = h.pump(p, "s") // attempt 1
-	p.clearInFlight("s")
-	_ = h.pump(p, "s") // attempt 2
-	p.clearInFlight("s")
-	_ = h.pump(p, "s") // exceeds cap → dropped
+	// Each death→deliver cycle re-delivers and counts an attempt.
+	_ = h.deliver(p, "s") // attempt 1
+	p.resetDelivery("s")
+	_ = h.deliver(p, "s") // attempt 2
+	p.resetDelivery("s")
+	_ = h.deliver(p, "s") // exceeds cap → dropped
 	if len(h.dropped) != 1 || h.dropped[0] != "poison" {
 		t.Fatalf("dropped = %v, want [poison]", h.dropped)
 	}
@@ -125,8 +154,8 @@ func TestDeliverErrorKeepsQueued(t *testing.T) {
 	p := newPendingStore("")
 	h := &harness{deliverErr: errBoom}
 	enq(p, "s", "keep me")
-	if err := h.pump(p, "s"); err == nil {
-		t.Fatal("expected pump to surface the deliver error")
+	if err := h.deliver(p, "s"); err == nil {
+		t.Fatal("expected deliver to surface the error")
 	}
 	if n := p.pending("s"); n != 1 {
 		t.Fatalf("pending = %d, want 1 (still queued after a failed delivery)", n)
@@ -138,9 +167,7 @@ func TestPersistAndReload(t *testing.T) {
 	p := newPendingStore(dir)
 	enq(p, "sess1", "survive a restart")
 	enq(p, "sess1", "me too")
-	if _, err := filepath.Abs(dir); err != nil {
-		t.Fatal(err)
-	}
+
 	// Simulate a full restart: a fresh store loads from disk.
 	p2 := newPendingStore(dir)
 	p2.load()
@@ -151,13 +178,11 @@ func TestPersistAndReload(t *testing.T) {
 	if p2.nextID() == "1" {
 		t.Fatal("nextID collided with a reloaded id")
 	}
-	// Draining to empty removes the file.
-	p2.ackInFlight("sess1") // nothing in flight yet → no-op
-	h := &harness{}
-	_ = h.pump(p2, "sess1")
-	p2.ackInFlight("sess1")
-	_ = h.pump(p2, "sess1")
-	p2.ackInFlight("sess1")
+	// Drain to empty: deliver both, mark processed, confirm → file removed.
+	h := &harness{processed: map[string]bool{}}
+	_ = h.deliver(p2, "sess1")
+	h.processed["survive a restart"], h.processed["me too"] = true, true
+	h.confirm(p2, "sess1")
 	if n := p2.pending("sess1"); n != 0 {
 		t.Fatalf("pending after draining = %d, want 0", n)
 	}

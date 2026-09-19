@@ -11,38 +11,44 @@ import (
 )
 
 // maxSendAttempts caps how many times a queued message is (re)delivered before we
-// give up on it. A message is redelivered only when the subprocess died before
-// acking it (compaction/crash); a genuinely poisonous message that keeps killing
-// the process must not loop forever. var (not const) so tests can shrink it.
+// give up on it. A message is redelivered only when the subprocess died before its
+// turn landed in the transcript (compaction/crash/intentional kill); a genuinely
+// poisonous message that keeps killing the process must not loop forever. var (not
+// const) so tests can shrink it.
 var maxSendAttempts = 3
 
 // pendingMsg is one accepted user turn awaiting confirmed processing by claude.
 //
 // Issue #95: a message typed while a turn is generating was written straight to the
 // claude subprocess's stdin buffer; if the process then exited to compact, the
-// bytes died with it and the instruction was silently lost. Instead we keep every
-// unconfirmed turn in this persisted queue and only hand ONE at a time to the
-// subprocess, so a death replays the queue rather than dropping it.
+// bytes died with it and the instruction was silently lost. We keep every unconfirmed
+// turn in this persisted queue.
+//
+// Mid-turn steering: unlike the original one-at-a-time design, we hand a message to
+// the live subprocess AS SOON AS IT ARRIVES — even while a turn is generating — so
+// claude picks it up within the running turn (it reads stream-json stdin between
+// steps) instead of it waiting for the turn boundary. Durability is preserved the
+// same way: the message stays in this queue until the transcript confirms it was
+// processed, and a process death marks every unconfirmed message undelivered so it
+// replays onto the fresh --resume process (deduped against the transcript).
 type pendingMsg struct {
-	ID       string      `json:"id"`
-	Content  interface{} `json:"content"`  // string, or a content-block array (with attachments)
-	Text     string      `json:"text"`     // plaintext, to dedup against the transcript on replay
-	Sent     bool        `json:"sent"`     // handed to a subprocess at least once (which may have since died)
-	Attempts int         `json:"attempts"` // delivery attempts, to bound crash-loop replays
+	ID        string      `json:"id"`
+	Content   interface{} `json:"content"`   // string, or a content-block array (with attachments)
+	Text      string      `json:"text"`      // plaintext, to dedup against the transcript on replay
+	Delivered bool        `json:"delivered"` // handed to a live subprocess; cleared on its death so it replays
+	Attempts  int         `json:"attempts"`  // delivery attempts, to bound crash-loop replays
 }
 
-// sessionPending is one session's ordered queue plus the id of the message that is
-// currently handed to the subprocess and awaiting its result.
+// sessionPending is one session's ordered queue of unconfirmed messages.
 type sessionPending struct {
-	mu       sync.Mutex
-	msgs     []pendingMsg
-	inFlight string
+	mu   sync.Mutex
+	msgs []pendingMsg
 }
 
-// pendingStore persists per-session pending input under dir/<sessionID>.json. Only
-// the queue is persisted (not inFlight): after a full sprite-agent restart nothing
-// is "in flight" — every queued message is re-pumped, with a transcript check so
-// one that was actually processed before the exit isn't sent twice.
+// pendingStore persists per-session pending input under dir/<sessionID>.json. After a
+// full sprite-agent restart nothing is "delivered" — load() clears the flag so every
+// queued message is re-delivered, with a transcript check so one that was actually
+// processed before the exit isn't sent twice.
 type pendingStore struct {
 	dir string
 	mu  sync.Mutex // guards m
@@ -66,14 +72,14 @@ func (p *pendingStore) sess(id string) *sessionPending {
 }
 
 // nextID returns a run-unique id for a queued message. Uniqueness within a run is
-// all we need — ids are only used to match ack/inFlight; load() bumps the counter
-// past any ids restored from disk so a restart can't collide.
+// all we need — ids only match a message to its persisted record; load() bumps the
+// counter past any ids restored from disk so a restart can't collide.
 func (p *pendingStore) nextID() string { return strconv.FormatUint(p.seq.Add(1), 10) }
 
 func (p *pendingStore) file(id string) string { return filepath.Join(p.dir, id+".json") }
 
-// persistLocked writes sp.msgs to disk (or removes the file when empty). Caller
-// holds sp.mu. Best-effort: a failure never blocks delivery.
+// persistLocked writes sp.msgs to disk (or removes the file when empty). Caller holds
+// sp.mu. Best-effort: a failure never blocks delivery.
 func (p *pendingStore) persistLocked(id string, sp *sessionPending) error {
 	if p.dir == "" {
 		return nil
@@ -103,30 +109,51 @@ func (p *pendingStore) enqueue(id string, m pendingMsg) {
 	_ = p.persistLocked(id, sp)
 }
 
-// ackInFlight removes whatever message is in flight (its turn just produced a
-// result) and clears the in-flight marker. Persists.
-func (p *pendingStore) ackInFlight(id string) {
+// confirm removes every DELIVERED message whose turn now appears in the transcript
+// (isProcessed reports true). Called when a turn produces a result. Only delivered
+// messages are eligible, so a queued-but-not-yet-sent message is never dropped by a
+// coincidental text match.
+func (p *pendingStore) confirm(id string, isProcessed func(pendingMsg) bool) {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	if sp.inFlight == "" {
-		return
+	kept := sp.msgs[:0]
+	changed := false
+	for _, m := range sp.msgs {
+		if m.Delivered && isProcessed(m) {
+			changed = true
+			continue // processed — drop it
+		}
+		kept = append(kept, m)
 	}
-	sp.removeLocked(sp.inFlight)
-	sp.inFlight = ""
-	_ = p.persistLocked(id, sp)
+	sp.msgs = kept
+	if changed {
+		_ = p.persistLocked(id, sp)
+	}
 }
 
-// clearInFlight marks that no message is being processed (the subprocess died). The
-// message stays queued so pump can replay it onto a fresh --resume process.
-func (p *pendingStore) clearInFlight(id string) {
+// resetDelivery marks every queued message undelivered, so the next deliver() replays
+// them onto a fresh process. Called when the subprocess dies (crash/compaction) or is
+// intentionally killed for a respawn — anything it was handed but that didn't reach
+// the transcript must be re-sent. The alreadyProcessed check in deliver() then drops
+// any that actually completed before the death, so nothing runs twice.
+func (p *pendingStore) resetDelivery(id string) {
 	sp := p.sess(id)
 	sp.mu.Lock()
-	sp.inFlight = ""
-	sp.mu.Unlock()
+	defer sp.mu.Unlock()
+	changed := false
+	for i := range sp.msgs {
+		if sp.msgs[i].Delivered {
+			sp.msgs[i].Delivered = false
+			changed = true
+		}
+	}
+	if changed {
+		_ = p.persistLocked(id, sp)
+	}
 }
 
-// pending reports whether the session has queued messages (test/inspection helper).
+// pending reports how many messages are queued (test/inspection helper).
 func (p *pendingStore) pending(id string) int {
 	sp := p.sess(id)
 	sp.mu.Lock()
@@ -143,56 +170,62 @@ func (sp *sessionPending) removeLocked(msgID string) {
 	}
 }
 
-// pump delivers the next queued message if the session is idle (nothing in flight).
-// Exactly ONE message is in flight at a time — the rest stay in Go, never shoved
-// into the subprocess's stdin buffer where a compaction would drop them.
+// deliver hands every not-yet-delivered message to the subprocess, in order —
+// including while a turn is generating, so claude picks it up within the running turn
+// (mid-turn steering). This is the deliberate change from the original design, which
+// held all but one message until the turn boundary.
 //
 //   - deliver writes a message to the subprocess (spawning/respawning as needed).
-//   - alreadyProcessed reports whether a previously-sent message already landed in
-//     the transcript, so a replay after a death doesn't re-run it (may be nil).
+//   - alreadyProcessed reports whether a previously-delivered message (Attempts>0, i.e.
+//     a replay after a death) already landed in the transcript, so it isn't re-run.
+//     It is NOT consulted on a first delivery — a brand-new message can't have been
+//     processed yet, and a coincidental match with an old identical turn must not drop it.
 //   - giveUp is called when a message exceeds maxSendAttempts and is dropped.
 //
-// Callbacks run under the per-session lock, so pumps for one session serialize but
-// never block other sessions.
-func (p *pendingStore) pump(id string, deliver func(pendingMsg) error, alreadyProcessed func(pendingMsg) bool, giveUp func(pendingMsg)) error {
+// Callbacks run under the per-session lock, so deliveries for one session serialize
+// (preserving stdin order) but never block other sessions. A deliver error leaves the
+// message undelivered at the front of the remaining work; a later deliver() retries.
+func (p *pendingStore) deliver(id string, deliver func(pendingMsg) error, alreadyProcessed func(pendingMsg) bool, giveUp func(pendingMsg)) error {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	if sp.inFlight != "" {
-		return nil // a turn is running; the result handler pumps the next
-	}
-	for len(sp.msgs) > 0 {
-		front := sp.msgs[0]
-		if front.Sent && alreadyProcessed != nil && alreadyProcessed(front) {
-			// Processed during a death window but never acked — drop, don't re-run.
-			sp.removeLocked(front.ID)
-			_ = p.persistLocked(id, sp)
+	i := 0
+	for i < len(sp.msgs) {
+		if sp.msgs[i].Delivered {
+			i++
 			continue
 		}
-		if front.Attempts >= maxSendAttempts {
-			sp.removeLocked(front.ID)
+		m := sp.msgs[i]
+		// A replay (previously delivered, then a death reset it) that already reached
+		// the transcript must not be sent again.
+		if m.Attempts > 0 && alreadyProcessed != nil && alreadyProcessed(m) {
+			sp.removeLocked(m.ID)
+			_ = p.persistLocked(id, sp)
+			continue // slice shifted; same index is the next message
+		}
+		if m.Attempts >= maxSendAttempts {
+			sp.removeLocked(m.ID)
 			_ = p.persistLocked(id, sp)
 			if giveUp != nil {
-				giveUp(front)
+				giveUp(m)
 			}
 			continue
 		}
-		sp.msgs[0].Attempts++
+		sp.msgs[i].Attempts++
 		_ = p.persistLocked(id, sp)
-		if err := deliver(sp.msgs[0]); err != nil {
-			return err // stays queued (front, attempt counted); a later pump retries
+		if err := deliver(sp.msgs[i]); err != nil {
+			return err // stays undelivered (attempt counted); a later deliver retries
 		}
-		sp.msgs[0].Sent = true
-		sp.inFlight = front.ID
+		sp.msgs[i].Delivered = true
 		_ = p.persistLocked(id, sp)
-		return nil
+		i++
 	}
 	return nil
 }
 
 // load restores persisted queues at startup so messages that were pending when the
-// process exited are replayed on the next pump. It bumps the id counter past any
-// restored ids to avoid collisions with new messages.
+// process exited are replayed on the next deliver. Delivered is cleared (nothing is
+// in flight after a full restart). It bumps the id counter past any restored ids.
 func (p *pendingStore) load() {
 	if p.dir == "" {
 		return
@@ -214,6 +247,9 @@ func (p *pendingStore) load() {
 		var msgs []pendingMsg
 		if json.Unmarshal(data, &msgs) != nil || len(msgs) == 0 {
 			continue
+		}
+		for i := range msgs {
+			msgs[i].Delivered = false // nothing is in flight after a restart
 		}
 		id := strings.TrimSuffix(name, ".json")
 		p.mu.Lock()
