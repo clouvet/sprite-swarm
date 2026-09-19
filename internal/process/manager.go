@@ -63,6 +63,7 @@ func (m *Manager) Spawn(opts Options) (*HeadlessProcess, bool, error) {
 			log.Printf("[%s] claude exited normally", opts.SessionID)
 		}
 		m.handleExit(opts.SessionID, hp)
+		close(hp.Exited) // unblocks any KillAndWait waiting on this process to die
 	}()
 
 	return hp, true, nil
@@ -107,6 +108,31 @@ func (m *Manager) Kill(sessionID string) error {
 		return nil
 	}
 	return fmt.Errorf("no process for session %s", sessionID)
+}
+
+// KillAndWait kills a session's process and blocks until it has actually exited
+// (bounded), so a caller can safely spawn a replacement without two claude
+// --resume processes racing on the same transcript. Use it wherever a kill is
+// immediately followed by a respawn (model change, interrupt, env restart); plain
+// Kill is fine where nothing respawns. No-op if there's no process.
+func (m *Manager) KillAndWait(sessionID string) {
+	m.mu.Lock()
+	hp, ok := m.processes[sessionID]
+	if ok {
+		delete(m.processes, sessionID)
+		_ = hp.Kill()
+	}
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case <-hp.Exited:
+	case <-time.After(5 * time.Second):
+		// SIGKILL should reap in milliseconds; a 5s miss means something is wedged.
+		// Log and proceed rather than hang the caller forever.
+		log.Printf("[%s] KillAndWait: process did not exit within 5s", sessionID)
+	}
 }
 
 func (m *Manager) SendMessage(sessionID string, content interface{}) error {

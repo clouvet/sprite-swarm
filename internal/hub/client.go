@@ -22,6 +22,13 @@ type Client struct {
 	send      chan []byte
 	sessionID string
 	clientID  string
+	// resume marks a reconnect to a session this browser already has rendered (it
+	// set ?resume=1). It lets the server skip the destructive full-history replay
+	// mid-turn: on flaky wifi a client reconnects every few seconds, and re-sending
+	// history each time wipes the live transcript and restarts the in-flight blocks
+	// blank — the "scrambled on refresh" mess. A fresh load / session switch sends
+	// resume=0 and still gets the full history.
+	resume bool
 }
 
 // Attachment references one uploaded file. The client uploads the bytes to

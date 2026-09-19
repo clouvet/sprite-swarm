@@ -90,6 +90,52 @@ func TestGracePeriodKeepsGeneratingProcessAlive(t *testing.T) {
 	}
 }
 
+// KillAndWait must not return until the killed process has actually exited, so a
+// caller can safely spawn a replacement without two claude --resume processes
+// racing on one transcript (the "two processes, scrambled ordering" bug). It also
+// removes the process from the map immediately and tolerates a process that never
+// signals exit (bounded wait).
+func TestKillAndWaitBlocksUntilExit(t *testing.T) {
+	m := NewManager()
+	hp := fakeProcess("s")
+	hp.Exited = make(chan struct{})
+	m.mu.Lock()
+	m.processes["s"] = hp
+	m.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { m.KillAndWait("s"); close(done) }()
+
+	// The map slot is freed right away, but the call stays blocked until exit.
+	select {
+	case <-done:
+		t.Fatal("KillAndWait returned before the process signalled exit")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if m.has("s") {
+		t.Fatal("KillAndWait should remove the process from the map immediately")
+	}
+
+	close(hp.Exited) // the Spawn goroutine would close this after Wait returns
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("KillAndWait did not return after the process exited")
+	}
+}
+
+// KillAndWait on an unknown session is a harmless no-op (no process to reap).
+func TestKillAndWaitNoProcess(t *testing.T) {
+	m := NewManager()
+	done := make(chan struct{})
+	go func() { m.KillAndWait("nope"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("KillAndWait should return immediately when there's no process")
+	}
+}
+
 // onExit (the pending-replay hook) must fire only when the process that died was
 // still the live one — a genuine compaction/crash. A killed or already-replaced
 // process must NOT fire it, else a model-change respawn double-delivers the turn.

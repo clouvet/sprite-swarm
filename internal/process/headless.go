@@ -54,6 +54,14 @@ type HeadlessProcess struct {
 	OutputChan chan *claude.StreamMessage
 	ErrorChan  chan error
 
+	// Exited is closed once this process's Wait has returned (see Manager.Spawn),
+	// so a caller that killed it can block until it is TRULY gone before spawning a
+	// replacement. Without this, Kill removes the process from the map synchronously
+	// while the OS process (and its stdout reader, and its `claude --resume` grip on
+	// the transcript) lingers — a respawn then runs two claude processes against the
+	// same session's .jsonl at once, interleaving both the live stream and the file.
+	Exited chan struct{}
+
 	transcript   string        // on-disk transcript path (for resume-failure cleanup)
 	resumeFailed bool          // set (under mu) if claude reported the session isn't resumable
 	stderrDone   chan struct{} // closed when readStderr drains (so resumeFailed is settled)
@@ -230,6 +238,7 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 		StartedAt:  time.Now(),
 		OutputChan: make(chan *claude.StreamMessage, 256),
 		ErrorChan:  make(chan error, 10),
+		Exited:     make(chan struct{}),
 		transcript: opts.ProjectsDir + "/" + opts.SessionID + ".jsonl",
 		stderrDone: make(chan struct{}),
 		ctx:        ctx,
