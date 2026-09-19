@@ -75,6 +75,10 @@
   let intentionalDisconnect = false;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
+  // WS resilience (for flaky/airplane wifi): a queue of turns to flush once connected,
+  // an app-level heartbeat, and a watchdog that forces a reconnect on a half-open socket.
+  let wsOutbox = [];
+  let hbTimer = null, watchdogTimer = null, lastWsActivity = 0;
   let sessions = [];
   let currentAssistantEl = null;
   let assistantText = '';
@@ -520,30 +524,93 @@
     ws.onopen = () => {
       statusEl.className = 'connected'; // 👾 indicator (no text)
       reconnectAttempts = 0;
+      lastWsActivity = Date.now();
+      startHeartbeat();
+      flushOutbox();          // deliver anything typed while disconnected
     };
     ws.onclose = () => {
       statusEl.className = 'error';
+      stopHeartbeat();
       scheduleReconnect();
     };
     ws.onerror = () => { statusEl.className = 'error'; };
     ws.onmessage = (ev) => {
-      try { handleMessage(JSON.parse(ev.data)); } catch (e) { console.error('bad msg', e); }
+      lastWsActivity = Date.now();  // any traffic proves the socket is alive
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { console.error('bad msg', e); return; }
+      if (msg.type === 'pong') return; // heartbeat ack, nothing to render
+      handleMessage(msg);
     };
   }
   function disconnectWs() {
     intentionalDisconnect = true; currentWsSessionId = null;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    stopHeartbeat();
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
   }
   function scheduleReconnect() {
     if (intentionalDisconnect || !currentWsSessionId) return;
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+    // Cap the backoff low (6s): airplane wifi drops and recovers constantly, so retry
+    // often rather than waiting up to 30s. Small jitter avoids a reconnect stampede.
+    const delay = Math.min(500 * Math.pow(2, reconnectAttempts), 6000) + Math.random() * 400;
     reconnectAttempts++;
     const target = currentWsSessionId;
     statusEl.className = 'error';
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
       if (currentWsSessionId === target && !intentionalDisconnect) connectWs(target);
     }, delay);
+  }
+  // reconnectNow retries immediately (network came back / tab refocused) instead of
+  // waiting out the backoff — the single biggest win on flaky wifi.
+  function reconnectNow() {
+    if (intentionalDisconnect || !currentWsSessionId) return;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempts = 0;
+    connectWs(currentWsSessionId);
+  }
+  window.addEventListener('online', reconnectNow);
+  window.addEventListener('focus', reconnectNow);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectNow(); });
+
+  // ---- WS heartbeat + half-open watchdog ----
+  // The browser's onclose can lag for minutes on a dead connection, so we ping at the
+  // app level and force a reconnect if we hear nothing back in time.
+  function startHeartbeat() {
+    stopHeartbeat();
+    hbTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+      }
+    }, 12000);
+    watchdogTimer = setInterval(() => {
+      // No traffic (not even a pong) for 30s → treat the socket as dead and reconnect.
+      if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastWsActivity > 30000) {
+        try { ws.close(); } catch (e) {} // triggers onclose → scheduleReconnect
+      }
+    }, 5000);
+  }
+  function stopHeartbeat() {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+  }
+  // wsSend delivers a payload if the socket is open, else queues it to flush on reconnect
+  // so a send during a blip is never lost or dead-ended. Returns true if sent immediately.
+  function wsSend(payload) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify(payload)); return true; } catch (e) {}
+    }
+    wsOutbox.push(payload);
+    reconnectNow();
+    return false;
+  }
+  function flushOutbox() {
+    if (!wsOutbox.length || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const pending = wsOutbox; wsOutbox = [];
+    for (const p of pending) {
+      try { ws.send(JSON.stringify(p)); } catch (e) { wsOutbox.push(p); }
+    }
   }
 
   // ---- message protocol ----
@@ -1506,10 +1573,9 @@
       if (!currentSession) {
         if (!(await ensureSession())) { addSystem('Could not start a chat.'); return; }
       }
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        await waitForWsOpen(5000);
-        if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem('Not connected — try again.'); return; }
-      }
+      // Give a dropped socket a brief chance to reconnect, but don't dead-end on flaky
+      // wifi: wsSend below queues the turn and flushes it on reconnect if still down.
+      if (!ws || ws.readyState !== WebSocket.OPEN) { await waitForWsOpen(3000); }
 
       maybeAutoTitle(text);
       // Fresh turn: drop any stale elapsed timer left by a prior turn that never
@@ -1523,7 +1589,7 @@
       if (atts.length) {
         payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
       }
-      ws.send(JSON.stringify(payload));
+      if (!wsSend(payload)) addSystem('Offline — your message is queued and will send when you reconnect.');
       inputEl.value = ''; autoGrow();
       clearDraft();
       clearAttachments();

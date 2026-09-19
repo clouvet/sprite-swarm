@@ -370,12 +370,23 @@ func (h *Hub) dropClient(sessionID string, client *Client) {
 }
 
 func (h *Hub) handleClientMessage(client *Client, msg *ClientMessage) {
-	log.Printf("[%s] received %s from %s", client.sessionID, msg.Type, client.clientID)
+	if msg.Type != "ping" { // pings arrive every ~12s per client — don't flood the log
+		log.Printf("[%s] received %s from %s", client.sessionID, msg.Type, client.clientID)
+	}
 	switch msg.Type {
 	case "user":
 		h.handleUserMessage(client, msg)
 	case "interrupt":
 		h.handleInterrupt(client)
+	case "ping":
+		// App-level liveness: the client pings to detect a half-open socket (common on
+		// flaky wifi, where the browser's onclose can lag for minutes). Reply directly
+		// to this client, non-blocking.
+		pong, _ := json.Marshal(map[string]interface{}{"type": "pong"})
+		select {
+		case client.send <- pong:
+		default:
+		}
 	default:
 		log.Printf("[%s] unknown message type: %s", client.sessionID, msg.Type)
 	}
