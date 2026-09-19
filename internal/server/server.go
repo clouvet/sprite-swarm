@@ -3,6 +3,7 @@
 package server
 
 import (
+	"compress/flate"
 	"context"
 	"encoding/json"
 	"io/fs"
@@ -109,6 +110,10 @@ func New(cfg config.Config, h *hub.Hub, fleetSvc Fleet, spawner spawn.Spawner, s
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
+			// permessage-deflate: the chat stream is repetitive JSON that compresses
+			// ~5-10x — a large win on a bandwidth-constrained link (airplane wifi). The
+			// browser negotiates it automatically.
+			EnableCompression: true,
 			// Same-origin in practice (served behind the sprite's private URL);
 			// allow all so the PWA and reverse proxies connect cleanly.
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -185,6 +190,11 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ws upgrade error: %v", err)
 		return
 	}
+	// Compress writes (server→client is the heavy direction: streamed tokens + history).
+	// BestSpeed keeps the CPU cost on the sprite negligible while still shrinking the
+	// repetitive JSON a lot. No-op if the client didn't negotiate permessage-deflate.
+	conn.EnableWriteCompression(true)
+	conn.SetCompressionLevel(flate.BestSpeed)
 	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr)
 	s.hub.RegisterClient(client)
 	go client.WritePump()

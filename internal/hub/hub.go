@@ -762,15 +762,6 @@ func claudeErrorMessage(resultText, subtype string) string {
 	return msg
 }
 
-// eventType peeks the "type" field of a raw JSON object.
-func eventType(raw json.RawMessage) string {
-	var probe struct {
-		Type string `json:"type"`
-	}
-	_ = json.Unmarshal(raw, &probe)
-	return probe.Type
-}
-
 // handleClaudeOutput forwards Claude's stream to clients. stream_event envelopes
 // are unwrapped so the UI sees top-level content_block_* / message_* events; the
 // redundant full "assistant" message is dropped (deltas already render it).
@@ -782,19 +773,78 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 		defer h.detector.UnregisterOwnPID(hp.Cmd.Process.Pid)
 	}
 
+	// Coalesce streaming text/thinking deltas into ~60ms chunks. Claude emits one tiny
+	// stream event per token, and each is mostly JSON envelope — on a bandwidth- and
+	// loss-constrained link (airplane wifi) that's hundreds of frames a second. Buffering
+	// per content block and flushing on a timer ships a handful of larger frames instead,
+	// which also compress far better. The client renders the combined delta identically.
+	var textBuf, thinkBuf strings.Builder
+	blockIdx := 0
+	flush := func() {
+		if textBuf.Len() > 0 {
+			data, _ := json.Marshal(map[string]interface{}{
+				"type": "content_block_delta", "index": blockIdx,
+				"delta": map[string]interface{}{"type": "text_delta", "text": textBuf.String()},
+			})
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: data})
+			textBuf.Reset()
+		}
+		if thinkBuf.Len() > 0 {
+			data, _ := json.Marshal(map[string]interface{}{
+				"type": "content_block_delta", "index": blockIdx,
+				"delta": map[string]interface{}{"type": "thinking_delta", "thinking": thinkBuf.String()},
+			})
+			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: data})
+			thinkBuf.Reset()
+		}
+	}
+	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
+	defer flush()
+
 	for {
 		select {
+		case <-ticker.C:
+			flush()
+
 		case msg, ok := <-hp.OutputChan:
 			if !ok {
+				flush()
 				log.Printf("[%s] output channel closed", sessionID)
 				return
 			}
 
-			// Stream events: forward the inner event, track streaming state.
+			// Stream events: coalesce the text/thinking firehose, forward the rest.
 			if msg.IsStreamEvent() {
 				inner := msg.Event
-				switch eventType(inner) {
+				var ev struct {
+					Type  string `json:"type"`
+					Index int    `json:"index"`
+					Delta struct {
+						Type     string `json:"type"`
+						Text     string `json:"text"`
+						Thinking string `json:"thinking"`
+					} `json:"delta"`
+				}
+				_ = json.Unmarshal(inner, &ev)
+				if ev.Type == "content_block_delta" && (ev.Delta.Type == "text_delta" || ev.Delta.Type == "thinking_delta") {
+					if ev.Index != blockIdx {
+						flush()
+						blockIdx = ev.Index
+					}
+					if ev.Delta.Type == "text_delta" {
+						textBuf.WriteString(ev.Delta.Text)
+					} else {
+						thinkBuf.WriteString(ev.Delta.Thinking)
+					}
+					continue // buffered; the ticker or the next non-delta event flushes it
+				}
+				// Any other stream event (block start/stop, message_*, tool input json):
+				// flush buffered deltas first so order is preserved, then forward it.
+				flush()
+				switch ev.Type {
 				case "content_block_start":
+					blockIdx = ev.Index
 					if sess != nil {
 						sess.AddContentBlock(inner)
 						sess.SetGenerating(true)
@@ -809,6 +859,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 				continue
 			}
 
+			flush() // non-stream message (result/system/…): drain buffered deltas first
 			switch msg.Type {
 			case "assistant":
 				// Redundant with streamed deltas — drop to avoid double render.
@@ -845,13 +896,16 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 
 		case err, ok := <-hp.ErrorChan:
 			if !ok {
+				flush()
 				return
 			}
+			flush()
 			log.Printf("[%s] process error: %v", sessionID, err)
 			errMsg, _ := json.Marshal(map[string]interface{}{"type": "error", "message": err.Error()})
 			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errMsg})
 
 		case <-hp.Done():
+			flush()
 			log.Printf("[%s] process context cancelled", sessionID)
 			return
 		}
