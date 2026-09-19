@@ -122,14 +122,16 @@ func NewHub(cfg Config) *Hub {
 	return h
 }
 
-// NewClient builds a client for a WS connection.
-func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string) *Client {
+// NewClient builds a client for a WS connection. resume is true when the browser
+// is reconnecting to a session it already has rendered (see Client.resume).
+func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string, resume bool) *Client {
 	return &Client{
 		hub:       h,
 		conn:      conn,
 		send:      make(chan []byte, 256),
 		sessionID: sessionID,
 		clientID:  clientID,
+		resume:    resume,
 	}
 }
 
@@ -220,7 +222,14 @@ func (h *Hub) registerClient(client *Client) {
 		isGenerating = hp.IsGenerating
 	}
 
-	if sess.ClaudeUUID != "" {
+	// A reconnect mid-turn keeps whatever the browser already has on screen: we do
+	// NOT replay history (which would wipe the DOM and restart the in-flight blocks
+	// blank) nor the block-start catch-up (which would duplicate them). The live
+	// delta stream simply continues into the existing elements; the "processing"
+	// flag below re-arms the thinking indicator. A fresh load, a session switch, or
+	// a reconnect after the turn finished (resume but not generating) still gets the
+	// full, authoritative history from the transcript.
+	if sess.ClaudeUUID != "" && !(client.resume && isGenerating) {
 		go h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating)
 	}
 
@@ -409,7 +418,9 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 		sess.SetModel(msg.Model)
 		if hp, err := h.processMgr.Get(client.sessionID); err == nil && hp.Model != msg.Model {
 			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)
-			_ = h.processMgr.Kill(client.sessionID)
+			// Wait for the old process to fully die before the pump below respawns —
+			// otherwise two claude --resume processes briefly share this transcript.
+			h.processMgr.KillAndWait(client.sessionID)
 			sess.SetState(session.StateIdle)
 			// We deliberately killed the in-flight turn. The process manager's onExit no
 			// longer clears the pending marker for a killed process (that would double-
@@ -526,8 +537,8 @@ func (h *Hub) SetMCPConfigPath(path string) {
 func (h *Hub) RestartActiveSessions() {
 	for _, sid := range h.processMgr.ActiveSessionIDs() {
 		log.Printf("[%s] env changed; restarting session", sid)
-		_ = h.processMgr.Kill(sid)
-		h.pending.clearInFlight(sid) // intentional kill: onExit won't clear it (see model-change)
+		h.processMgr.KillAndWait(sid) // fully dead before respawn — no two procs on one transcript
+		h.pending.clearInFlight(sid)  // intentional kill: onExit won't clear it (see model-change)
 		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 		h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: resultMsg})
 		if sess := h.GetSession(sid); sess != nil {
@@ -539,9 +550,9 @@ func (h *Hub) RestartActiveSessions() {
 
 func (h *Hub) handleInterrupt(client *Client) {
 	log.Printf("[%s] interrupt", client.sessionID)
-	if err := h.processMgr.Kill(client.sessionID); err != nil {
-		log.Printf("[%s] interrupt error: %v", client.sessionID, err)
-	}
+	// Fully reap the old process before respawning, so the fresh --resume process
+	// isn't racing a still-dying one on the same transcript.
+	h.processMgr.KillAndWait(client.sessionID)
 	h.pending.clearInFlight(client.sessionID) // intentional kill: onExit won't clear it
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})

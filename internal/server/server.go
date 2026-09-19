@@ -195,7 +195,8 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	// repetitive JSON a lot. No-op if the client didn't negotiate permessage-deflate.
 	conn.EnableWriteCompression(true)
 	conn.SetCompressionLevel(flate.BestSpeed)
-	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr)
+	resume := r.URL.Query().Get("resume") == "1"
+	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr, resume)
 	s.hub.RegisterClient(client)
 	go client.WritePump()
 	go client.ReadPump()
