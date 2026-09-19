@@ -81,7 +81,7 @@
   let currentToolName = null;
   let currentToolInput = '';
   let pendingAttachments = [];
-  let currentModel = 'opus'; // chosen model for the active conversation; Opus when unspecified
+  let currentModel = 'claude-fable-5'; // chosen model for the active conversation; Fable by default
   let generating = false;    // a turn is in progress (send disabled, timer running)
   let genStart = 0;          // turn start (ms) for the working-indicator elapsed timer
   let genTimer = null;       // interval id for the elapsed timer
@@ -876,7 +876,7 @@
       const valid = Array.from(modelSelect.options).some(o => o.value === model);
       model = valid ? model : boot;
     }
-    currentModel = model || 'opus';
+    currentModel = model || 'claude-fable-5';
     if (modelSelect) modelSelect.value = currentModel;
     syncModelLabel();
   }
