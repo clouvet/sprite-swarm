@@ -440,23 +440,16 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	// it up within the running turn instead of at the boundary (mid-turn steering). The
 	// queue holds it only until the transcript confirms it. pumpPending must not run
 	// under h.mu, so no lock is held.
-	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: msg.Content})
+	// Text is what lands in the transcript as this turn — used to dedup a replay
+	// against it after a death. It must be the text of the CONTENT we actually send
+	// (message text plus any file-reference notes), NOT the raw typed text: when they
+	// differ (attachments), a raw-text dedup never matches and the turn re-delivers on
+	// every compaction — the "same message three times" bug.
+	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: contentText(content)})
 	h.pumpPending(client.sessionID)
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: processingMsg})
-}
-
-// maxInlineFile caps how much of a text attachment we inline into the turn.
-const maxInlineFile = 256 * 1024
-
-// inlineableText reports whether an attachment's media type is textual enough to inline
-// into the turn (small ones). Covers text/* plus JSON/JSONL, which are text but carry an
-// application/* type. Anything larger than maxInlineFile is path-referenced instead.
-func inlineableText(mediaType string) bool {
-	return strings.HasPrefix(mediaType, "text/") ||
-		mediaType == "application/json" ||
-		mediaType == "application/jsonl"
 }
 
 // buildContent returns what to feed Claude as the user turn, combining any number
@@ -483,30 +476,39 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 
 	for _, att := range atts {
 		path := filepath.Join(h.cfg.uploadsDir, sessionID, filepath.Base(att.File))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			log.Printf("[%s] attachment read failed (%v); skipping %s", sessionID, err, att.File)
-			continue
-		}
 		name := att.Name
 		if name == "" {
 			name = att.File
 		}
 
-		switch {
-		case strings.HasPrefix(att.Type, "image/"):
+		if strings.HasPrefix(att.Type, "image/") {
+			// Images must ride inline as base64 blocks — that's the only way Claude
+			// can see them.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				log.Printf("[%s] attachment read failed (%v); skipping %s", sessionID, err, att.File)
+				continue
+			}
 			imageBlocks = append(imageBlocks, map[string]interface{}{
 				"type": "image",
 				"source": map[string]interface{}{
 					"type": "base64", "media_type": att.Type, "data": base64.StdEncoding.EncodeToString(data),
 				},
 			})
-		case inlineableText(att.Type) && len(data) <= maxInlineFile:
-			textParts = append(textParts, "--- Attached file: "+name+" ---\n"+string(data))
-		default:
-			textParts = append(textParts, "[Attached file \""+name+"\" saved at "+path+
-				" — read or convert it with your tools to use its contents.]")
+			continue
 		}
+
+		// Every other upload — text included — STAYS A FILE: we point Claude at the
+		// saved path to read with its tools. We deliberately do NOT inline text file
+		// contents into the turn; inlining dumped the whole file into the message as
+		// if the human had pasted it, bloated the transcript, and (because the stored
+		// turn no longer matched the raw text) broke replay dedup into duplicate sends.
+		if _, err := os.Stat(path); err != nil {
+			log.Printf("[%s] attachment missing (%v); skipping %s", sessionID, err, att.File)
+			continue
+		}
+		textParts = append(textParts, "[Attached file \""+name+"\" saved at "+path+
+			" — read it with your tools to use its contents.]")
 	}
 
 	text := strings.Join(textParts, "\n\n")
@@ -525,6 +527,29 @@ func (h *Hub) buildContent(sessionID string, msg *ClientMessage) interface{} {
 		blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
 	}
 	return blocks
+}
+
+// contentText returns the plaintext of a buildContent result — the string itself, or
+// the concatenation of the text blocks in a content-block array (images contribute
+// nothing). This is what the turn shows up as in the transcript, so it's what a
+// pending message dedups against on a post-death replay.
+func contentText(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []map[string]interface{}:
+		var parts []string
+		for _, b := range v {
+			if b["type"] == "text" {
+				if s, ok := b["text"].(string); ok {
+					parts = append(parts, s)
+				}
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	default:
+		return ""
+	}
 }
 
 // SetMCPConfigPath updates the --mcp-config path handed to newly-spawned Claude

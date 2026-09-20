@@ -413,6 +413,11 @@ html[data-theme="light"] .message-content pre code { background: none; }
 #stop-btn { display: none; }
 #input-area.generating #send { display: none; }
 #input-area.generating #stop-btn { display: flex; margin-left: auto; }
+/* Mid-turn steering: while a turn runs, if there's text to send, show Send again
+   (alongside Stop) so you can add instructions to the running turn instead of only
+   being able to interrupt. Stop keeps its right-edge position; Send sits before it. */
+#input-area.generating.has-text #send { display: flex; margin-left: auto; }
+#input-area.generating.has-text #stop-btn { margin-left: 0; }
 #mic-btn.unsupported { display: none; }
 #mic-btn.recording { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.2); animation: pulse-recording 1.5s ease-in-out infinite; }
 /* model picker: plain clickable text (current model + chevron), no button chrome.
