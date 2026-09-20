@@ -196,7 +196,7 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	conn.EnableWriteCompression(true)
 	conn.SetCompressionLevel(flate.BestSpeed)
 	resume := r.URL.Query().Get("resume") == "1"
-	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr, resume)
+	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr, resume, r.URL.Query().Get("hsig"))
 	s.hub.RegisterClient(client)
 	go client.WritePump()
 	go client.ReadPump()
@@ -686,6 +686,7 @@ func (s *Server) performSelfUpdate(w http.ResponseWriter, ctx context.Context) {
 	if willUpdate {
 		go func() {
 			time.Sleep(300 * time.Millisecond) // let the response flush
+			s.hub.PrepareForReexec()           // reap claude children so they don't zombie / double-write across the exec
 			log.Printf("self-update: %s — re-execing", detail)
 			if err := s.fleet.Reexec(); err != nil {
 				log.Printf("self-update: re-exec failed (%v); exiting for service restart", err)
@@ -703,6 +704,7 @@ func (s *Server) reexecOntoStaged() {
 		return
 	}
 	time.Sleep(300 * time.Millisecond)
+	s.hub.PrepareForReexec() // reap claude children so they don't zombie / double-write across the exec
 	log.Printf("self-upgrade: %s — re-execing", detail)
 	if err := s.fleet.Reexec(); err != nil {
 		log.Printf("self-upgrade: re-exec failed (%v); exiting for service restart", err)

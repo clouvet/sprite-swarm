@@ -192,12 +192,16 @@
     <!-- Confirm summarize & continue (the header "compact" action). -->
     <div id="continue-modal" class="modal-backdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="continue-modal-title">
-        <h3 id="continue-modal-title">Summarize &amp; continue in a new chat</h3>
-        <p>This asks the current chat for a concise handoff summary, then opens a fresh
-           chat seeded with it and switches you there. This chat is preserved — you just
-           stop growing it. Useful when a long thread starts hitting context limits.</p>
+        <h3 id="continue-modal-title">Continue in a new chat</h3>
+        <p><strong>Summarize &amp; continue</strong> asks this chat for a concise handoff
+           summary, then opens a fresh chat seeded with it. Best when the chat still works
+           but is getting long.</p>
+        <p><strong>Eject now</strong> opens a fresh chat immediately, carrying over the last
+           reply as a short handoff — no summary turn. Use it when a chat is stuck, huge, or
+           misbehaving and you just want out. Either way this chat is preserved.</p>
         <div class="modal-actions">
           <button id="continue-modal-cancel" class="modal-btn">Cancel</button>
+          <button id="continue-modal-eject" class="modal-btn">Eject now</button>
           <button id="continue-modal-confirm" class="modal-btn primary">Summarize &amp; continue</button>
         </div>
       </div>

@@ -10,9 +10,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -131,16 +134,18 @@ func NewHub(cfg Config) *Hub {
 	return h
 }
 
-// NewClient builds a client for a WS connection. resume is true when the browser
-// is reconnecting to a session it already has rendered (see Client.resume).
-func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string, resume bool) *Client {
+// NewClient builds a client for a WS connection. resume is true when the browser is
+// reconnecting to a session it already has rendered; historySig is its rendered-history
+// ETag (see Client.resume / Client.historySig).
+func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string, resume bool, historySig string) *Client {
 	return &Client{
-		hub:       h,
-		conn:      conn,
-		send:      make(chan []byte, 256),
-		sessionID: sessionID,
-		clientID:  clientID,
-		resume:    resume,
+		hub:        h,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		sessionID:  sessionID,
+		clientID:   clientID,
+		resume:     resume,
+		historySig: historySig,
 	}
 }
 
@@ -254,7 +259,7 @@ func (h *Hub) registerClient(client *Client) {
 	// a reconnect after the turn finished (resume but not generating) still gets the
 	// full, authoritative history from the transcript.
 	if sess.ClaudeUUID != "" && !(client.resume && isGenerating) {
-		go h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating)
+		go h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating, client.historySig)
 	}
 
 	// Don't eager-spawn a process on connect. The picker sends the chosen model with
@@ -575,6 +580,21 @@ func (h *Hub) RestartActiveSessions() {
 			go h.spawnClaudeForSession(sid, sess)
 		}
 		h.pumpPending(sid) // deliver anything queued onto the fresh process
+	}
+}
+
+// PrepareForReexec kills and reaps every live claude process before a self-update
+// re-exec. The re-exec replaces this process image but keeps its PID and its child
+// processes, so a claude left running would (a) become a zombie when it exits — the
+// goroutine that would Wait() it is gone with the old image — and (b) keep its
+// --resume grip on the transcript while the new image spawns a replacement: two
+// processes on one file, the very corruption KillAndWait prevents within one image.
+// Reaping here closes both. In-flight turns are durable — the pending queue on disk
+// replays them onto a fresh process once the new image boots.
+func (h *Hub) PrepareForReexec() {
+	for _, sid := range h.processMgr.ActiveSessionIDs() {
+		log.Printf("[%s] reaping before self-update re-exec", sid)
+		h.processMgr.KillAndWait(sid)
 	}
 }
 
@@ -1068,8 +1088,12 @@ func (h *Hub) handleWatcherEvents(sessionID string, w *watcher.SessionWatcher) {
 	}
 }
 
-// sendHistoryToClient replays the transcript to a newly connected client.
-func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGenerating bool) {
+// sendHistoryToClient replays the transcript to a newly connected client. clientSig
+// is the signature the client last rendered (its ?hsig=); when it still matches the
+// transcript's current rendered content we send a tiny "history_nochange" instead of
+// the whole payload, so a reconnect on flaky wifi doesn't re-ship hundreds of KB and
+// wipe+rebuild a long conversation's DOM every few seconds (ETag-style).
+func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGenerating bool, clientSig string) {
 	filePath := watcher.TranscriptPath(h.sessionProjectsDir(client.sessionID), claudeUUID)
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -1079,6 +1103,7 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 
 	messages := []map[string]interface{}{}
 	contextTokens := 0 // last assistant turn's prompt size, for the context meter
+	sig := fnv.New64a()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -1105,14 +1130,30 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 			"images":    parsed.Images,
 			"timestamp": parsed.Timestamp.Unix() * 1000,
 		})
+		// Fold the rendered content into the signature — only what actually shows,
+		// so the many sidecar records claude writes (titles, modes, …) don't
+		// needlessly invalidate it.
+		_, _ = io.WriteString(sig, parsed.Role)
+		_, _ = io.WriteString(sig, "\x00")
+		_, _ = io.WriteString(sig, parsed.Content)
+		_, _ = io.WriteString(sig, "\x01")
 	}
+	curSig := strconv.FormatUint(sig.Sum64(), 36)
 
-	if len(messages) > 0 || isGenerating {
+	// The client already has exactly this history rendered — skip the heavy re-send.
+	if clientSig != "" && clientSig == curSig {
+		h.sendJSON(client, map[string]interface{}{
+			"type":         "history_nochange",
+			"isGenerating": isGenerating,
+			"sig":          curSig,
+		})
+	} else if len(messages) > 0 || isGenerating {
 		h.sendJSON(client, map[string]interface{}{
 			"type":          "history",
 			"messages":      messages,
 			"isGenerating":  isGenerating,
 			"contextTokens": contextTokens,
+			"sig":           curSig,
 		})
 	}
 
