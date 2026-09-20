@@ -28,20 +28,22 @@ go build -o sprite-agent ./cmd/sprite-agent
 | `SPRITE_AGENT_ADDR` | `:8080` | HTTP listen address (the service's `--http-port`). |
 | `SPRITE_AGENT_ID` | hostname | This agent's id in the fleet. |
 | `SPRITE_AGENT_WORKDIR` | `/home/sprite` | cwd for the Claude process; its transcript dir is derived from this. |
-| `SPRITE_AGENT_PERMISSION_MODE` | `acceptEdits` | `--permission-mode` for Claude (scoped, not skip-all). |
+| `SPRITE_AGENT_DANGEROUS_SKIP` | `1` | Run Claude with `--dangerously-skip-permissions` (fleet default: every sprite is an isolated microVM doing autonomous work). `0` opts into the scoped `--permission-mode` below. |
+| `SPRITE_AGENT_PERMISSION_MODE` | `acceptEdits` | `--permission-mode` for Claude when dangerous-skip is off (scoped, not skip-all). |
+| `SPRITE_AGENT_CLAUDE_AUTH` | _(unset)_ | `connector` forces the Anthropic connector (metered API) even when a subscription token exists in the brain. |
+| `SPRITE_AGENT_ROUTINES` | `1` | Enable the per-sprite Scheduled Tasks (Routines) scheduler. `0` disables it. |
 | `SPRITE_AGENT_SETTINGS` | _(unset)_ | path passed to `--settings`. |
-| `SPRITE_AGENT_MCP_CONFIG` | _(unset)_ | path passed to `--mcp-config`. |
-| `SPRITE_AGENT_ROLE` | `worker` | `home` or `worker`, advertised in the roster. |
+| `SPRITE_AGENT_MCP_CONFIG` | _(unset)_ | path passed to `--mcp-config` (an operator-supplied config wins over the composed built-in `mcp.json`). |
+| `SPRITE_AGENT_URL` | _(unset)_ | this agent's externally reachable URL, advertised in the roster so a human can attach (set by the spawner; env on home). |
 | `SPRITE_AGENT_ARTIFACT` | `github.com/clouvet/sprite-swarm@main` | bootstrap pointer handed to spawned sprites. |
 | `S3_BUCKET` `S3_REGION` `S3_ENDPOINT` `S3_ACCESS_KEY` `S3_SECRET_KEY` | _(unset)_ | fleet brain (Tigris/S3). Brain disabled if `S3_BUCKET` is empty. |
+| `SPRITE_AGENT_BRAIN_GATEWAY` | _(auto)_ | `s3_object_store` connector gateway URL for a **token-free** brain (by sprite identity, no S3 keys). Auto-discovered on a sprite; set to override; takes precedence over `S3_*`. |
 | `SPRITE_API_TOKEN` | _(unset)_ | sprites API token (`org-slug/org-id/token-id/token-value`) for live spawn. If unset, spawn falls back to a `custom_api` connector; stubbed only if neither is available. |
 | `SPRITE_API_BASE` | `https://api.sprites.dev` | sprites API base URL (token mode). |
 | `SPRITE_API_GATEWAY` | _(unset)_ | gateway base URL of a `custom_api` connector fronting the Sprites API (token-free spawn). Auto-discovered when no token; set to override. |
 | `SPRITE_API_CONNECTOR_ID` | _(unset)_ | pin which `custom_api` connector to use for the Sprites API (since `custom_api` is generic); empty = first discovered. |
 | `SPRITE_AGENT_SPAWN_PROVISION` | `1` | `0` = bare create (don't provision the agent onto the new sprite). Provisioning needs a brain. |
-| `SPRITE_AGENT_REAP_INTERVAL_SECONDS` | `60` | How often the reaper scans for explicitly-done workers + dead-sprite cleanup (token-bearing agents only). |
-| `SPRITE_AGENT_DEAD_REAP_MINUTES` | `5` | Clean the brain entry of a worker whose heartbeat has been stale beyond this AND whose sprite is gone (crashed-sprite cleanup; suspended workers are kept). |
-| `SPRITE_AGENT_BOOT_UPDATE` | `1` (workers) | On boot a **worker** adopts the fleet's staged binary if it differs (swap + re-exec), so a suspended/idle worker converges on its next wake without a push. Home is always excluded (it originates builds). Set `0` to disable. |
+| `SPRITE_AGENT_BOOT_UPDATE` | `1` (workers) | On boot a **worker** adopts the fleet's staged binary if it differs (swap + re-exec), so a suspended/idle worker converges on its next wake without a push. Home is always excluded (it originates builds). Set `0` to pin a worker (e.g. an experimental/ref build). |
 
 ## Smoke test (M2 acceptance)
 ```sh
@@ -98,7 +100,7 @@ covers sprite-agent's own `/api/fleet/*` ops only — the `sprite` CLI / direct
 ## Spawning a worker that boots + registers (M4 + provisioning)
 With `SPRITE_API_TOKEN` and `S3_*` set:
 ```sh
-curl -X POST localhost:8080/api/fleet/spawn -d '{"name_prefix":"wk-","role":"worker"}'
+curl -X POST localhost:8080/api/fleet/spawn -d '{"label":"posthog integration"}'   # → wk-posthog-integration
 ```
 The agent: creates a sprite, stages its own binary in the brain bucket + presigns a
 download URL, warms the new (cold) sprite, then installs a service that fetches and
@@ -175,25 +177,17 @@ are torn down with `sprite destroy`, not `/api/fleet/destroy`.)
 Workers are **durable workspaces, not one-shots.** A worker that finishes a feature
 goes idle and *suspends* (cheap; the keep-awake task releases) — its VM disk (repo +
 branch) and session transcript **survive**, so you re-attach later to iterate on its
-PR with full context. A **stale heartbeat no longer destroys** a worker (a suspended
-worker is indistinguishable from a crashed one over the heartbeat).
+PR with full context. A **stale heartbeat never destroys** a worker (a suspended worker
+is indistinguishable from a crashed one over the heartbeat).
 
-Token-bearing agents run a **reaper** that:
-- **destroys** only workers that explicitly self-declared done (`POST /api/fleet/done`),
-  removing their brain entry (`fleet.ReapTargets`);
-- **cleans the brain entry** of a stale worker only if its sprite is **actually gone**
-  (verified via `spawn.Exists`) — orphan cleanup, never destroying a live/suspended one
-  (`fleet.StaleWorkers`).
-
-**Home is never reaped.** Teardown on demand is presence-aware:
+Teardown is **explicit only** — there is no background reaper and no idle-based
+auto-destroy; an idle worker sits there until you reap it. Reap on demand with
 `POST /api/fleet/destroy {"target":"<id>"[, "force":true]}` (the fleet UI's per-worker
-**Reap** button) destroys the VM + cleans the brain entry, refusing with **409** if a
-human is attached unless `force`. Reaping never deletes the PR/branch (those live on
-GitHub) nor the durable shared memory (a separate brain prefix).
-
-There is **no idle-based auto-reaping** — a worker is torn down only on explicit request
-(the **Reap** button / `POST /api/fleet/destroy`) or when it declares its own work done
-(`POST /api/fleet/done`). An idle worker sits there until you reap it.
+**Reap** button): it destroys the VM + cleans the brain entry, and is **presence-aware**,
+refusing with **409** if a human is attached unless `force`. **Home is never reaped.**
+Reaping never deletes the PR/branch (those live on GitHub) nor the durable shared memory
+(a separate brain prefix). Bare app sprites (from `deploy-app`) are torn down with
+`POST /api/fleet/destroy-app {"name":"…"}` instead — they're not agents in the roster.
 
 ## Upgrading running workers (in-place self-update)
 A worker runs the binary it booted with — spawn hands it home's binary at spawn time,
@@ -233,7 +227,27 @@ scripts/launch-fleet.sh --name my-fleet \
 
 It cross-compiles the linux artifact, then `sprite-agent init` primes the brain (stages
 the binary + writes the `sprites-api-token`/`github`/`fly` secrets via **direct S3
-keys**) and ignites the home sprite (`role=home`), printing its URL. The home boots,
+keys**) and ignites the home sprite, printing its URL. The home boots,
 **self-discovers the s3 + Anthropic connectors**, rehydrates the secrets, and is a live
 fleet; subsequent workers reconstitute from the brain. The brain bucket then **stores
-those tokens** — guard its keys + connector (that's the fleet's trust boundary).
+those tokens** — guard its keys + connector (that's the fleet's trust boundary). ("Home"
+is a hat, not a role — a pinned URL; every sprite runs the same binary and is equally
+capable.)
+
+## Runtime configuration endpoints
+Beyond the fleet ops above, a sprite exposes runtime knobs (all on `localhost:8080`;
+peers reach them over the `.sprites.app` URL with the Bearer):
+- **MCP registry** — `POST /api/mcp` adds a server (a standard MCP entry), `GET /api/mcp`
+  lists user-added ones, `DELETE /api/mcp/<name>` removes one. Stored fleet-wide in the
+  brain; regenerates `mcp.json` + restarts this sprite's sessions so a new chat picks it up.
+- **Scheduled tasks (Routines)** — `POST /api/tasks {name,prompt,interval_min}`, `GET
+  /api/tasks`, `PATCH /api/tasks/<id> {enabled}`, `POST /api/tasks/<id>/run`, `DELETE
+  /api/tasks/<id>`. Per-sprite; runs only while awake.
+- **URL visibility** — `POST /api/fleet/sprite-access {target,visibility,scope}`: `public`
+  (no login) or `private` (org login, scoped `admins`/`org_users`).
+- **Search** — `GET /api/sessions/search?q=` (this sprite's chats) and `GET
+  /api/fleet/search?q=` (across the fleet, local-first).
+- **Timezone** — `POST /api/timezone {"tz":"America/New_York"}` sets the zone used in each
+  turn's `## Now` context line (default Asia/Ho_Chi_Minh).
+- **Reload secrets** — `POST /api/fleet/reload-secrets` re-applies git/gh + flyctl creds
+  in place (no restart); `{target:"all"}` fans out.
