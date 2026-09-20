@@ -957,6 +957,9 @@
     generating = !!on;
     inputArea.classList.toggle('generating', generating);
     stopBtn.disabled = !generating;
+    // While a turn runs, Send means "add this to the running turn" (mid-turn steering);
+    // idle, it's a normal send. The title reflects that so Send-next-to-Stop isn't confusing.
+    sendBtn.title = generating ? 'Send into the running turn' : 'Send';
     if (generating) {
       if (!genTimer) { genStart = Date.now(); genTimer = setInterval(tickElapsed, 1000); }
     } else {
@@ -1461,6 +1464,7 @@
   function renderAttachments() {
     imagePreview.innerHTML = '';
     imagePreview.classList.toggle('has-image', pendingAttachments.length > 0);
+    reflectComposerText(); // attachments count toward "has text to send" (mid-turn Send)
     for (const a of pendingAttachments) {
       const chip = document.createElement('div');
       chip.className = 'attach-chip';
@@ -1573,6 +1577,13 @@
   function autoGrow() {
     inputEl.style.height = 'auto';
     inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
+    reflectComposerText();
+  }
+  // has-text drives whether Send shows while a turn is generating (mid-turn steering):
+  // text present → you can send it into the running turn; empty → only Stop shows.
+  function reflectComposerText() {
+    const hasText = inputEl.value.trim().length > 0 || pendingAttachments.length > 0;
+    inputArea.classList.toggle('has-text', hasText);
   }
 
   // ---- voice input (SpeechRecognition) ----

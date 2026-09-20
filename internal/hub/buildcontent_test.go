@@ -56,10 +56,15 @@ func TestBuildContent_MultipleMixed(t *testing.T) {
 	}
 
 	text, _ := blocks[1]["text"].(string)
-	for _, want := range []string{"look at these", "notes.txt", "hello from a file", "report.pdf", "saved at"} {
+	// Text/binary files are referenced by saved path, never inlined — so the filenames
+	// and "saved at" appear, but NOT the file bodies.
+	for _, want := range []string{"look at these", "notes.txt", "report.pdf", "saved at"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("trailing text block missing %q; got:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "hello from a file") {
+		t.Errorf("text file body was inlined; it must stay a file:\n%s", text)
 	}
 }
 
@@ -84,9 +89,14 @@ func TestBuildContent_TextOnlyReturnsString(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string (no images), got %T", out)
 	}
-	for _, want := range []string{"two docs", "file one", "file two", "a.txt", "b.txt"} {
+	for _, want := range []string{"two docs", "a.txt", "b.txt", "saved at"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("result missing %q; got:\n%s", want, s)
+		}
+	}
+	for _, unwanted := range []string{"file one", "file two"} {
+		if strings.Contains(s, unwanted) {
+			t.Errorf("text file body was inlined (%q); it must stay a file:\n%s", unwanted, s)
 		}
 	}
 }
@@ -111,8 +121,11 @@ func TestBuildContent_LegacySingleField(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string, got %T", out)
 	}
-	if !strings.Contains(s, "legacy body") || !strings.Contains(s, "hi") {
-		t.Errorf("legacy path lost content; got:\n%s", s)
+	if !strings.Contains(s, "legacy.txt") || !strings.Contains(s, "hi") {
+		t.Errorf("legacy path lost the message or file reference; got:\n%s", s)
+	}
+	if strings.Contains(s, "legacy body") {
+		t.Errorf("legacy text file body was inlined; it must stay a file:\n%s", s)
 	}
 }
 
@@ -136,7 +149,7 @@ func TestBuildContent_MissingFileSkipped(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string, got %T", h.buildContent(sess, msg))
 	}
-	if !strings.Contains(s, "present") || strings.Contains(s, "ghost") {
+	if !strings.Contains(s, "real.txt") || strings.Contains(s, "ghost") {
 		t.Errorf("missing file not skipped cleanly; got:\n%s", s)
 	}
 }
