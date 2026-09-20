@@ -210,7 +210,23 @@
   }
   async function deleteSession(id, ev) {
     ev.stopPropagation();
-    await fetch('/api/sessions/' + id, { method: 'DELETE' });
+    // Make the tap FELT immediately, before the network answers: a short haptic on
+    // touch, and an optimistic slide-out of the row (restored if the delete fails).
+    // Before, the row only vanished once the DELETE returned — barely perceptible,
+    // and on touch there was no hover/active cue that the tap even landed.
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
+    const sel = '.session-item[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+    const row = sessionsList.querySelector(sel);
+    if (row) row.classList.add('deleting'); // animate out now
+
+    try {
+      const res = await fetch('/api/sessions/' + id, { method: 'DELETE' });
+      if (!res.ok) throw new Error('http ' + res.status);
+    } catch (e) {
+      if (row) row.classList.remove('deleting'); // springs back into place
+      addSystem('Could not delete that chat — it’s still here. Try again.');
+      return;
+    }
     sessions = sessions.filter(s => s.id !== id);
     if (currentSession && currentSession.id === id) {
       newChat();

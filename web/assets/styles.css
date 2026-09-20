@@ -87,8 +87,21 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .session-name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-preview { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .session-time { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
-.session-delete { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; }
+.session-delete { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; border-radius: 6px; transition: color .12s ease, transform .08s ease, background .12s ease; }
 .session-delete:hover { color: #ff6b6b; }
+/* Press feedback — the only cue on touch, where there's no hover: the × flashes red
+   and dips as your finger lands, so the tap visibly registers. */
+.session-delete:active { color: #ff6b6b; background: rgba(255,107,107,0.15); transform: scale(0.82); }
+/* Optimistic slide-out: the row collapses and fades to the right the instant you
+   tap, independent of the network round-trip, so the delete is unmistakably felt. */
+.session-item.deleting { pointer-events: none; overflow: hidden; animation: sessionDelete .22s ease forwards; }
+@keyframes sessionDelete {
+  from { opacity: 1; transform: translateX(0); max-height: 90px; }
+  to   { opacity: 0; transform: translateX(28px); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-item.deleting { animation-duration: .01s; }
+}
 /* Pin: fully greyscale (no accent) — hidden until row hover, always shown when pinned. */
 .session-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .session-pin { background: none; border: none; padding: 0; display: inline-flex; align-items: center; line-height: 0; cursor: pointer; color: var(--text-muted); opacity: 0; transition: opacity .12s ease, color .12s ease; }
