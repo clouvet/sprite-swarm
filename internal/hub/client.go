@@ -29,6 +29,10 @@ type Client struct {
 	// blank — the "scrambled on refresh" mess. A fresh load / session switch sends
 	// resume=0 and still gets the full history.
 	resume bool
+	// historySig is the ?hsig= the client last rendered — an ETag for the transcript's
+	// rendered content. When it still matches, the server sends "history_nochange"
+	// instead of re-shipping and re-rendering the whole conversation on a reconnect.
+	historySig string
 }
 
 // Attachment references one uploaded file. The client uploads the bytes to

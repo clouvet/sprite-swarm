@@ -77,6 +77,9 @@
   // history replay mid-turn. Set once we've put anything on screen for a session
   // (history rendered, or the user's own first message echoed).
   let renderedHistorySession = null;
+  // ETag for the rendered history (server's `sig`). Echoed back on reconnect as
+  // ?hsig= so the server can answer "history_nochange" instead of re-sending it all.
+  let historySig = null;
   let intentionalDisconnect = false;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
@@ -165,25 +168,35 @@
 
   // ensureSession activates a session for the composer (creating one if needed)
   // WITHOUT clearing the input/image, so typed text + attachments survive.
+  //
+  // The creation is memoized: uploading several files at once fires many concurrent
+  // callers, and a plain check-then-create lets them all pass the `currentSession`
+  // guard before any resolves — spawning a chat per file (the "6 files → 6 chats"
+  // bug). Sharing one in-flight promise collapses them into a single new chat.
+  let ensureSessionPromise = null;
   async function ensureSession() {
     if (currentSession) return true;
-    try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'New chat' }),
-      });
-      const s = await res.json();
-      sessions.unshift(s);
-      currentSession = s;
-      chatTitle.textContent = s.name || 'Chat';
-      if (currentModel) persistModel(); // carry the picker's choice onto the new session
-      assistantTurns = 0;
-      renderSessions();
-      connectWs(s.id);
-      history.replaceState(null, '', '#session=' + s.id);
-      try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
-      return true;
-    } catch (e) { return false; }
+    if (ensureSessionPromise) return ensureSessionPromise;
+    ensureSessionPromise = (async () => {
+      try {
+        const res = await fetch('/api/sessions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'New chat' }),
+        });
+        const s = await res.json();
+        sessions.unshift(s);
+        currentSession = s;
+        chatTitle.textContent = s.name || 'Chat';
+        if (currentModel) persistModel(); // carry the picker's choice onto the new session
+        assistantTurns = 0;
+        renderSessions();
+        connectWs(s.id);
+        history.replaceState(null, '', '#session=' + s.id);
+        try { localStorage.setItem('lastSessionId', s.id); } catch (e) {}
+        return true;
+      } catch (e) { return false; }
+    })();
+    try { return await ensureSessionPromise; } finally { ensureSessionPromise = null; }
   }
   function waitForWsOpen(timeoutMs) {
     return new Promise(resolve => {
@@ -364,6 +377,7 @@
     chatTitle.textContent = s.name || 'Chat';
     messagesEl.innerHTML = '';
     renderedHistorySession = null; // deliberate wipe: this connect wants full history, not a resume
+    historySig = null;             // drop the previous chat's ETag
     currentAssistantEl = null;
     assistantText = '';
     setGenerating(false); // clear any stale turn state (stuck stop button / timer) when switching chats
@@ -529,8 +543,15 @@
     // reconnect (constant on flaky wifi) shouldn't wipe the transcript and restart the
     // in-flight blocks — the live stream just continues. A fresh load or a switch to a
     // session we haven't rendered omits it and gets the full history.
-    const resume = renderedHistorySession === sessionId ? '&resume=1' : '';
-    ws = new WebSocket(`${proto}//${location.host}/ws?session=${sessionId}${resume}`);
+    // hsig is an ETag for the history we've rendered: if it still matches, the server
+    // sends a tiny "history_nochange" instead of re-shipping the whole conversation —
+    // so reconnecting to a long chat on bad wifi is cheap, not a full re-render.
+    let q = `session=${sessionId}`;
+    if (renderedHistorySession === sessionId) {
+      q += '&resume=1';
+      if (historySig) q += '&hsig=' + encodeURIComponent(historySig);
+    }
+    ws = new WebSocket(`${proto}//${location.host}/ws?${q}`);
 
     ws.onopen = () => {
       statusEl.className = 'connected'; // 👾 indicator (no text)
@@ -647,6 +668,7 @@
           else if (m.role === 'assistant') addStoredAssistant(m.content);
         });
         renderedHistorySession = currentWsSessionId; // reconnects now resume, not re-wipe
+        historySig = msg.sig || null;                 // ETag for a cheap reconnect
 
         // Restore this chat's own context meter from its transcript, so a dormant
         // chat shows ITS real size — not whatever value was live when we switched.
@@ -657,6 +679,15 @@
         // dock the composer — never flip to the big centered "new chat" composer
         // just because the rendered list is momentarily empty (history still
         // loading, mid-generation, or every line filtered as harness noise).
+        setComposing(false);
+        break;
+      case 'history_nochange':
+        // Our rendered history still matches the transcript — keep the DOM as-is
+        // (the whole point: no wipe, no re-render on a flaky-wifi reconnect). Just
+        // refresh the ETag and re-arm the working indicator if a turn is live.
+        renderedHistorySession = currentWsSessionId;
+        if (msg.sig) historySig = msg.sig;
+        if (msg.isGenerating) showThinking();
         setComposing(false);
         break;
       case 'processing':
@@ -1388,15 +1419,26 @@
       send();                    // seed it; send() waits for the WS to open
     } catch (e) { addSystem('Could not start the continued chat: ' + e.message); }
   }
-  // The header "compact" action confirms via a modal before running.
+  // ejectNow opens a fresh chat immediately, carrying over the last reply as a light
+  // handoff — no summary turn. This is the escape hatch for a chat that's stuck, huge,
+  // or corrupted (where asking it to summarize would stall or inherit the mess). The
+  // old chat is preserved and, if mid-turn, keeps running in the background.
+  function ejectNow() {
+    if (!currentSession || pendingFork) return;
+    forkFromSummary(); // uses lastAssistantText() as the handoff; falls back to a generic seed
+  }
+  // The header action confirms via a modal before running.
   const continueModal = $('continue-modal');
   function openContinueModal() {
-    if (!currentSession || pendingFork || generating) return;
+    if (!currentSession || pendingFork) return; // eject must work even while generating
+    // Summarizing needs a free turn; ejecting doesn't. Gate only the summarize action.
+    $('continue-modal-confirm').disabled = generating;
     continueModal.hidden = false;
   }
   function closeContinueModal() { continueModal.hidden = true; }
   continueBtn.addEventListener('click', openContinueModal);
   $('continue-modal-confirm').addEventListener('click', () => { closeContinueModal(); summarizeAndContinue(); });
+  $('continue-modal-eject').addEventListener('click', () => { closeContinueModal(); ejectNow(); });
   $('continue-modal-cancel').addEventListener('click', closeContinueModal);
   continueModal.addEventListener('click', (e) => { if (e.target === continueModal) closeContinueModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !continueModal.hidden) closeContinueModal(); });
