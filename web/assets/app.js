@@ -93,7 +93,7 @@
   let currentToolName = null;
   let currentToolInput = '';
   let pendingAttachments = [];
-  let currentModel = 'claude-fable-5'; // chosen model for the active conversation; Fable by default
+  let currentModel = 'opus'; // chosen model for the active conversation; Opus by default (alias → latest Opus)
   let generating = false;    // a turn is in progress (send disabled, timer running)
   let genStart = 0;          // turn start (ms) for the working-indicator elapsed timer
   let genTimer = null;       // interval id for the elapsed timer
@@ -998,7 +998,7 @@
   // Reflect a session's stored model in the picker (called when opening a chat).
   // No model stored → Opus.
   function applySessionModel(model) {
-    currentModel = model || 'claude-fable-5';
+    currentModel = model || 'opus';
     if (modelSelect) modelSelect.value = currentModel;
     syncModelLabel();
   }
