@@ -1,5 +1,14 @@
 # UI Parity Analysis: sprite-mobile vs sprite-agent
 
+> **Historical (June 2026 snapshot) — superseded.** This was a one-time gap analysis
+> written when `sprite-agent`'s web UI was young. Those gaps have since been closed and
+> then some: `sprite-agent` now has multi-file attachments (images + documents), search,
+> a model picker, pinned chats, mid-turn steering, scheduled tasks, an MCP picker, and
+> more. It's kept for provenance, not as a current description — see the
+> [README](../README.md) for what the UI does today.
+
+---
+
 Comparing `sprite-mobile/public/` (index.html, app.js, styles.css) against `sprite-agent/web/assets/` (index.html, app.js, styles.css).
 
 ---

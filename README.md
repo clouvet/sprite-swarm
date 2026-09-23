@@ -22,12 +22,20 @@ are `sprite-swarm`._
   indicator** with elapsed time (thinking / running a tool / phase), syntax highlighting, evolving chat
   titles, copy buttons, voice input, a **per-conversation model picker** (Fable / Opus / Sonnet /
   Haiku, switchable mid-thread — the transcript resumes so context carries over), and **multi-file
-  attachments** (drag-and-drop or the attach button; images + `doc/docx/xls/xlsx/csv/txt/md`). A
+  attachments** (drag-and-drop or the attach button; images + `doc/docx/xls/xlsx/csv/txt/md/json/jsonl`
+  — an uploaded file stays a *file* the agent reads with its tools, not pasted inline). **Mid-turn
+  steering:** send a message *while* Claude is working and it lands within the running turn (Claude
+  reads it between steps) instead of waiting for the turn to finish — so adding a correction or context
+  feels like a conversation, not an interrupt. **Search** across a sprite's own chats and across the
+  whole fleet; **pin** the conversations you keep coming back to. When a thread gets long or wedged,
+  **continue (or eject) into a fresh chat** carrying a handoff summary — the old one is preserved. A
   **context view** — a count pill in the header that opens a popover — mirrors what a conversation is
   working with: the git repos in its workspace, the files uploaded to it, and any Discourse topics it
   pulled in (linked back to the posts). **Background turns survive disconnect** — close the tab or
-  lock your phone mid-task and the work keeps running, replaying in full when you return. Terminal
-  co-presence: the web UI and a `claude --resume` terminal share one transcript.
+  lock your phone mid-task and the work keeps running, replaying in full when you return, and staying
+  snappy on flaky/airplane wifi (coalesced token frames, compression, and cheap reconnects that don't
+  re-ship a long transcript). Terminal co-presence: the web UI and a `claude --resume` terminal share
+  one transcript.
 - **Claude auth** — when a subscription token is configured (from `claude setup-token`, stored in the
   brain and rehydrated fleet-wide), the whole fleet runs Claude Code on your **Claude subscription**, not
   the metered API — the sensible default for a light, single-user fleet. Without a token it falls back to
@@ -36,15 +44,23 @@ are `sprite-swarm`._
 - **GitHub** — its Claude can clone, branch, commit, and open PRs (token from the brain; no creds on
   disk).
 - **flyctl** — `fly`/`flyctl` is installed and authenticated on every sprite (token from the brain).
-- **Discourse** (optional) — with a `discourse` secret configured, its Claude reads your Discourse
-  forums **read-only** (paste a topic link → it pulls the thread in) via the official
-  [`@discourse/mcp`](https://github.com/discourse/discourse-mcp) server; one profile can serve several
-  sites. Absent ⇒ off. See *Launching a fleet* below.
-- **Grafana** (optional) — with a `grafana` secret configured, its Claude can query metrics
-  (Prometheus/Loki datasources) and **build/edit dashboards** via the official
-  [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) server. Scoped to metrics +
-  dashboards (writes on); the alerting/incident/oncall/admin write surfaces are left off. Absent ⇒ off.
-  See *Launching a fleet* below.
+- **Integrations (MCP)** — a set of built-in servers, each optional (present only when its secret or
+  connector is configured; absent ⇒ off):
+  - **Discourse** — read your forums **read-only**; paste a topic link and Claude pulls the thread in
+    ([`@discourse/mcp`](https://github.com/discourse/discourse-mcp); one profile serves several sites).
+  - **Grafana** — query metrics (Prometheus/Loki) and **build/edit dashboards**
+    ([`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana); scoped to metrics + dashboards,
+    writes on, the alerting/incident/oncall/admin surfaces left off).
+  - **Sentry** — read-only issue/error triage.
+  - **Honeycomb** — query events, traces, and boards.
+  - **Slack** — read + search channels and self-DM (an in-house server over the OAuth gateway
+    connector — no token on the sprite).
+
+  Plus a **runtime MCP registry**: add, list, or remove *any* MCP server from the UI (`POST/GET/DELETE
+  /api/mcp`, paste a standard MCP entry). It's stored in the brain and applied fleet-wide — a new chat
+  here picks it up immediately, other sprites on their next boot. Where possible the credential rides an
+  identity-authed **gateway connector** (no token on the sprite); otherwise a scoped `0600` secret from
+  the brain. See *Launching a fleet* below.
 - **Worker env vars** — set in-memory environment variables on a worker (e.g. a `DISCOURSE_API_KEY` a
   dev app needs) from the UI; the harness injects them into every Claude process it spawns, so the
   tools/apps the agent runs inherit them. **RAM-only** — never written to disk or the brain, cleared
@@ -95,7 +111,17 @@ are `sprite-swarm`._
   (no agent) that fetches the app tarball (staged in the brain) and runs it on its `http_port`, so the
   app owns that sprite's URL (behind org login). Agent sprites never host apps themselves — the agent
   already owns port 8080 (you'd hit a 409) — they *deploy* to a dedicated sprite. Worker flow: build →
-  tar → stage tarball to the brain → `deploy-app` → get the URL.
+  tar → stage tarball to the brain → `deploy-app` → get the URL. Change an app in place with
+  `POST /api/fleet/update-app {name, …}` (same sprite, same URL) and tear it down with
+  `POST /api/fleet/destroy-app {name}`.
+- **Control URL visibility** — `POST /api/fleet/sprite-access {target, visibility, scope}` sets whether
+  a sprite's URL is `public` (anyone with the link, no login — for a shared app) or `private` (behind
+  Fly org login, scoped to `admins` or `org_users`). It's a settings change, not a restart; there is no
+  token-gated URL — access is public or by org membership.
+- **Scheduled tasks (Routines)** — give a sprite a per-sprite recurring job (e.g. "every hour, summarize
+  the #eng Slack channel"): `POST /api/tasks {name, prompt, interval_min}`, `GET /api/tasks` to list,
+  `PATCH /api/tasks/<id> {enabled}` to pause, `POST /api/tasks/<id>/run` to run now. A routine only runs
+  while the sprite is awake; it drives a rolling session so its work shows up as a chat. (`internal/routines`.)
 - **Reap** — the fleet UI's per-sprite destroy button, or `POST /api/fleet/destroy {target[,force]}`.
   Presence-aware: it refuses (409) if a human is attached, unless `force`.
 - **Memory** — sprites read/write `$HOME/.sprite-agent/memory/` (grouped by topic: `repos/`,
@@ -112,7 +138,7 @@ are `sprite-swarm`._
 
   Fleet brain (S3/Tigris), reached via the s3 connector (token-free, by sprite identity):
     fleet/<id>/{status,heartbeat}.json   per-sprite keys → roster = ListObjects("fleet/")
-    fleet/config/secrets/{sprites-api-token?,github?,fly?,claude-oauth-token?,discourse?,grafana?}  rehydrated on boot (all optional)
+    fleet/config/secrets/{sprites-api-token?,github?,fly?,claude-oauth-token?,discourse?,grafana?,sentry?,honeycomb?}  rehydrated on boot (all optional; Slack rides the OAuth connector, no secret)
     fleet/config/policy.json             capability/policy control plane
     fleet/memory-fs/<id>/…               frictionless shared memory (synced markdown)
     fleet/tasks/<id>/…                   dispatch inboxes
@@ -143,10 +169,11 @@ capability is simply off (the agent is told so).
 | `internal/process/` | Claude CLI process supervision (concurrent sessions) |
 | `internal/watcher/` | `.jsonl` transcript watcher / history parsing |
 | `internal/session/` | per-session state machine |
-| `internal/hub/` | WebSocket hub: fan one Claude session out to N clients; attachments |
-| `internal/server/` | HTTP server, REST API, uploads, per-chat context, embedded web UI |
+| `internal/hub/` | WebSocket hub: fan one Claude session out to N clients; mid-turn steering; attachments |
+| `internal/server/` | HTTP server, REST API (sessions, search, uploads, MCP registry, tasks, timezone, fleet ops), embedded web UI |
 | `internal/secret/` | worker-scoped in-memory env vars injected into Claude processes |
-| `internal/fleet/` | brain client + roster + secrets + memory + dispatch + policy |
+| `internal/fleet/` | brain client + roster + secrets + memory + dispatch + policy + self-update |
+| `internal/routines/` | per-sprite scheduled tasks (Routines) scheduler + store |
 | `internal/spawn/` | sprite spawn/provision + teardown + `LaunchHome` |
 | `internal/keepalive/` | hold the sprite awake while working (Sprite Tasks API) |
 | `internal/memsync/` | sync the local markdown fleet-memory dir with the brain |
@@ -249,9 +276,27 @@ and fleet-wide, no secret to rotate. **Fallback:** if no connector fronts the UR
 at `claude` start, so new chats pick up either path; existing sessions keep their config until
 restarted). Optional by construction: fleets without the secret get no Grafana server.
 
-It cross-compiles the binary, primes the brain (stages the artifact + writes the secrets via direct
-Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores those
-tokens** so every worker reconstitutes from it — guard the bucket's keys + connector; that's the trust
+**Sentry / Honeycomb / Slack (optional):** the same pattern extends to more built-in servers, each off
+until configured. `put-secret --name sentry` (read-only issue/error triage) and `--name honeycomb`
+(query events/traces/boards) store the provider config in the brain; **Slack** is an in-house server
+built into `sprite-agent` that rides the OAuth **gateway connector**, so it needs no secret or token on
+the sprite (read + search channels, self-DM). Each composes into the same `mcp.json` on boot.
+
+**Any other MCP (runtime):** beyond the built-ins, add servers at runtime with `POST /api/mcp` (a
+standard MCP entry — `{command,args,env}` for stdio, or `{url}` for a remote server), pasted from the
+server's README. `GET /api/mcp` lists user-added ones; `DELETE /api/mcp/<name>` removes one. It's stored
+fleet-wide in the brain and applied by regenerating `mcp.json` + restarting this sprite's sessions (new
+chats pick it up; other sprites get it on their next boot). Advise scoped/read-only tokens for anything
+in the config — it lands in the `0644` `mcp.json`.
+
+**Time & location awareness:** each turn's context opens with a `## Now` line giving the current time in
+the user's local timezone and UTC (plus a note when significant time has passed since the last turn, so
+a sprite resuming after hours re-verifies instead of trusting stale state). Set the zone with
+`POST /api/timezone {"tz":"America/New_York"}` (default: Asia/Ho_Chi_Minh).
+
+`launch-fleet.sh` cross-compiles the binary, primes the brain (stages the artifact + writes the secrets
+via direct Tigris S3 keys), and ignites the home sprite, printing its URL. The brain bucket then **stores
+those tokens** so every worker reconstitutes from it — guard the bucket's keys + connector; that's the trust
 boundary.
 
 See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for env vars + operations.
@@ -266,3 +311,8 @@ Code for code and monospace.
 **In active daily use.** The per-sprite session service and fleet coordination are built and running a
 live fleet — spawn, dispatch, pull-result, reap, shared memory, in-place upgrade, the web chat UI, and
 everything in the capabilities above works today.
+
+Development happens on `main` (binaries built from it report `dev`); tagged
+[**releases**](https://github.com/clouvet/sprite-swarm/releases) stamp a version, and the hosted
+installer pins to the latest tag. `sprite-agent version` (or `GET /api/version`) reports the running
+build.
