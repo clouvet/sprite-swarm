@@ -440,6 +440,10 @@ html[data-theme="light"] .message-content pre code { background: none; }
   cursor: pointer; color: var(--text-secondary); font-size: 12px; }
 #model-picker:hover { color: var(--text); }
 #model-chevron { width: 12px; height: 12px; }
+/* The concrete version the generic model name resolved to (e.g. Opus → 4.8), shown
+   faintly once a turn has run. Empty until known. */
+#model-version { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+#model-version:not(:empty) { margin-left: 3px; }
 #model-select { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
   opacity: 0; cursor: pointer; border: none; -webkit-appearance: none; appearance: none; }
 /* context meter — subtle; how full the conversation is, from per-turn token usage */

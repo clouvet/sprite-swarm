@@ -1127,7 +1127,8 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 	defer file.Close()
 
 	messages := []map[string]interface{}{}
-	contextTokens := 0 // last assistant turn's prompt size, for the context meter
+	contextTokens := 0  // last assistant turn's prompt size, for the context meter
+	resolvedModel := "" // concrete model the last turn ran on (what the `opus` alias resolved to)
 	sig := fnv.New64a()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
@@ -1144,6 +1145,9 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 		// a tool-only turn carries usage but no text, so it'd be dropped below.
 		if n, ok := watcher.ContextTokens(msg); ok {
 			contextTokens = n
+		}
+		if m := watcher.Model(msg); m != "" {
+			resolvedModel = m
 		}
 		parsed, err := watcher.ExtractContent(msg)
 		if err != nil || parsed == nil {
@@ -1168,9 +1172,10 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 	// The client already has exactly this history rendered — skip the heavy re-send.
 	if clientSig != "" && clientSig == curSig {
 		h.sendJSON(client, map[string]interface{}{
-			"type":         "history_nochange",
-			"isGenerating": isGenerating,
-			"sig":          curSig,
+			"type":          "history_nochange",
+			"isGenerating":  isGenerating,
+			"sig":           curSig,
+			"resolvedModel": resolvedModel,
 		})
 	} else if len(messages) > 0 || isGenerating {
 		h.sendJSON(client, map[string]interface{}{
@@ -1179,6 +1184,7 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 			"isGenerating":  isGenerating,
 			"contextTokens": contextTokens,
 			"sig":           curSig,
+			"resolvedModel": resolvedModel,
 		})
 	}
 

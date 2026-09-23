@@ -134,6 +134,23 @@ func ContextTokens(msg *ClaudeMessage) (int, bool) {
 	return m.Usage.InputTokens + m.Usage.CacheCreationTokens + m.Usage.CacheReadTokens, true
 }
 
+// Model returns the concrete model id an assistant turn ran on (e.g.
+// "claude-opus-4-8"), which is how the `opus`/`sonnet`/… aliases the UI sends
+// resolve at run time. Empty for non-assistant lines or any without a model, so a
+// history replay can surface the version the picker's generic name actually mapped to.
+func Model(msg *ClaudeMessage) string {
+	if msg.Type != "assistant" {
+		return ""
+	}
+	var m struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(msg.Message, &m); err != nil {
+		return ""
+	}
+	return m.Model
+}
+
 // shouldSkipMessage filters internal Claude Code command/markers and
 // harness-injected meta turns that aren't real conversation, so they don't render
 // as user bubbles in replayed history (and don't clobber the human's own turns).

@@ -54,6 +54,7 @@
   const imagePreview = $('image-preview');
   const modelSelect = $('model-select');
   const modelLabel = $('model-label');
+  const modelVersionEl = $('model-version');
   const contextPill = $('context-pill');
   const contextPopover = $('context-popover');
   const contextCount = $('context-count');
@@ -155,6 +156,7 @@
     currentSession = null;
     currentAssistantEl = null; assistantText = ''; assistantTurns = 0;
     messagesEl.innerHTML = '';
+    setResolvedModel(null); // new chat has no resolved version yet
     hideContextMeter();
     inputEl.value = ''; autoGrow();
     clearAttachments();
@@ -394,6 +396,7 @@
     messagesEl.innerHTML = '';
     renderedHistorySession = null; // deliberate wipe: this connect wants full history, not a resume
     historySig = null;             // drop the previous chat's ETag
+    setResolvedModel(null);        // clear the version until this chat's history/turn tells us
     currentAssistantEl = null;
     assistantText = '';
     setGenerating(false); // clear any stale turn state (stuck stop button / timer) when switching chats
@@ -685,6 +688,7 @@
         });
         renderedHistorySession = currentWsSessionId; // reconnects now resume, not re-wipe
         historySig = msg.sig || null;                 // ETag for a cheap reconnect
+        setResolvedModel(msg.resolvedModel);          // version this chat's last turn ran on
 
         // Restore this chat's own context meter from its transcript, so a dormant
         // chat shows ITS real size — not whatever value was live when we switched.
@@ -703,6 +707,7 @@
         // refresh the ETag and re-arm the working indicator if a turn is live.
         renderedHistorySession = currentWsSessionId;
         if (msg.sig) historySig = msg.sig;
+        if (msg.resolvedModel) setResolvedModel(msg.resolvedModel);
         if (msg.isGenerating) showThinking();
         setComposing(false);
         break;
@@ -743,6 +748,8 @@
         // this turn. Sum the input sides for the context meter.
         const u = msg.message && msg.message.usage;
         if (u) updateContextMeter((u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0));
+        // The concrete model the alias resolved to for this turn (e.g. Opus → 4.8).
+        if (msg.message && msg.message.model) setResolvedModel(msg.message.model);
         break;
       }
       case 'message_stop':
@@ -1013,6 +1020,30 @@
   // Show the selected model's name next to the chevron.
   function syncModelLabel() {
     if (modelLabel && modelSelect) modelLabel.textContent = (modelSelect.selectedOptions[0] || {}).text || 'Opus';
+  }
+  // modelVersion pulls a human version out of a concrete model id — the picker name
+  // stays generic (Opus), but once a turn runs we know what the `opus` alias resolved
+  // to (e.g. "claude-opus-4-8" → "4.8"). Drops a date-like 8-digit suffix.
+  function modelVersion(id) {
+    if (!id) return '';
+    const nums = [];
+    for (const p of String(id).split('-')) {
+      if (/^\d+$/.test(p)) {
+        if (p.length >= 6) break;   // date suffix (e.g. 20251001) — not a version
+        nums.push(p);
+      } else if (nums.length) {
+        break;                      // version run ended
+      }
+    }
+    return nums.join('.');
+  }
+  // setResolvedModel shows the concrete version the current chat's model resolved to
+  // (empty clears it — e.g. a fresh chat before its first turn, or right after switching
+  // models, when the new pick hasn't run yet).
+  function setResolvedModel(id) {
+    if (!modelVersionEl) return;
+    modelVersionEl.textContent = modelVersion(id);
+    modelVersionEl.title = id || '';
   }
   // Persist the picker's choice so it survives reloads. The turn itself also
   // carries `model`, so the hub applies it (respawning if it changed) on send.
@@ -1941,7 +1972,7 @@
     const btn = e.target.closest('.attach-remove');
     if (btn) removeAttachment(btn.dataset.id);
   });
-  modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; syncModelLabel(); persistModel(); });
+  modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; syncModelLabel(); setResolvedModel(null); persistModel(); });
   applySessionModel(currentModel); // initialize the picker (defaults to Opus until a session sets it)
   inputEl.addEventListener('input', () => { autoGrow(); saveDraft(); });
   inputEl.addEventListener('keydown', e => {

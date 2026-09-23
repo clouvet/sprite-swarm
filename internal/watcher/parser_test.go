@@ -57,6 +57,25 @@ func TestContextTokens(t *testing.T) {
 	}
 }
 
+func TestModel(t *testing.T) {
+	// An assistant turn carries the concrete model the alias resolved to.
+	line := `{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}]}}`
+	msg, _ := ParseJSONLLine(line)
+	if got := Model(msg); got != "claude-opus-4-8" {
+		t.Fatalf("assistant model: got %q, want claude-opus-4-8", got)
+	}
+	// User lines and assistant lines without a model report empty.
+	for _, l := range []string{
+		`{"type":"user","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+	} {
+		m, _ := ParseJSONLLine(l)
+		if got := Model(m); got != "" {
+			t.Fatalf("no-model line %q: got %q, want empty", l, got)
+		}
+	}
+}
+
 func TestExtractContentSkipsMarkers(t *testing.T) {
 	line := `{"type":"user","timestamp":"2026-06-22T20:00:00Z","message":{"role":"user","content":"<system-reminder>internal</system-reminder>"}}`
 	msg, _ := ParseJSONLLine(line)
