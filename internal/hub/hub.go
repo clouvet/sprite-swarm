@@ -115,7 +115,8 @@ func NewHub(cfg Config) *Hub {
 	// When a process exits, replay whatever was still queued (unacked) onto a fresh
 	// --resume process — this is the recovery for a message caught in a compaction.
 	h.processMgr.SetOnExit(func(sessionID string) {
-		h.pending.resetDelivery(sessionID) // mark unconfirmed messages for replay
+		// Drop turns the dead process already ran; replay only the genuinely unsent.
+		h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
 		h.pumpPending(sessionID)
 	})
 	// Replay any input that was queued when a previous process exited (self-update
@@ -428,10 +429,10 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 			h.processMgr.KillAndWait(client.sessionID)
 			sess.SetState(session.StateIdle)
 			// We deliberately killed the in-flight turn. onExit is skipped for a killed
-			// process (it isn't current), so mark its unconfirmed messages for replay
-			// here — otherwise the aborted turn's message would never resume on the new
-			// process. The transcript dedup in deliver() prevents re-running a completed one.
-			h.pending.resetDelivery(client.sessionID)
+			// process (it isn't current), so reconcile here — drop turns it already ran
+			// (KillAndWait has flushed its writes), replay only the genuinely unsent ones;
+			// otherwise the aborted turn's message would never resume on the new process.
+			h.pending.resetDelivery(client.sessionID, h.transcriptProcessed(client.sessionID))
 		}
 	}
 
@@ -568,8 +569,8 @@ func (h *Hub) SetMCPConfigPath(path string) {
 func (h *Hub) RestartActiveSessions() {
 	for _, sid := range h.processMgr.ActiveSessionIDs() {
 		log.Printf("[%s] env changed; restarting session", sid)
-		h.processMgr.KillAndWait(sid) // fully dead before respawn — no two procs on one transcript
-		h.pending.resetDelivery(sid)  // intentional kill: onExit won't fire; replay the aborted turn
+		h.processMgr.KillAndWait(sid)                            // fully dead before respawn — no two procs on one transcript
+		h.pending.resetDelivery(sid, h.transcriptProcessed(sid)) // drop already-run turns; replay the rest
 		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 		h.broadcastToSession(&BroadcastMessage{SessionID: sid, Data: resultMsg})
 		if sess := h.GetSession(sid); sess != nil {
@@ -591,6 +592,11 @@ func (h *Hub) PrepareForReexec() {
 	for _, sid := range h.processMgr.ActiveSessionIDs() {
 		log.Printf("[%s] reaping before self-update re-exec", sid)
 		h.processMgr.KillAndWait(sid)
+		// Persist the queue MINUS turns this process already ran, so the new image's
+		// pending.load() replays only genuinely-unsent messages — a roll that lands
+		// mid-turn mustn't re-feed the turn claude was in the middle of (the "my
+		// messages got replayed" report).
+		h.pending.confirm(sid, h.transcriptProcessed(sid))
 	}
 }
 
@@ -599,7 +605,7 @@ func (h *Hub) handleInterrupt(client *Client) {
 	// Fully reap the old process before respawning, so the fresh --resume process
 	// isn't racing a still-dying one on the same transcript.
 	h.processMgr.KillAndWait(client.sessionID)
-	h.pending.resetDelivery(client.sessionID) // intentional kill: onExit won't fire; replay the aborted turn
+	h.pending.resetDelivery(client.sessionID, h.transcriptProcessed(client.sessionID)) // drop already-run turns; replay the rest
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
 	if sess := h.GetSession(client.sessionID); sess != nil {
@@ -698,6 +704,14 @@ func (h *Hub) pumpPending(sessionID string) {
 	if err != nil {
 		log.Printf("[%s] pumpPending: %v", sessionID, err)
 	}
+}
+
+// transcriptProcessed returns the "did this queued turn already run" predicate for a
+// session — reused by confirm (on result), resetDelivery (on death/kill), and the
+// pre-reexec reconciliation, so a message claude already processed is dropped from the
+// queue at every point rather than replayed.
+func (h *Hub) transcriptProcessed(sessionID string) func(pendingMsg) bool {
+	return func(m pendingMsg) bool { return h.transcriptHasUserTurn(sessionID, m.Text) }
 }
 
 // transcriptHasUserTurn reports whether the session's transcript's most recent user
@@ -833,6 +847,12 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 	defer ticker.Stop()
 	defer flush()
 
+	// Confirm the pending queue once at the start of a turn, not only on result: by
+	// the time claude emits its first content block it has read and written the
+	// pending user turn(s) to the transcript, so we can drop them from the queue now —
+	// before any mid-turn kill or fleet-roll reexec could replay them. Reset per turn.
+	turnConfirmed := false
+
 	for {
 		select {
 		case <-ticker.C:
@@ -880,11 +900,18 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 						sess.AddContentBlock(inner)
 						sess.SetGenerating(true)
 					}
+					if !turnConfirmed {
+						turnConfirmed = true
+						// Async: takes the pending lock + scans the transcript; must not
+						// block the streaming loop. No-op when the queue is empty.
+						go h.pending.confirm(sessionID, h.transcriptProcessed(sessionID))
+					}
 				case "message_stop":
 					if sess != nil {
 						sess.ClearContentBlocks()
 						sess.SetGenerating(false)
 					}
+					turnConfirmed = false // re-confirm at the next step's first block (mid-turn steering)
 				}
 				h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: inner})
 				continue
@@ -916,9 +943,7 @@ func (h *Hub) handleClaudeOutput(sessionID string, hp *process.HeadlessProcess) 
 				// Turn done (success or error): drop from the queue any delivered
 				// message whose turn is now in the transcript, then deliver anything
 				// that arrived during finalization.
-				h.pending.confirm(sessionID, func(m pendingMsg) bool {
-					return h.transcriptHasUserTurn(sessionID, m.Text)
-				})
+				h.pending.confirm(sessionID, h.transcriptProcessed(sessionID))
 				h.pumpPending(sessionID)
 			}
 
