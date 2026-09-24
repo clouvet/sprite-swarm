@@ -100,11 +100,24 @@ func (p *pendingStore) persistLocked(id string, sp *sessionPending) error {
 	return os.WriteFile(p.file(id), data, 0o600)
 }
 
-// enqueue appends a message to the session's queue and persists it.
+// enqueue appends a message to the session's queue and persists it. A rapid
+// double-enqueue — a double-submit, or a client re-sending the same turn on
+// reconnect — is dropped: if an identical, still-unconfirmed message is already
+// queued, adding a second would just hand claude the same turn twice. Only the live
+// queue is checked (everything in it is unconfirmed), never the transcript, so a user
+// who deliberately repeats a message after the first one has been processed is
+// unaffected. Empty-text turns (image-only) are never deduped against each other.
 func (p *pendingStore) enqueue(id string, m pendingMsg) {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
+	if m.Text != "" {
+		for i := range sp.msgs {
+			if sp.msgs[i].Text == m.Text {
+				return // identical turn already queued and not yet confirmed — skip
+			}
+		}
+	}
 	sp.msgs = append(sp.msgs, m)
 	_ = p.persistLocked(id, sp)
 }
@@ -132,22 +145,33 @@ func (p *pendingStore) confirm(id string, isProcessed func(pendingMsg) bool) {
 	}
 }
 
-// resetDelivery marks every queued message undelivered, so the next deliver() replays
-// them onto a fresh process. Called when the subprocess dies (crash/compaction) or is
-// intentionally killed for a respawn — anything it was handed but that didn't reach
-// the transcript must be re-sent. The alreadyProcessed check in deliver() then drops
-// any that actually completed before the death, so nothing runs twice.
-func (p *pendingStore) resetDelivery(id string) {
+// resetDelivery reconciles the queue after the subprocess died or was killed
+// (crash, compaction, model-change, interrupt, restart). It confirms-on-death: a
+// delivered message whose turn already reached the transcript (isProcessed) is
+// DROPPED — claude ran it, so replaying it would re-feed the same instruction, the
+// "my messages keep getting replayed" loop — while any other delivered message is
+// marked undelivered so the next deliver() replays it onto the fresh process. Doing
+// the transcript check here (right after the killed process has flushed its writes),
+// not only lazily in deliver(), closes the window where a kill re-sent a turn claude
+// had already processed. isProcessed may be nil, in which case nothing is dropped.
+func (p *pendingStore) resetDelivery(id string, isProcessed func(pendingMsg) bool) {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
+	kept := sp.msgs[:0]
 	changed := false
-	for i := range sp.msgs {
-		if sp.msgs[i].Delivered {
-			sp.msgs[i].Delivered = false
+	for _, m := range sp.msgs {
+		if m.Delivered {
+			if isProcessed != nil && isProcessed(m) {
+				changed = true // already ran before the death — drop, don't replay
+				continue
+			}
+			m.Delivered = false
 			changed = true
 		}
+		kept = append(kept, m)
 	}
+	sp.msgs = kept
 	if changed {
 		_ = p.persistLocked(id, sp)
 	}
