@@ -155,14 +155,18 @@ func (s *metaStore) SetNoBackup(id string, noBackup bool) {
 	s.saveLocked()
 }
 
-// IsBackedUp reports whether a session's transcript should be mirrored to the brain.
-// Default true (opt-out): a chat with no metadata, or one not explicitly excluded, is
-// backed up — losing a discovery is worse than an extra backup.
+// IsBackedUp reports whether a session's transcript should be mirrored to the brain:
+// a KNOWN chat (one this sprite tracks / shows in the UI) that hasn't opted out. This
+// scopes backup to actual chats — the per-cwd transcript dirs — and excludes Claude's
+// subagent / Task-tool and terminal transcripts (which aren't in the store and would
+// otherwise 10× the backup with internal noise), as well as chats the human deleted
+// (their metadata is gone). A subagent's conclusions live in its parent chat, which is
+// backed up, so nothing meaningful is lost.
 func (s *metaStore) IsBackedUp(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.byID[id]
-	return m == nil || !m.NoBackup
+	return m != nil && !m.NoBackup
 }
 
 // Delete removes a session's metadata (transcript is left on disk).
