@@ -47,6 +47,10 @@ type Config struct {
 	// Default on; set SPRITE_AGENT_ROUTINES=0 to disable (e.g. for a debugging sprite).
 	RoutinesEnabled bool
 
+	// TranscriptBackup periodically mirrors this sprite's chat transcripts to the brain
+	// so they survive the sprite dying. Default on; SPRITE_AGENT_TRANSCRIPT_BACKUP=0 off.
+	TranscriptBackup bool
+
 	// Brain (S3/Tigris) pointer. When BrainBucket is empty the brain is
 	// disabled and the agent runs solo (still fully functional for chat).
 	Brain BrainConfig
@@ -119,6 +123,7 @@ func FromEnv() Config {
 		SettingsPath:         os.Getenv("SPRITE_AGENT_SETTINGS"),
 		MCPConfigPath:        os.Getenv("SPRITE_AGENT_MCP_CONFIG"),
 		RoutinesEnabled:      boolEnv("SPRITE_AGENT_ROUTINES", true),
+		TranscriptBackup:     boolEnv("SPRITE_AGENT_TRANSCRIPT_BACKUP", true),
 		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
 		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),
