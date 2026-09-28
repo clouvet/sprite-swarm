@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +22,15 @@ func (f *fakeStore) Put(_ context.Context, k string, d []byte) error {
 	return nil
 }
 func (f *fakeStore) Delete(_ context.Context, k string) error { delete(f.objs, k); return nil }
+func (f *fakeStore) List(_ context.Context, prefix string) ([]string, error) {
+	var out []string
+	for k := range f.objs {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
 
 func gunzip(t *testing.T, b []byte) string {
 	t.Helper()
