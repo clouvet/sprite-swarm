@@ -36,6 +36,7 @@ const BrainPrefix = "fleet/transcripts/"
 type Store interface {
 	Put(ctx context.Context, key string, data []byte) error
 	Delete(ctx context.Context, key string) error
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // fileState is the size+mtime we last uploaded, so an unchanged transcript isn't
@@ -101,7 +102,11 @@ func (s *Syncer) Run(ctx context.Context) {
 // been deleted locally or opted out of backup. Best-effort: a single failure is logged
 // and skipped, never aborting the sweep.
 func (s *Syncer) sweep(ctx context.Context) {
-	seen := make(map[string]bool, len(s.uploaded)+8)
+	prefix := BrainPrefix + s.agentID + "/"
+	metaKey := prefix + "_sessions.json.gz"
+
+	// Upload the included transcripts and remember which session keys should exist.
+	want := make(map[string]bool, 32)
 	_ = filepath.WalkDir(s.projectsRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
 			return nil
@@ -110,27 +115,34 @@ func (s *Syncer) sweep(ctx context.Context) {
 		// recovery lists chats by id regardless of which per-cwd slug dir they sit in.
 		sid := strings.TrimSuffix(d.Name(), ".jsonl")
 		if s.include != nil && !s.include(sid) {
-			return nil // scratch chat opted out — leave it for the reconcile below
+			return nil // not a tracked chat (subagent/terminal noise), or opted out
 		}
-		key := BrainPrefix + s.agentID + "/" + sid + ".jsonl.gz"
-		seen[key] = true
+		key := prefix + sid + ".jsonl.gz"
+		want[key] = true
 		s.upload(ctx, p, key)
 		return nil
 	})
-	// Reconcile: a key we uploaded before but didn't sync this sweep is a chat that was
-	// deleted locally or opted out — drop it from the brain so backups track the live,
-	// still-wanted set. (Only a LIVE sprite prunes; a dead sprite's syncer isn't running,
-	// so its backups persist — which is the whole point.)
-	for key := range s.uploaded {
-		if key == BrainPrefix+s.agentID+"/_sessions.json.gz" || seen[key] {
-			continue
-		}
-		if err := s.store.Delete(ctx, key); err == nil {
-			delete(s.uploaded, key)
+
+	// Reconcile against the brain: delete any backed-up transcript we no longer want —
+	// a chat deleted locally, one opted out, or (after this scoping change) the pile of
+	// subagent/terminal transcripts an earlier build uploaded. Listing the brain (not
+	// just our in-memory set) makes it self-healing across restarts and rescoping.
+	// Only a LIVE sprite prunes; a dead sprite's syncer isn't running, so its backups
+	// persist — the whole point.
+	keys, err := s.store.List(ctx, prefix)
+	if err == nil {
+		for _, key := range keys {
+			if key == metaKey || want[key] {
+				continue
+			}
+			if err := s.store.Delete(ctx, key); err == nil {
+				delete(s.uploaded, key)
+			}
 		}
 	}
+
 	if s.metaPath != "" {
-		s.upload(ctx, s.metaPath, BrainPrefix+s.agentID+"/_sessions.json.gz")
+		s.upload(ctx, s.metaPath, metaKey)
 	}
 }
 
