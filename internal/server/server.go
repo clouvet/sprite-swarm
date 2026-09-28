@@ -3,9 +3,12 @@
 package server
 
 import (
+	"bytes"
 	"compress/flate"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -19,6 +22,7 @@ import (
 	"github.com/clouvet/sprite-swarm/internal/hub"
 	"github.com/clouvet/sprite-swarm/internal/secret"
 	"github.com/clouvet/sprite-swarm/internal/spawn"
+	"github.com/clouvet/sprite-swarm/internal/transcriptsync"
 	"github.com/clouvet/sprite-swarm/web"
 
 	"github.com/gorilla/websocket"
@@ -76,6 +80,19 @@ type Server struct {
 	// routines is the per-sprite scheduled-tasks service; nil when routines are
 	// disabled. Wired by main after New via SetRoutines.
 	routines Routines
+	// brain is the fleet object store, used to back up this sprite's transcripts and
+	// to serve a dead sprite's backed-up chats. Wired by main via SetBrain (nil = off).
+	brain transcriptBrain
+}
+
+// transcriptBrain is the brain subset the transcript backup + recovery read-path need.
+// Declared here (not imported from internal/fleet) so any value with these methods —
+// e.g. fleet.Brain — satisfies it structurally without a package dependency.
+type transcriptBrain interface {
+	Put(ctx context.Context, key string, data []byte) error
+	Get(ctx context.Context, key string) ([]byte, error)
+	List(ctx context.Context, prefix string) ([]string, error)
+	Delete(ctx context.Context, key string) error
 }
 
 // SetRoutines wires the scheduled-tasks (Routines) service; enables the /api/tasks
@@ -88,6 +105,74 @@ func (s *Server) SetRegenerateMCP(fn func() (string, error)) { s.regenerateMCP =
 // SetReloadSecrets registers the in-process secret re-apply hook used by
 // POST /api/fleet/reload-secrets. Set once, after New.
 func (s *Server) SetReloadSecrets(fn func()) { s.reloadSecrets = fn }
+
+// SetBrain wires the fleet object store for transcript backup + recovery. Set once,
+// after New, before StartTranscriptBackup. fleet.Brain satisfies transcriptBrain.
+func (s *Server) SetBrain(b transcriptBrain) { s.brain = b }
+
+// StartTranscriptBackup launches the periodic transcript→brain mirror (a no-op when
+// backup is disabled or no brain is wired). Scratch chats opt out via metaStore.
+func (s *Server) StartTranscriptBackup(ctx context.Context) {
+	if !s.cfg.TranscriptBackup || s.brain == nil {
+		return
+	}
+	root := filepath.Dir(s.cfg.ClaudeProjectsDir) // ~/.claude/projects (all chats' transcript dirs)
+	metaPath := filepath.Join(s.cfg.WorkDir, ".sprite-agent", "sessions.json")
+	sy := transcriptsync.New(s.brain, root, metaPath, s.cfg.AgentID, 0, s.store.IsBackedUp)
+	go sy.Run(ctx)
+}
+
+// serveTranscripts serves a sprite's backed-up chat transcripts from the brain, so a
+// dead sprite's conversations are recoverable from any live one:
+//
+//	GET /api/fleet/transcripts?target=<id>                → list its backed-up chats
+//	GET /api/fleet/transcripts?target=<id>&session=<sid>  → download one (gunzipped .jsonl)
+//
+// target defaults to this sprite's own id.
+func (s *Server) serveTranscripts(w http.ResponseWriter, r *http.Request) {
+	if s.brain == nil {
+		http.Error(w, "brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	q := r.URL.Query()
+	target := strings.TrimSpace(q.Get("target"))
+	if target == "" {
+		target = s.cfg.AgentID
+	}
+	prefix := transcriptsync.BrainPrefix + target + "/"
+
+	if sid := strings.TrimSpace(q.Get("session")); sid != "" {
+		data, err := s.brain.Get(r.Context(), prefix+sid+".jsonl.gz")
+		if err != nil {
+			http.Error(w, "no backup for that session", http.StatusNotFound)
+			return
+		}
+		gzr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			http.Error(w, "corrupt backup", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+sid+".jsonl\"")
+		_, _ = io.Copy(w, gzr)
+		return
+	}
+
+	keys, err := s.brain.List(r.Context(), prefix)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	sessions := make([]string, 0, len(keys))
+	for _, k := range keys {
+		name := strings.TrimPrefix(k, prefix)
+		if name == "_sessions.json.gz" || !strings.HasSuffix(name, ".jsonl.gz") {
+			continue
+		}
+		sessions = append(sessions, strings.TrimSuffix(name, ".jsonl.gz"))
+	}
+	writeJSON(w, map[string]interface{}{"target": target, "sessions": sessions})
+}
 
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
 // spawner is always non-nil (a stub when no sprites token is available).
@@ -148,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
 	mux.HandleFunc("/api/fleet/sprite-access", s.serveSpriteAccess)
 	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
+	mux.HandleFunc("/api/fleet/transcripts", s.serveTranscripts)
 	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
 	mux.HandleFunc("/api/timezone", s.serveTimezone)
 	mux.HandleFunc("/api/memory", s.serveMemory)
@@ -295,16 +381,17 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPatch, http.MethodPut:
 		var body struct {
-			Name   string  `json:"name"`
-			Model  *string `json:"model"`  // pointer so "" (default model) is distinguishable from absent
-			Pinned *bool   `json:"pinned"` // pointer so false is distinguishable from absent
+			Name     string  `json:"name"`
+			Model    *string `json:"model"`    // pointer so "" (default model) is distinguishable from absent
+			Pinned   *bool   `json:"pinned"`   // pointer so false is distinguishable from absent
+			NoBackup *bool   `json:"noBackup"` // pointer so false (re-enable backup) is distinguishable from absent
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
-		if body.Name == "" && body.Model == nil && body.Pinned == nil {
-			http.Error(w, "name, model, or pinned required", http.StatusBadRequest)
+		if body.Name == "" && body.Model == nil && body.Pinned == nil && body.NoBackup == nil {
+			http.Error(w, "name, model, pinned, or noBackup required", http.StatusBadRequest)
 			return
 		}
 		if body.Name != "" {
@@ -315,6 +402,9 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Pinned != nil {
 			s.store.SetPinned(id, *body.Pinned)
+		}
+		if body.NoBackup != nil {
+			s.store.SetNoBackup(id, *body.NoBackup)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:

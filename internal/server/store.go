@@ -18,8 +18,9 @@ type SessionMeta struct {
 	LastMessage   string `json:"lastMessage"`
 	CreatedAt     int64  `json:"createdAt"`
 	LastMessageAt int64  `json:"lastMessageAt"`
-	Model         string `json:"model,omitempty"`  // chosen model ("" = CLI default)
-	Pinned        bool   `json:"pinned,omitempty"` // human pinned this chat to the top of the list (per-sprite)
+	Model         string `json:"model,omitempty"`    // chosen model ("" = CLI default)
+	Pinned        bool   `json:"pinned,omitempty"`   // human pinned this chat to the top of the list (per-sprite)
+	NoBackup      bool   `json:"noBackup,omitempty"` // opt this scratch chat OUT of transcript backup to the brain
 }
 
 // metaStore is an in-memory, JSON-file-backed session metadata store.
@@ -137,6 +138,31 @@ func (s *metaStore) SetPinned(id string, pinned bool) {
 	}
 	m.Pinned = pinned
 	s.saveLocked()
+}
+
+// SetNoBackup opts a session in/out of transcript backup (creating the entry if
+// missing). true = this scratch chat is NOT mirrored to the brain.
+func (s *metaStore) SetNoBackup(id string, noBackup bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.byID[id]
+	if m == nil {
+		now := time.Now().UnixMilli()
+		m = &SessionMeta{ID: id, CreatedAt: now, LastMessageAt: now}
+		s.byID[id] = m
+	}
+	m.NoBackup = noBackup
+	s.saveLocked()
+}
+
+// IsBackedUp reports whether a session's transcript should be mirrored to the brain.
+// Default true (opt-out): a chat with no metadata, or one not explicitly excluded, is
+// backed up — losing a discovery is worse than an extra backup.
+func (s *metaStore) IsBackedUp(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.byID[id]
+	return m == nil || !m.NoBackup
 }
 
 // Delete removes a session's metadata (transcript is left on disk).

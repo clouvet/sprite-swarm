@@ -699,6 +699,12 @@ func main() {
 		// what the fleet has learned (memsync pulls on boot, pushes on local change).
 		go memsync.Run(context.Background(), fleetSvc.Brain(), fleetMemoryDir(), cfg.AgentID)
 
+		// Durability: periodically mirror this sprite's chat transcripts to the brain,
+		// so a dead sprite's conversations (where discoveries are made) survive. Scratch
+		// chats opt out per-chat; open PRs / uncommitted work are still on the VM only.
+		srv.SetBrain(fleetSvc.Brain())
+		srv.StartTranscriptBackup(context.Background())
+
 		// Dispatch (P2.1): poll this agent's task inbox and inject each task into a
 		// local session so it materializes in the transcript (seam #2). Label the
 		// session so the dispatched work shows up in the UI list (visible + attachable).

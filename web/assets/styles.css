@@ -108,6 +108,12 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .session-item:hover .session-pin { opacity: .65; }
 .session-pin:hover { opacity: 1; color: var(--text-secondary); }
 .session-pin.pinned { opacity: 1; color: var(--text-secondary); }
+/* Backup toggle mirrors the pin: hidden until row hover, but always shown when a chat
+   is EXCLUDED so you can see (and undo) what won't be saved. */
+.session-backup { background: none; border: none; padding: 0; display: inline-flex; align-items: center; line-height: 0; cursor: pointer; color: var(--text-muted); opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.session-item:hover .session-backup { opacity: .65; }
+.session-backup:hover { opacity: 1; color: var(--text-secondary); }
+.session-backup.excluded { opacity: 1; color: #d98c4a; }
 .session-divider { height: 1px; background: var(--border); margin: 6px 8px 8px; }
 
 /* ---- fleet section (sprite-agent) ---- */
