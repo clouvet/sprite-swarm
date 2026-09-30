@@ -265,7 +265,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"plainly; skip the reasoning behind them unless the human asks — they will ask when they want the why. " +
 		"VOICE: write like E.B. White — plain, clear, unpretentious. Use as little jargon as possible; aim for " +
 		"clarity of conversation, not a display of engineering knowhow. Don't be a tech bro. Write in complete " +
-		"sentences and keep sentence fragments to a minimum. ")
+		"sentences and keep sentence fragments to a minimum. " +
+		"CODE COMMENTS: comment sparingly and keep them short. A comment earns its place only when it explains " +
+		"WHY, or flags a non-obvious gotcha — never to restate what the code plainly does. One line or two, not a " +
+		"paragraph; don't narrate the code or write an essay above a function. Prefer clear names and small " +
+		"functions over comments. When in doubt, leave it out. ")
 	if cfg.Brain.Enabled() {
 		fmt.Fprintf(b, "Your fleet API lives on your OWN service at %s — this is a given: never discover, "+
 			"announce, restate, or verify the API location, and don't pre-check the roster or remark on who "+
