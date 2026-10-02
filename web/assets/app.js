@@ -29,7 +29,9 @@
   }
   function renderMarkdown(text) {
     if (hasMarked()) {
-      try { return window.marked.parse(text); } catch (e) { /* fall through */ }
+      // Open links in a new tab so clicking a PR/issue reference doesn't navigate out
+      // of the chat. (Code content is HTML-escaped by marked, so no "<a" hides inside it.)
+      try { return window.marked.parse(text).replace(/<a /g, '<a target="_blank" rel="noopener" '); } catch (e) { /* fall through */ }
     }
     return '<p>' + escapeHtml(text).replace(/\n/g, '<br>') + '</p>';
   }
