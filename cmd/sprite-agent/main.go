@@ -269,7 +269,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"CODE COMMENTS: comment sparingly and keep them short. A comment earns its place only when it explains " +
 		"WHY, or flags a non-obvious gotcha — never to restate what the code plainly does. One line or two, not a " +
 		"paragraph; don't narrate the code or write an essay above a function. Prefer clear names and small " +
-		"functions over comments. When in doubt, leave it out. ")
+		"functions over comments. When in doubt, leave it out. " +
+		"LINKS: when you mention a pull request or issue — e.g. web#4341 — make it a clickable markdown link to " +
+		"its GitHub URL, with the short reference as the link text: [web#4341](https://github.com/<org>/web/pull/4341). " +
+		"Show the short ref, not the bare URL. You know the repo you're working in; resolve the org from its git " +
+		"remote (or gh), and use /issues/<n> for an issue, /pull/<n> for a PR. ")
 	if cfg.Brain.Enabled() {
 		fmt.Fprintf(b, "Your fleet API lives on your OWN service at %s — this is a given: never discover, "+
 			"announce, restate, or verify the API location, and don't pre-check the roster or remark on who "+
