@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -163,15 +164,63 @@ func (s *Server) serveTranscripts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	sessions := make([]string, 0, len(keys))
+	// Enrich each backed-up chat with its name/preview/timestamps from the backed-up
+	// session metadata, so an agent asked "what did we use <worker> for?" can give a
+	// concise overview without downloading every transcript (it pulls a specific one
+	// with &session=<id> for detail).
+	meta := s.backedUpMeta(r.Context(), prefix)
+	type chat struct {
+		Session       string `json:"session"`
+		Name          string `json:"name,omitempty"`
+		LastMessage   string `json:"lastMessage,omitempty"`
+		Model         string `json:"model,omitempty"`
+		CreatedAt     int64  `json:"createdAt,omitempty"`
+		LastMessageAt int64  `json:"lastMessageAt,omitempty"`
+	}
+	chats := make([]chat, 0, len(keys))
 	for _, k := range keys {
 		name := strings.TrimPrefix(k, prefix)
 		if name == "_sessions.json.gz" || !strings.HasSuffix(name, ".jsonl.gz") {
 			continue
 		}
-		sessions = append(sessions, strings.TrimSuffix(name, ".jsonl.gz"))
+		sid := strings.TrimSuffix(name, ".jsonl.gz")
+		c := chat{Session: sid}
+		if m := meta[sid]; m != nil {
+			c.Name, c.LastMessage, c.Model = m.Name, m.LastMessage, m.Model
+			c.CreatedAt, c.LastMessageAt = m.CreatedAt, m.LastMessageAt
+		}
+		chats = append(chats, c)
 	}
-	writeJSON(w, map[string]interface{}{"target": target, "sessions": sessions})
+	sort.Slice(chats, func(i, j int) bool { return chats[i].LastMessageAt > chats[j].LastMessageAt })
+	writeJSON(w, map[string]interface{}{"target": target, "chats": chats})
+}
+
+// backedUpMeta loads a target's backed-up session metadata (_sessions.json.gz) into a
+// map by session id. Empty on any miss — the listing still works, just without names.
+func (s *Server) backedUpMeta(ctx context.Context, prefix string) map[string]*SessionMeta {
+	out := map[string]*SessionMeta{}
+	data, err := s.brain.Get(ctx, prefix+"_sessions.json.gz")
+	if err != nil {
+		return out
+	}
+	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return out
+	}
+	raw, err := io.ReadAll(gzr)
+	if err != nil {
+		return out
+	}
+	var list []*SessionMeta
+	if json.Unmarshal(raw, &list) != nil {
+		return out
+	}
+	for _, m := range list {
+		if m != nil && m.ID != "" {
+			out[m.ID] = m
+		}
+	}
+	return out
 }
 
 // New constructs a Server. fleetSvc may be nil if no brain is configured;
