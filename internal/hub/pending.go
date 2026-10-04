@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // maxSendAttempts caps how many times a queued message is (re)delivered before we
@@ -16,6 +17,16 @@ import (
 // poisonous message that keeps killing the process must not loop forever. var (not
 // const) so tests can shrink it.
 var maxSendAttempts = 3
+
+// maxReplayAge caps how stale a REPLAY can be: a message delivered before but not
+// confirmed, whose original turn was hours ago, must not resurface in a conversation
+// that has long moved on (a "message from two days ago" replaying out of context). A
+// first delivery is never expired — a message queued behind a long turn, or before a
+// suspend, is still wanted. var for tests. nowUnix is overridable in tests.
+var (
+	maxReplayAge = time.Hour
+	nowUnix      = func() int64 { return time.Now().Unix() }
+)
 
 // pendingMsg is one accepted user turn awaiting confirmed processing by claude.
 //
@@ -33,11 +44,12 @@ var maxSendAttempts = 3
 // message undelivered so it replays onto the fresh --resume process, deduped against
 // the transcript so nothing runs twice.
 type pendingMsg struct {
-	ID        string      `json:"id"`
-	Content   interface{} `json:"content"`   // string, or a content-block array (with attachments)
-	Text      string      `json:"text"`      // plaintext, to dedup against the transcript on replay
-	Delivered bool        `json:"delivered"` // handed to a live subprocess; cleared on its death so it replays
-	Attempts  int         `json:"attempts"`  // delivery attempts, to bound crash-loop replays
+	ID         string      `json:"id"`
+	Content    interface{} `json:"content"`              // string, or a content-block array (with attachments)
+	Text       string      `json:"text"`                 // plaintext, to dedup against the transcript on replay
+	Delivered  bool        `json:"delivered"`            // handed to a live subprocess; cleared on its death so it replays
+	Attempts   int         `json:"attempts"`             // delivery attempts, to bound crash-loop replays
+	EnqueuedAt int64       `json:"enqueuedAt,omitempty"` // unix secs, to expire a stale replay (not a first delivery)
 }
 
 // sessionPending is one session's ordered queue of unconfirmed messages.
@@ -118,6 +130,9 @@ func (p *pendingStore) enqueue(id string, m pendingMsg) {
 				return // identical turn already queued and not yet confirmed — skip
 			}
 		}
+	}
+	if m.EnqueuedAt == 0 {
+		m.EnqueuedAt = nowUnix() // stamp so a stale replay can be expired later
 	}
 	sp.msgs = append(sp.msgs, m)
 	_ = p.persistLocked(id, sp)
@@ -222,6 +237,15 @@ func (p *pendingStore) deliver(id string, deliver func(pendingMsg) error, alread
 		m := sp.msgs[0]
 		if m.Delivered {
 			return nil // front is in flight — wait for its result (confirm) before the next
+		}
+		// Expire a stale REPLAY: a message delivered before but never confirmed, whose
+		// turn was hours ago, must not resurface in a conversation that has moved on
+		// (the "message from two days ago" replay). A first delivery (Attempts==0) is
+		// never expired — a turn queued behind a long turn or a suspend is still wanted.
+		if m.Attempts > 0 && m.EnqueuedAt > 0 && nowUnix()-m.EnqueuedAt > int64(maxReplayAge.Seconds()) {
+			sp.removeLocked(m.ID)
+			_ = p.persistLocked(id, sp)
+			continue // stale replay dropped; try the new front
 		}
 		// A replay (previously delivered, then a death reset it) that already reached
 		// the transcript must not be sent again.
