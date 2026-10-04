@@ -103,6 +103,33 @@ func TestOrderPreservedAcrossDeath(t *testing.T) {
 	}
 }
 
+// A stale REPLAY (delivered before, process died, now hours old) is dropped, not
+// resurfaced — the "message from two days ago" bug. A first delivery is never expired.
+func TestStaleReplayExpires(t *testing.T) {
+	clock := int64(1000)
+	oldNow, oldAge := nowUnix, maxReplayAge
+	nowUnix = func() int64 { return clock }
+	defer func() { nowUnix, maxReplayAge = oldNow, oldAge }()
+
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	enq(p, "s", "stale secrets message") // stamped EnqueuedAt=1000
+	_ = h.deliver(p, "s")                // first delivery — never expired
+	if len(h.delivered) != 1 {
+		t.Fatalf("first delivery should go through, got %v", h.delivered)
+	}
+	p.resetDelivery("s", nil) // process died; Attempts stays 1, now a replay candidate
+
+	clock += int64(maxReplayAge.Seconds()) + 1 // a day-and-a-half later
+	_ = h.deliver(p, "s")
+	if len(h.delivered) != 1 {
+		t.Fatalf("stale replay must NOT be re-delivered, got %v", h.delivered)
+	}
+	if n := p.pending("s"); n != 0 {
+		t.Fatalf("stale replay must be dropped, pending = %d", n)
+	}
+}
+
 func TestReplayAfterDeath(t *testing.T) {
 	p := newPendingStore("")
 	h := &harness{processed: map[string]bool{}}
