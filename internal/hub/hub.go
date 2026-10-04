@@ -466,10 +466,10 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	}
 
 	// Queue the turn, then pump: it's persisted first (so a compaction can't drop it,
-	// #95) and delivered to the subprocess immediately — even mid-turn, so claude picks
-	// it up within the running turn instead of at the boundary (mid-turn steering). The
-	// queue holds it only until the transcript confirms it. pumpPending must not run
-	// under h.mu, so no lock is held.
+	// #95) and delivered strictly in order, one in flight at a time (see
+	// pendingStore.deliver) — held behind any still-unconfirmed earlier turn so turns
+	// can't surface out of order. The queue holds it until the transcript confirms it.
+	// pumpPending must not run under h.mu, so no lock is held.
 	// Text is what lands in the transcript as this turn — used to dedup a replay
 	// against it after a death. It must be the text of the CONTENT we actually send
 	// (message text plus any file-reference notes), NOT the raw typed text: when they
@@ -699,9 +699,9 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	}
 }
 
-// pumpPending hands every undelivered queued message to the session's process —
-// immediately, even mid-turn, so claude picks it up within the running turn (see
-// pendingStore.deliver). Safe to call from any path EXCEPT while holding h.mu — its
+// pumpPending delivers the session's next queued message in order — one in flight at
+// a time, the next going only after the current is confirmed (see pendingStore.deliver).
+// Safe to call from any path EXCEPT while holding h.mu — its
 // deliver callback takes GetSession (h.mu.RLock), so h.mu -> pending order would
 // invert the pending -> h.mu order used everywhere else.
 func (h *Hub) pumpPending(sessionID string) {

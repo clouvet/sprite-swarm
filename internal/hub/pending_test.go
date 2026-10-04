@@ -56,26 +56,50 @@ func TestDeliversWhenIdle(t *testing.T) {
 	}
 }
 
-// Mid-turn steering: a message enqueued while a turn is generating is handed to the
-// process immediately, NOT held to the turn boundary (the inverse of the old design).
-func TestDeliversMidTurnImmediately(t *testing.T) {
+// One in flight at a time, strictly in order: a message enqueued while a turn is
+// in flight is HELD (not delivered) until the in-flight one is confirmed — so turns
+// can't surface out of order across a death/replay.
+func TestDeliversOneInFlightInOrder(t *testing.T) {
 	p := newPendingStore("")
 	h := &harness{processed: map[string]bool{}}
 	enq(p, "s", "first")
-	_ = h.deliver(p, "s") // first delivered; a turn is now generating
-	enq(p, "s", "second") // typed mid-turn
+	_ = h.deliver(p, "s") // first delivered; now in flight
+	enq(p, "s", "second") // typed while first is still in flight
 	_ = h.deliver(p, "s")
-	if len(h.delivered) != 2 || h.delivered[1] != "second" {
-		t.Fatalf("delivered = %v, want both delivered immediately [first second]", h.delivered)
+	if len(h.delivered) != 1 || h.delivered[0] != "first" {
+		t.Fatalf("delivered = %v, want only [first] (second held behind the in-flight one)", h.delivered)
 	}
 	if n := p.pending("s"); n != 2 {
-		t.Fatalf("pending = %d, want 2 (both delivered but unconfirmed)", n)
+		t.Fatalf("pending = %d, want 2 (both queued)", n)
 	}
-	// Both turns land in the transcript → confirm clears the queue.
-	h.processed["first"], h.processed["second"] = true, true
+	// first's turn lands in the transcript → confirm removes it, next deliver sends second.
+	h.processed["first"] = true
 	h.confirm(p, "s")
-	if n := p.pending("s"); n != 0 {
-		t.Fatalf("pending after confirm = %d, want 0", n)
+	_ = h.deliver(p, "s")
+	if len(h.delivered) != 2 || h.delivered[1] != "second" {
+		t.Fatalf("delivered = %v, want [first second] in order", h.delivered)
+	}
+}
+
+// The lever bug: a message in flight when the process dies must replay BEFORE any
+// message queued behind it — never let a later turn jump ahead across a death.
+func TestOrderPreservedAcrossDeath(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	enq(p, "s", "update some secrets?")
+	_ = h.deliver(p, "s")       // in flight
+	enq(p, "s", "PR is merged") // queued behind it while in flight
+	p.resetDelivery("s", nil)   // process died before processing the front one
+	_ = h.deliver(p, "s")
+	if len(h.delivered) != 2 || h.delivered[1] != "update some secrets?" {
+		t.Fatalf("delivered = %v, want the front one replayed, not the later one jumping ahead", h.delivered)
+	}
+	// Only after the front is confirmed does the later one go.
+	h.processed["update some secrets?"] = true
+	h.confirm(p, "s")
+	_ = h.deliver(p, "s")
+	if len(h.delivered) != 3 || h.delivered[2] != "PR is merged" {
+		t.Fatalf("delivered = %v, want [.. .. 'PR is merged'] last, in order", h.delivered)
 	}
 }
 
@@ -182,10 +206,13 @@ func TestPersistAndReload(t *testing.T) {
 	if p2.nextID() == "1" {
 		t.Fatal("nextID collided with a reloaded id")
 	}
-	// Drain to empty: deliver both, mark processed, confirm → file removed.
+	// Drain to empty, one in flight at a time: deliver+confirm the front, then the next.
 	h := &harness{processed: map[string]bool{}}
 	_ = h.deliver(p2, "sess1")
-	h.processed["survive a restart"], h.processed["me too"] = true, true
+	h.processed["survive a restart"] = true
+	h.confirm(p2, "sess1")
+	_ = h.deliver(p2, "sess1")
+	h.processed["me too"] = true
 	h.confirm(p2, "sess1")
 	if n := p2.pending("sess1"); n != 0 {
 		t.Fatalf("pending after draining = %d, want 0", n)

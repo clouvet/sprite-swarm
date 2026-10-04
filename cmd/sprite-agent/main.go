@@ -314,6 +314,11 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 			"once when you'd reasonably expect it done; if it's not ready, say so — never sit in a loop. " +
 			"NEVER ask a worker to dispatch/send/curl its result back to you — a result delivered " +
 			"through dispatch is misread as a NEW task and executed, spawning runaway sessions. You PULL; the worker never pushes. " +
+			"WHAT HAS A SPRITE BEEN DOING: to answer \"what did we use <sprite> for?\" or summarize a peer's work, " +
+			"GET /api/fleet/transcripts?target=<id> — it returns that sprite's chats (name, last message, timestamps), " +
+			"backed up in the brain, so you can give a concise overview of ALL of them (works even if the sprite is " +
+			"dead/suspended). For detail on one chat, GET /api/fleet/transcripts?target=<id>&session=<session-id> to " +
+			"read its full transcript, then summarize. Lead with the concise overview; expand a chat only when asked. " +
 			"To send an informational FYI rather than work, add \"kind\":\"note\" to a dispatch — the recipient is told not to execute it. " +
 			"To reap/tear a sprite down BY NAME, POST /api/fleet/destroy {\"target\":\"<name>\"} — this destroys its VM " +
 			"and removes its brain entry. It refuses with HTTP 409 if a human is attached to that sprite " +
