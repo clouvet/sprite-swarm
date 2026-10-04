@@ -24,13 +24,14 @@ var maxSendAttempts = 3
 // bytes died with it and the instruction was silently lost. We keep every unconfirmed
 // turn in this persisted queue.
 //
-// Mid-turn steering: unlike the original one-at-a-time design, we hand a message to
-// the live subprocess AS SOON AS IT ARRIVES — even while a turn is generating — so
-// claude picks it up within the running turn (it reads stream-json stdin between
-// steps) instead of it waiting for the turn boundary. Durability is preserved the
-// same way: the message stays in this queue until the transcript confirms it was
-// processed, and a process death marks every unconfirmed message undelivered so it
-// replays onto the fresh --resume process (deduped against the transcript).
+// Delivery is strictly one-in-flight and in order: we hand claude the FRONT message
+// and wait for its turn to reach the transcript (confirm) before delivering the next.
+// Claude reads stream-json stdin at turn boundaries and processes FIFO regardless, so
+// this costs no real latency, and — unlike fanning the whole queue in at once — it
+// can't let a later message reach a fresh process ahead of an earlier one a death had
+// to replay (which surfaced turns out of order). A process death marks the in-flight
+// message undelivered so it replays onto the fresh --resume process, deduped against
+// the transcript so nothing runs twice.
 type pendingMsg struct {
 	ID        string      `json:"id"`
 	Content   interface{} `json:"content"`   // string, or a content-block array (with attachments)
@@ -194,10 +195,14 @@ func (sp *sessionPending) removeLocked(msgID string) {
 	}
 }
 
-// deliver hands every not-yet-delivered message to the subprocess, in order —
-// including while a turn is generating, so claude picks it up within the running turn
-// (mid-turn steering). This is the deliberate change from the original design, which
-// held all but one message until the turn boundary.
+// deliver hands the FRONT queued message to the subprocess and stops — strictly one
+// in flight at a time, in order. It does NOT fan the whole queue into the subprocess:
+// doing that let a later message reach a fresh process before an earlier one that a
+// death had to replay, so turns surfaced out of order (a message landing long after
+// its moment). Claude reads stream-json stdin at turn boundaries and processes FIFO
+// regardless, so one-in-flight costs no real latency but guarantees order and removes
+// the replay/reorder races. The next message is delivered once this one is confirmed
+// (its turn reached the transcript — see confirm) or replayed after a death.
 //
 //   - deliver writes a message to the subprocess (spawning/respawning as needed).
 //   - alreadyProcessed reports whether a previously-delivered message (Attempts>0, i.e.
@@ -208,24 +213,22 @@ func (sp *sessionPending) removeLocked(msgID string) {
 //
 // Callbacks run under the per-session lock, so deliveries for one session serialize
 // (preserving stdin order) but never block other sessions. A deliver error leaves the
-// message undelivered at the front of the remaining work; a later deliver() retries.
+// front message undelivered; a later deliver() retries it.
 func (p *pendingStore) deliver(id string, deliver func(pendingMsg) error, alreadyProcessed func(pendingMsg) bool, giveUp func(pendingMsg)) error {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	i := 0
-	for i < len(sp.msgs) {
-		if sp.msgs[i].Delivered {
-			i++
-			continue
+	for len(sp.msgs) > 0 {
+		m := sp.msgs[0]
+		if m.Delivered {
+			return nil // front is in flight — wait for its result (confirm) before the next
 		}
-		m := sp.msgs[i]
 		// A replay (previously delivered, then a death reset it) that already reached
 		// the transcript must not be sent again.
 		if m.Attempts > 0 && alreadyProcessed != nil && alreadyProcessed(m) {
 			sp.removeLocked(m.ID)
 			_ = p.persistLocked(id, sp)
-			continue // slice shifted; same index is the next message
+			continue // front dropped; try the new front
 		}
 		if m.Attempts >= maxSendAttempts {
 			sp.removeLocked(m.ID)
@@ -235,14 +238,14 @@ func (p *pendingStore) deliver(id string, deliver func(pendingMsg) error, alread
 			}
 			continue
 		}
-		sp.msgs[i].Attempts++
+		sp.msgs[0].Attempts++
 		_ = p.persistLocked(id, sp)
-		if err := deliver(sp.msgs[i]); err != nil {
-			return err // stays undelivered (attempt counted); a later deliver retries
+		if err := deliver(sp.msgs[0]); err != nil {
+			return err // stays at the front, undelivered (attempt counted); a later deliver retries
 		}
-		sp.msgs[i].Delivered = true
+		sp.msgs[0].Delivered = true
 		_ = p.persistLocked(id, sp)
-		i++
+		return nil // exactly one in flight; the next goes after this one is confirmed
 	}
 	return nil
 }
