@@ -130,6 +130,24 @@ func TestStaleReplayExpires(t *testing.T) {
 	}
 }
 
+// A full page refresh drops the WAITING (undelivered) backlog but keeps the in-flight
+// message — so a stale backlog can't apply to a freshly-viewed conversation, while the
+// turn already running is left alone.
+func TestClearUndeliveredKeepsInFlight(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	enq(p, "s", "in flight")
+	_ = h.deliver(p, "s") // delivered → in flight
+	enq(p, "s", "waiting 1")
+	enq(p, "s", "waiting 2")
+	if n := p.clearUndelivered("s"); n != 2 {
+		t.Fatalf("dropped = %d, want 2 (the two waiting ones)", n)
+	}
+	if n := p.pending("s"); n != 1 {
+		t.Fatalf("pending = %d, want 1 (the in-flight one kept)", n)
+	}
+}
+
 func TestReplayAfterDeath(t *testing.T) {
 	p := newPendingStore("")
 	h := &harness{processed: map[string]bool{}}
