@@ -212,9 +212,14 @@ func (a *apiSpawner) Spawn(ctx context.Context, req Request) (Result, error) {
 // and runs the start command. Shared by deploy (new sprite) and update (existing
 // sprite). The app dir is wiped first so an update fully replaces the old files.
 func appServiceSpec(req DeployRequest) ([]byte, error) {
-	boot := "set -e; rm -rf /home/sprite/app; mkdir -p /home/sprite/app; " +
-		"curl -fsSL " + shQuote(req.ArtifactURL) + " -o /tmp/app.tgz; " +
-		"tar xzf /tmp/app.tgz -C /home/sprite/app; cd /home/sprite/app; " +
+	// The artifact URL is presigned and expires, but this script re-runs on every
+	// restart. Replace the app only when the fetch succeeds; otherwise keep
+	// running the files already on disk.
+	boot := "mkdir -p /home/sprite/app; " +
+		"if curl -fsSL " + shQuote(req.ArtifactURL) + " -o /tmp/app.tgz; then " +
+		"rm -rf /home/sprite/app && mkdir -p /home/sprite/app && tar xzf /tmp/app.tgz -C /home/sprite/app || exit 1; " +
+		"elif [ -z \"$(ls -A /home/sprite/app)\" ]; then exit 1; fi; " +
+		"cd /home/sprite/app; " +
 		// Tolerate a tarball that wraps everything in one top-level dir (a common
 		// `tar czf x.tgz mydir` mistake) — descend into it so the app root is right.
 		"if [ \"$(ls -1A | wc -l)\" -eq 1 ] && [ -d \"$(ls -1A)\" ]; then cd \"$(ls -1A)\"; fi; " +
@@ -407,14 +412,7 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 	for k, v := range bootEnv {
 		env[k] = v
 	}
-	boot := "set -e; "
-	if credURL != "" {
-		boot += "mkdir -p /home/sprite/.claude; " +
-			"curl -fsSL '" + credURL + "' -o /home/sprite/.claude/.credentials.json; " +
-			"chmod 600 /home/sprite/.claude/.credentials.json; "
-	}
-	boot += "curl -fsSL '" + url + "' -o /home/sprite/sprite-agent; " +
-		"chmod +x /home/sprite/sprite-agent; cd /home/sprite; exec ./sprite-agent"
+	boot := agentBootScript("/home/sprite", url, credURL)
 	body, err := json.Marshal(serviceSpec{
 		Cmd: "/bin/sh", Args: []string{"-c", boot}, Dir: "/home/sprite", Env: env, HTTPPort: 8080,
 	})
@@ -439,6 +437,24 @@ func (a *apiSpawner) provisionAgent(ctx context.Context, name string, bootEnv ma
 		lastErr = fmt.Errorf("service did not persist (sprite not ready)")
 	}
 	return lastErr
+}
+
+// agentBootScript fetches the binary (and optional Claude cred) only when it's
+// missing, then execs it. The URLs are presigned with artifactTTL, but this
+// script re-runs on every service restart — re-fetching would 403 once they
+// expire and crash-loop a perfectly good agent. Updates swap the binary in place
+// (fleet.PrepareSelfUpdate), so a binary on disk is always the one to run.
+func agentBootScript(dir, url, credURL string) string {
+	boot := "cd " + shQuote(dir) + "; "
+	if credURL != "" {
+		boot += "[ -f .claude/.credentials.json ] || { mkdir -p .claude && " +
+			"curl -fsSL " + shQuote(credURL) + " -o .claude/.credentials.json && " +
+			"chmod 600 .claude/.credentials.json; }; "
+	}
+	boot += "[ -x sprite-agent ] || { curl -fsSL " + shQuote(url) + " -o sprite-agent.tmp && " +
+		"chmod +x sprite-agent.tmp && mv sprite-agent.tmp sprite-agent; } || exit 1; " +
+		"exec ./sprite-agent"
+	return boot
 }
 
 // warmSprite triggers warming (a freshly-created sprite is cold) and waits until
