@@ -153,6 +153,17 @@ func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string, resume
 // RegisterClient enqueues a client for registration.
 func (h *Hub) RegisterClient(client *Client) { h.register <- client }
 
+// DiscardUndeliveredPending drops a session's not-yet-delivered queued messages,
+// keeping any in-flight one. The server calls this on a FULL PAGE REFRESH (a fresh
+// connect, not a reconnect), so a stale backlog doesn't apply to a conversation the
+// human is now viewing fresh. A service restart reconnects with resume=1 and is left
+// untouched, so its queue keeps flowing.
+func (h *Hub) DiscardUndeliveredPending(sessionID string) {
+	if n := h.pending.clearUndelivered(sessionID); n > 0 {
+		log.Printf("[%s] page refresh: dropped %d undelivered queued message(s)", sessionID, n)
+	}
+}
+
 // Run is the hub's main loop.
 func (h *Hub) Run() {
 	for {

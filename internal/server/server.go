@@ -331,6 +331,12 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	conn.EnableWriteCompression(true)
 	conn.SetCompressionLevel(flate.BestSpeed)
 	resume := r.URL.Query().Get("resume") == "1"
+	// A fresh connect (not a reconnect) is a full page load/refresh — drop any stale
+	// backlog of undelivered messages so it can't apply to a conversation the human is
+	// now viewing fresh. A reconnect (resume=1, incl. a service restart) keeps flowing.
+	if !resume {
+		s.hub.DiscardUndeliveredPending(sessionID)
+	}
 	client := s.hub.NewClient(conn, sessionID, r.RemoteAddr, resume, r.URL.Query().Get("hsig"))
 	s.hub.RegisterClient(client)
 	go client.WritePump()

@@ -87,6 +87,45 @@ func uploadFileViaConnector(ctx context.Context, gatewayBase, localPath, key str
 	return url, nil
 }
 
+// connectorArtifactURL returns the brain gateway URL for key — the token-free path
+// a sprite fetches by its own identity — or "" when the fleet has no connector.
+// Precedence matches BootstrapEnv: a BootstrapGateway override beats this process's
+// own GatewayURL, which is what lets `init` seed a connector-mode fleet while it
+// writes to the brain with raw keys itself.
+func connectorArtifactURL(bc config.BrainConfig, key string) string {
+	gw := bc.BootstrapGateway
+	if gw == "" {
+		gw = bc.GatewayURL
+	}
+	if gw == "" {
+		return ""
+	}
+	return strings.TrimRight(gw, "/") + "/" + strings.TrimPrefix(key, "/")
+}
+
+// stageHomeArtifact uploads home's binary to the brain and returns the URL its boot
+// command should fetch from, preferring the connector URL because it does not expire.
+// A presigned URL is dead artifactTTL after provisioning, so the first restart that
+// finds no binary on disk can never recover — the boot guard keeps a *working* agent
+// alive but cannot resurrect a missing one.
+//
+// Uploading and handing on a URL are separate concerns: `init` runs off-account with
+// raw keys and no sprite identity, so it must write via S3 yet should still point home
+// at the gateway home itself will reach the brain through.
+func stageHomeArtifact(ctx context.Context, bc config.BrainConfig, artifactPath string) (string, error) {
+	if bc.UsesGateway() {
+		return uploadFileViaConnector(ctx, bc.GatewayURL, artifactPath, artifactKey)
+	}
+	presigned, err := stageFile(ctx, bc, artifactPath, artifactKey, artifactTTL)
+	if err != nil {
+		return "", err
+	}
+	if u := connectorArtifactURL(bc, artifactKey); u != "" {
+		return u, nil
+	}
+	return presigned, nil
+}
+
 // stageClaudeCredential stages the local Claude credential (if present) and
 // returns a presigned URL, or "" if there's no credential to propagate.
 func stageClaudeCredential(ctx context.Context, bc config.BrainConfig, expires time.Duration) (string, error) {
