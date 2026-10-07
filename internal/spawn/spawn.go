@@ -106,7 +106,7 @@ func LaunchHome(ctx context.Context, cfg config.Config, artifactPath, name strin
 	if err != nil {
 		return Result{}, err
 	}
-	url, err := stageFile(ctx, cfg.Brain, artifactPath, artifactKey, artifactTTL)
+	url, err := stageHomeArtifact(ctx, cfg.Brain, artifactPath)
 	if err != nil {
 		return res, fmt.Errorf("spawn: stage artifact: %w", err)
 	}
