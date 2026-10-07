@@ -161,6 +161,33 @@ func (p *pendingStore) confirm(id string, isProcessed func(pendingMsg) bool) {
 	}
 }
 
+// clearUndelivered drops every NOT-yet-delivered (waiting) message, keeping any that
+// is already in flight. Called on a full page refresh: the human is looking at the
+// conversation fresh, so a backlog that hasn't gone out yet would only surface later,
+// out of context. The in-flight message is mid-processing (its turn is already running)
+// and persisting it keeps the usual crash-replay guarantee, so it's left alone. A
+// service restart does NOT call this — its queue keeps flowing (durability). Returns
+// how many were dropped.
+func (p *pendingStore) clearUndelivered(id string) int {
+	sp := p.sess(id)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	kept := sp.msgs[:0]
+	dropped := 0
+	for _, m := range sp.msgs {
+		if m.Delivered {
+			kept = append(kept, m)
+		} else {
+			dropped++
+		}
+	}
+	sp.msgs = kept
+	if dropped > 0 {
+		_ = p.persistLocked(id, sp)
+	}
+	return dropped
+}
+
 // resetDelivery reconciles the queue after the subprocess died or was killed
 // (crash, compaction, model-change, interrupt, restart). It confirms-on-death: a
 // delivered message whose turn already reached the transcript (isProcessed) is
