@@ -166,6 +166,44 @@ func TestClearUndeliveredDropsOnlyStale(t *testing.T) {
 	}
 }
 
+// A delivered front whose process vanished with no exit event wedges the queue — the
+// messages behind it never go, because one-in-flight waits for a turn that can't confirm.
+// The hub detects this (delivered front, no live process) and resets it; here we exercise
+// the store-level recovery that drains the queue in order afterward.
+func TestWedgedQueueRecoversAfterOrphanReset(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	for _, s := range []string{"A", "B", "C", "D"} {
+		enq(p, "s", s)
+	}
+	_ = h.deliver(p, "s") // A in flight; B/C/D held behind it
+	if !p.frontDelivered("s") {
+		t.Fatal("A should be the delivered (in-flight) front")
+	}
+	if p.pending("s") != 4 || len(h.delivered) != 1 || h.delivered[0] != "A" {
+		t.Fatalf("pending=%d delivered=%v, want 4 and [A]", p.pending("s"), h.delivered)
+	}
+
+	// Orphan: the process vanished with A unconfirmed. Reconcile = resetDelivery (A isn't
+	// in the transcript → un-delivered, not dropped), then the pump replays.
+	p.resetDelivery("s", func(m pendingMsg) bool { return h.processed[m.Text] })
+	if p.frontDelivered("s") {
+		t.Fatal("A should be un-delivered after the orphan reset")
+	}
+
+	for _, want := range []string{"A", "B", "C", "D"} { // drains in order now
+		_ = h.deliver(p, "s")
+		if got := h.delivered[len(h.delivered)-1]; got != want {
+			t.Fatalf("next delivered = %q, want %q (seq %v)", got, want, h.delivered)
+		}
+		h.processed[want] = true
+		h.confirm(p, "s")
+	}
+	if p.pending("s") != 0 {
+		t.Fatalf("pending = %d, want 0 (queue drained)", p.pending("s"))
+	}
+}
+
 // snapshot reports the queue oldest-first with each message's clientId and whether it's
 // in flight — what the UI needs to re-show queued/working turns on (re)connect.
 func TestSnapshotReportsQueueState(t *testing.T) {

@@ -255,6 +255,15 @@ func (p *pendingStore) snapshot(id string) []PendingView {
 	return out
 }
 
+// frontDelivered reports whether the head of the queue is marked delivered (in flight).
+// Used to detect a wedge: a delivered front with no live process can never be confirmed.
+func (p *pendingStore) frontDelivered(id string) bool {
+	sp := p.sess(id)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return len(sp.msgs) > 0 && sp.msgs[0].Delivered
+}
+
 // pending reports how many messages are queued (test/inspection helper).
 func (p *pendingStore) pending(id string) int {
 	sp := p.sess(id)

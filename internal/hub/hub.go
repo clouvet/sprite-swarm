@@ -718,7 +718,28 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 // Safe to call from any path EXCEPT while holding h.mu — its
 // deliver callback takes GetSession (h.mu.RLock), so h.mu -> pending order would
 // invert the pending -> h.mu order used everywhere else.
+// reconcileOrphanedDelivery heals a wedged queue. If the front message is marked
+// delivered (in flight) but NO subprocess is actually running it, its turn can never be
+// confirmed, so the strict one-in-flight rule holds every queued message behind it
+// forever. This happens when a process vanishes without a clean exit event the manager
+// observes — reaped across a re-exec, OOM/SIGKILL, or a suspend that tore it down — so
+// onExit's resetDelivery never ran. Treat it like a death: resetDelivery drops it if the
+// transcript shows it already ran, else un-delivers it so the pump below replays it onto
+// a fresh process. A normal in-flight turn (a live process) is left untouched. Cheap and
+// idempotent, so pumpPending can call it on every trigger (notably a client reconnect).
+func (h *Hub) reconcileOrphanedDelivery(sessionID string) {
+	if !h.pending.frontDelivered(sessionID) {
+		return
+	}
+	if _, err := h.processMgr.Get(sessionID); err == nil {
+		return // a process is live — this is a real in-flight turn, not an orphan
+	}
+	log.Printf("[%s] in-flight message has no live process — reclaiming the wedged queue", sessionID)
+	h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
+}
+
 func (h *Hub) pumpPending(sessionID string) {
+	h.reconcileOrphanedDelivery(sessionID)
 	err := h.pending.deliver(sessionID,
 		func(m pendingMsg) error { // deliver: send, respawning once if the process is gone/dead
 			if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {
