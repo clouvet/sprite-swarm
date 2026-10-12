@@ -130,21 +130,56 @@ func TestStaleReplayExpires(t *testing.T) {
 	}
 }
 
-// A full page refresh drops the WAITING (undelivered) backlog but keeps the in-flight
-// message — so a stale backlog can't apply to a freshly-viewed conversation, while the
-// turn already running is left alone.
-func TestClearUndeliveredKeepsInFlight(t *testing.T) {
+// A fresh connect (full page load, or switching chats and back) drops only the STALE
+// waiting backlog: the in-flight turn is kept, a message the human just queued survives
+// and still delivers once that turn finishes, and only a too-old never-sent message is
+// cleared. This is the "sidebar shows my message but the transcript doesn't" fix — a
+// recently-queued turn must not be discarded just because the viewer navigated away.
+func TestClearUndeliveredDropsOnlyStale(t *testing.T) {
+	clock := int64(10000)
+	oldNow, oldAge := nowUnix, maxReplayAge
+	nowUnix = func() int64 { return clock }
+	defer func() { nowUnix, maxReplayAge = oldNow, oldAge }()
+
 	p := newPendingStore("")
 	h := &harness{processed: map[string]bool{}}
+
 	enq(p, "s", "in flight")
-	_ = h.deliver(p, "s") // delivered → in flight
-	enq(p, "s", "waiting 1")
-	enq(p, "s", "waiting 2")
-	if n := p.clearUndelivered("s"); n != 2 {
-		t.Fatalf("dropped = %d, want 2 (the two waiting ones)", n)
+	_ = h.deliver(p, "s")                      // delivered → in flight, kept
+	enq(p, "s", "stale waiting")               // EnqueuedAt = 10000
+	clock += int64(maxReplayAge.Seconds()) + 1 // that one is now older than maxReplayAge
+	enq(p, "s", "fresh waiting")               // EnqueuedAt = now, recent
+
+	if n := p.clearUndelivered("s"); n != 1 {
+		t.Fatalf("dropped = %d, want 1 (only the stale waiting one)", n)
+	}
+	if n := p.pending("s"); n != 2 {
+		t.Fatalf("pending = %d, want 2 (in-flight + fresh waiting kept)", n)
+	}
+
+	// The fresh waiting message still delivers once the in-flight turn confirms.
+	h.processed["in flight"] = true
+	h.confirm(p, "s")
+	_ = h.deliver(p, "s")
+	if got := h.delivered; len(got) != 2 || got[1] != "fresh waiting" {
+		t.Fatalf("delivered = %v, want [in flight, fresh waiting]", got)
+	}
+}
+
+// A message a process death reset for replay (undelivered, Attempts > 0) is real
+// interrupted work. A fresh connect during the respawn window must NOT drop it —
+// otherwise a turn that was mid-flight when the process died is silently lost.
+func TestClearUndeliveredKeepsInterruptedReplay(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	enq(p, "s", "interrupted")
+	_ = h.deliver(p, "s")     // Attempts=1, Delivered=true
+	p.resetDelivery("s", nil) // death: Delivered=false, Attempts stays 1
+	if n := p.clearUndelivered("s"); n != 0 {
+		t.Fatalf("dropped = %d, want 0 (interrupted replay kept)", n)
 	}
 	if n := p.pending("s"); n != 1 {
-		t.Fatalf("pending = %d, want 1 (the in-flight one kept)", n)
+		t.Fatalf("pending = %d, want 1", n)
 	}
 }
 
