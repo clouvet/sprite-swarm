@@ -161,13 +161,23 @@ func (p *pendingStore) confirm(id string, isProcessed func(pendingMsg) bool) {
 	}
 }
 
-// clearUndelivered drops every NOT-yet-delivered (waiting) message, keeping any that
-// is already in flight. Called on a full page refresh: the human is looking at the
-// conversation fresh, so a backlog that hasn't gone out yet would only surface later,
-// out of context. The in-flight message is mid-processing (its turn is already running)
-// and persisting it keeps the usual crash-replay guarantee, so it's left alone. A
-// service restart does NOT call this — its queue keeps flowing (durability). Returns
-// how many were dropped.
+// clearUndelivered drops only the STALE waiting backlog a fresh page load shouldn't
+// resurrect, and keeps everything that still matters. Called when a client connects
+// without resume (a full page load, or switching chats and back). It keeps:
+//
+//   - Delivered (in flight): its turn is already running — never drop it.
+//   - Attempts > 0 (sent once, then a process death reset it for replay): real
+//     interrupted work, not a stale backlog — keep it so the turn re-runs. Dropping
+//     it on a refresh during the respawn window silently loses a message.
+//   - never-sent but RECENT (age <= maxReplayAge): a turn the human just queued,
+//     typically behind an in-flight turn. They're actively waiting on it; dropping it
+//     because they glanced at another chat and back is the "sidebar shows my message
+//     but the transcript doesn't" loss.
+//
+// Only a never-sent message OLDER than maxReplayAge is dropped — the genuinely stuck
+// backlog this guard is about, which would otherwise apply out of context to a
+// conversation that has long moved on. A service restart never calls this (its queue
+// keeps flowing — durability). Returns how many were dropped.
 func (p *pendingStore) clearUndelivered(id string) int {
 	sp := p.sess(id)
 	sp.mu.Lock()
@@ -175,11 +185,13 @@ func (p *pendingStore) clearUndelivered(id string) int {
 	kept := sp.msgs[:0]
 	dropped := 0
 	for _, m := range sp.msgs {
-		if m.Delivered {
-			kept = append(kept, m)
-		} else {
+		stale := !m.Delivered && m.Attempts == 0 &&
+			m.EnqueuedAt > 0 && nowUnix()-m.EnqueuedAt > int64(maxReplayAge.Seconds())
+		if stale {
 			dropped++
+			continue
 		}
+		kept = append(kept, m)
 	}
 	sp.msgs = kept
 	if dropped > 0 {

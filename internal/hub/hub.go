@@ -153,14 +153,17 @@ func (h *Hub) NewClient(conn *websocket.Conn, sessionID, clientID string, resume
 // RegisterClient enqueues a client for registration.
 func (h *Hub) RegisterClient(client *Client) { h.register <- client }
 
-// DiscardUndeliveredPending drops a session's not-yet-delivered queued messages,
-// keeping any in-flight one. The server calls this on a FULL PAGE REFRESH (a fresh
-// connect, not a reconnect), so a stale backlog doesn't apply to a conversation the
-// human is now viewing fresh. A service restart reconnects with resume=1 and is left
-// untouched, so its queue keeps flowing.
+// DiscardUndeliveredPending drops a session's STALE not-yet-delivered queued messages
+// (never sent and older than maxReplayAge), keeping any in-flight message, any replay
+// interrupted by a death, and any recently-queued turn the human is still waiting on
+// (see clearUndelivered). The server calls this on a fresh connect (a full page load,
+// or switching chats and back), so a genuinely stuck backlog doesn't apply to a
+// conversation the human has moved past — without discarding a message they just sent.
+// A service restart reconnects with resume=1 and is left untouched, so its queue keeps
+// flowing.
 func (h *Hub) DiscardUndeliveredPending(sessionID string) {
 	if n := h.pending.clearUndelivered(sessionID); n > 0 {
-		log.Printf("[%s] page refresh: dropped %d undelivered queued message(s)", sessionID, n)
+		log.Printf("[%s] fresh connect: dropped %d stale undelivered queued message(s)", sessionID, n)
 	}
 }
 
