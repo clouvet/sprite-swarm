@@ -740,6 +740,21 @@
       case 'processing':
         if (msg.isProcessing) showThinking();
         break;
+      case 'delivered':
+        // This exact turn reached Claude (not just queued): flip it to "delivered" and
+        // remember it as the in-flight one so 'result' can mark it "answered".
+        if (msg.clientId) { activeClientId = msg.clientId; setDeliveryState(msg.clientId, 'delivered'); }
+        break;
+      case 'pending':
+        // Rehydrate queued/in-flight turns the transcript doesn't hold yet (sent right
+        // after 'history'), so a message still waiting after a refresh shows as queued
+        // instead of vanishing until it's delivered. Dedup against what's already drawn.
+        (msg.messages || []).forEach(m => {
+          if (!m.clientId || userBubbleExists(m.clientId)) return;
+          addUser(m.text, { clientId: m.clientId, state: m.delivered ? 'delivered' : 'queued' });
+          if (m.delivered) activeClientId = m.clientId;
+        });
+        break;
       case 'user_message':
         if (msg.message) {
           // New shape: attachments[]. Fall back to the old singular attachment.
@@ -790,12 +805,15 @@
         break;
       case 'result':
         removeActivity(); finalizeAssistant(); setGenerating(false);
+        // The in-flight turn just completed — mark its message answered.
+        if (activeClientId) { setDeliveryState(activeClientId, 'answered'); activeClientId = null; }
         onAssistantTurnComplete();
         fetchContext(); // the turn may have cloned/removed a repo — remirror the workspace
         if (pendingFork) { const fn = pendingFork; pendingFork = null; fn(); }
         break;
       case 'error':
         addSystem('⚠ ' + (msg.message || 'error'));
+        if (msg.clientId) setDeliveryState(msg.clientId, 'failed'); // mark the dropped message
         finalizeAssistant(); setGenerating(false);
         break;
     }
@@ -852,10 +870,58 @@
       .map(f => `<a class="file-chip" href="${f.url}" target="_blank" rel="noopener">📎 ${escapeHtml(f.name)}</a>`).join('');
     const el = document.createElement('div');
     el.className = 'message user';
-    el.innerHTML = `<div class="message-content">${imgs}${chips}${escapeHtml(text || '')}</div>`;
+    // A clientId is a receipt handle: the server reports this turn's delivery state back
+    // keyed by it, so the bubble can show queued → delivered → answered. Messages pulled
+    // from history have none (they're already in the transcript), so they get no chip.
+    if (opts.clientId) {
+      el.dataset.clientId = opts.clientId;
+      const state = document.createElement('span');
+      state.className = 'delivery-state';
+      renderDeliveryState(state, opts.state || 'queued');
+      el.innerHTML = `<div class="message-content">${imgs}${chips}${escapeHtml(text || '')}</div>`;
+      el.appendChild(state);
+    } else {
+      el.innerHTML = `<div class="message-content">${imgs}${chips}${escapeHtml(text || '')}</div>`;
+    }
     messagesEl.appendChild(el);
     updateComposing(); // first message → dock the composer to the bottom
     forceScrollDown(); // your own turn always jumps to the bottom and re-pins
+  }
+
+  // Per-message delivery receipts. The whole point is to tell a message that's actually
+  // being worked on from one still sitting in the queue, so delivery is trustworthy at a
+  // glance rather than inferred from a spinner that lights up the instant you hit send.
+  const DELIVERY = {
+    queued:    { label: '🕘 Queued',    title: 'Waiting in the queue — not yet handed to Claude' },
+    delivered: { label: '✓ Delivered',  title: 'Handed to Claude — working on this turn' },
+    answered:  { label: '✓✓',           title: 'Claude finished this turn' },
+    failed:    { label: '⚠ Not delivered — resend', title: 'This message could not be delivered' },
+  };
+  function renderDeliveryState(span, state) {
+    const d = DELIVERY[state] || DELIVERY.queued;
+    span.dataset.state = state;
+    span.textContent = d.label;
+    span.title = d.title;
+  }
+  function genClientId() {
+    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+    return 'c' + Date.now() + Math.random().toString(36).slice(2);
+  }
+  // activeClientId is the turn currently in flight — set when the server confirms delivery,
+  // so the matching 'result' can flip exactly that message to "answered".
+  let activeClientId = null;
+  function setDeliveryState(clientId, state) {
+    if (!clientId) return;
+    let sel;
+    try { sel = `.message.user[data-client-id="${CSS.escape(clientId)}"] .delivery-state`; }
+    catch (e) { return; }
+    const span = messagesEl.querySelector(sel);
+    if (span) renderDeliveryState(span, state);
+  }
+  function userBubbleExists(clientId) {
+    if (!clientId) return false;
+    try { return !!messagesEl.querySelector(`.message.user[data-client-id="${CSS.escape(clientId)}"]`); }
+    catch (e) { return false; }
   }
   function addSystem(text) {
     const el = document.createElement('div');
@@ -1616,12 +1682,15 @@
       // indicator counts from NOW instead of resuming an old genStart.
       if (genTimer) { clearInterval(genTimer); genTimer = null; }
       genStart = 0;
-      addUser(text, attachmentRender(atts));
+      const clientId = genClientId();
+      const userOpts = attachmentRender(atts) || {};
+      userOpts.clientId = clientId; // show this turn's delivery state (starts "queued")
+      addUser(text, userOpts);
       // The DOM now holds this session's conversation, even on a brand-new chat that
       // never received a history event — so a mid-turn reconnect resumes, not re-wipes.
       renderedHistorySession = currentWsSessionId;
       showThinking();
-      const payload = { type: 'user', content: text, model: currentModel };
+      const payload = { type: 'user', content: text, model: currentModel, clientId };
       if (atts.length) {
         payload.attachments = atts.map(a => ({ id: a.id, file: a.filename, name: a.name, type: a.mediaType }));
       }
