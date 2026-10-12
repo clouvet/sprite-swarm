@@ -50,6 +50,16 @@ type pendingMsg struct {
 	Delivered  bool        `json:"delivered"`            // handed to a live subprocess; cleared on its death so it replays
 	Attempts   int         `json:"attempts"`             // delivery attempts, to bound crash-loop replays
 	EnqueuedAt int64       `json:"enqueuedAt,omitempty"` // unix secs, to expire a stale replay (not a first delivery)
+	ClientID   string      `json:"clientId,omitempty"`   // browser's per-send id, so delivery state can be reported back to the UI
+}
+
+// PendingView is a client-facing view of one queued message, used to rehydrate the UI's
+// per-message delivery state on connect (so a message still waiting after a refresh is
+// shown as queued, not silently missing until it's delivered).
+type PendingView struct {
+	ClientID  string `json:"clientId"`
+	Text      string `json:"text"`
+	Delivered bool   `json:"delivered"`
 }
 
 // sessionPending is one session's ordered queue of unconfirmed messages.
@@ -230,6 +240,19 @@ func (p *pendingStore) resetDelivery(id string, isProcessed func(pendingMsg) boo
 	if changed {
 		_ = p.persistLocked(id, sp)
 	}
+}
+
+// snapshot returns a client-facing view of the session's queue, oldest first — what the
+// UI needs to re-show in-flight and waiting messages when a client (re)connects.
+func (p *pendingStore) snapshot(id string) []PendingView {
+	sp := p.sess(id)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	out := make([]PendingView, 0, len(sp.msgs))
+	for _, m := range sp.msgs {
+		out = append(out, PendingView{ClientID: m.ClientID, Text: m.Text, Delivered: m.Delivered})
+	}
+	return out
 }
 
 // pending reports how many messages are queued (test/inspection helper).

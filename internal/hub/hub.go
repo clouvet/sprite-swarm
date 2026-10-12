@@ -460,7 +460,7 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 	// (message text plus any file-reference notes), NOT the raw typed text: when they
 	// differ (attachments), a raw-text dedup never matches and the turn re-delivers on
 	// every compaction — the "same message three times" bug.
-	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: contentText(content)})
+	h.pending.enqueue(client.sessionID, pendingMsg{ID: h.pending.nextID(), Content: content, Text: contentText(content), ClientID: msg.ClientID})
 	h.pumpPending(client.sessionID)
 
 	processingMsg, _ := json.Marshal(map[string]interface{}{"type": "processing", "isProcessing": true})
@@ -699,7 +699,16 @@ func (h *Hub) pumpPending(sessionID string) {
 				}
 				h.spawnClaudeForSession(sessionID, sess)
 				time.Sleep(500 * time.Millisecond)
-				return h.processMgr.SendMessage(sessionID, m.Content)
+				if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {
+					return err
+				}
+			}
+			// Tell the UI this exact turn reached claude (it was handed to the process,
+			// not just queued) so a waiting message can be shown as "working" rather than
+			// still "queued". Only this turn's sender correlates the id; others ignore it.
+			if m.ClientID != "" {
+				d, _ := json.Marshal(map[string]interface{}{"type": "delivered", "clientId": m.ClientID})
+				h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: d})
 			}
 			return nil
 		},
@@ -709,8 +718,9 @@ func (h *Hub) pumpPending(sessionID string) {
 		func(m pendingMsg) { // giveUp: surface a dropped message rather than lose it silently
 			log.Printf("[%s] queued message dropped after %d attempts", sessionID, maxSendAttempts)
 			errMsg, _ := json.Marshal(map[string]interface{}{
-				"type":    "error",
-				"message": "A queued message could not be delivered and was dropped. Please resend it.",
+				"type":     "error",
+				"message":  "A queued message could not be delivered and was dropped. Please resend it.",
+				"clientId": m.ClientID, // so the UI can mark that specific message as failed
 			})
 			h.broadcastToSession(&BroadcastMessage{SessionID: sessionID, Data: errMsg})
 		},
@@ -1196,6 +1206,16 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 			"sig":           curSig,
 			"resolvedModel": resolvedModel,
 		})
+	}
+
+	// After history, rehydrate any still-queued or in-flight turns — they aren't in the
+	// transcript yet (not delivered, or not completed), so without this a message still
+	// waiting after a refresh would simply vanish from the UI until it's delivered. Sent
+	// on the same connection right after history, so it always lands after the re-render.
+	if h.pending != nil {
+		if snap := h.pending.snapshot(client.sessionID); len(snap) > 0 {
+			h.sendJSON(client, map[string]interface{}{"type": "pending", "messages": snap})
+		}
 	}
 
 	if isGenerating {

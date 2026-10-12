@@ -166,6 +166,27 @@ func TestClearUndeliveredDropsOnlyStale(t *testing.T) {
 	}
 }
 
+// snapshot reports the queue oldest-first with each message's clientId and whether it's
+// in flight — what the UI needs to re-show queued/working turns on (re)connect.
+func TestSnapshotReportsQueueState(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	p.enqueue("s", pendingMsg{ID: p.nextID(), Content: "a", Text: "a", ClientID: "c1"})
+	_ = h.deliver(p, "s") // c1 → in flight
+	p.enqueue("s", pendingMsg{ID: p.nextID(), Content: "b", Text: "b", ClientID: "c2"})
+
+	snap := p.snapshot("s")
+	if len(snap) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snap))
+	}
+	if snap[0].ClientID != "c1" || !snap[0].Delivered {
+		t.Fatalf("front = %+v, want c1 delivered", snap[0])
+	}
+	if snap[1].ClientID != "c2" || snap[1].Delivered {
+		t.Fatalf("second = %+v, want c2 not-delivered", snap[1])
+	}
+}
+
 // A message a process death reset for replay (undelivered, Attempts > 0) is real
 // interrupted work. A fresh connect during the respawn window must NOT drop it —
 // otherwise a turn that was mid-flight when the process died is silently lost.

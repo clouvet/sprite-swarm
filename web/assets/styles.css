@@ -372,8 +372,16 @@ html[data-view="new"] #input { min-height: 120px; max-height: 340px; }
 .message.assistant .message-content a { color: inherit; text-decoration: underline; }
 .message.assistant .message-content a:hover,
 .message.assistant .message-content a:active { text-decoration: none; }
-.message.user { display: flex; justify-content: flex-end; margin: 8px 0; }
+.message.user { display: flex; justify-content: flex-end; margin: 8px 0; flex-wrap: wrap; }
 .message.user .message-content { max-width: 85%; background: var(--user-bg); padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
+/* Per-message delivery receipt, wrapped onto its own line under the bubble. Tells a
+   message being worked on (delivered) from one still waiting (queued) at a glance. */
+.delivery-state { flex-basis: 100%; text-align: right; font-size: 11px; line-height: 1.4;
+  color: var(--text-muted); margin-top: 3px; padding-right: 2px; user-select: none; }
+.delivery-state[data-state="queued"] { color: #d9a441; }
+.delivery-state[data-state="delivered"] { color: var(--accent); }
+.delivery-state[data-state="answered"] { color: var(--on); opacity: 0.65; }
+.delivery-state[data-state="failed"] { color: #ef4444; font-weight: 600; }
 /* Assistant responses render as plain text on the page — no label, no bubble. */
 .message.assistant .message-content.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(2) infinite; }
 .message.system { align-self: center; font-size: 12px; color: var(--text-muted); font-style: italic; }
