@@ -49,6 +49,10 @@ type Attachment struct {
 type ClientMessage struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
+	// ClientID is a per-send id the browser assigns so the server can report this exact
+	// turn's delivery state back (queued → delivered), letting the UI tell a message
+	// that's actually being worked on from one still waiting in the queue.
+	ClientID string `json:"clientId,omitempty"`
 	// Model the client wants for this session ("" = CLI default). Carried on each
 	// user turn; a change from the running process's model triggers a respawn.
 	Model string `json:"model,omitempty"`

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/clouvet/sprite-swarm/internal/buildinfo"
+	"github.com/clouvet/sprite-swarm/internal/claudecli"
 	"github.com/clouvet/sprite-swarm/internal/config"
 	"github.com/clouvet/sprite-swarm/internal/hub"
 	"github.com/clouvet/sprite-swarm/internal/secret"
@@ -47,6 +48,7 @@ type Fleet interface {
 	StageRelease(ctx context.Context) (string, error)
 	PropagateFleetUpdate(ctx context.Context) (interface{}, error)
 	ReloadFleet(ctx context.Context, target string) (interface{}, error)
+	UpdateCLIFleet(ctx context.Context, target string) (interface{}, error)
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	Timezone(ctx context.Context) string
 	SetTimezone(ctx context.Context, name string) error
@@ -282,6 +284,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/set-env", s.serveSetEnv)
 	mux.HandleFunc("/api/fleet/sprite-access", s.serveSpriteAccess)
 	mux.HandleFunc("/api/fleet/reload-secrets", s.serveReloadSecrets)
+	mux.HandleFunc("/api/fleet/update-cli", s.serveUpdateCLI)
 	mux.HandleFunc("/api/fleet/transcripts", s.serveTranscripts)
 	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
 	mux.HandleFunc("/api/timezone", s.serveTimezone)
@@ -1121,6 +1124,63 @@ func (s *Server) serveReloadSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"reloaded": s.cfg.AgentID})
+}
+
+// serveUpdateCLI updates the Claude Code CLI the agent runs on. The CLI is installed
+// outside the agent binary, so a binary roll never moves it — this is how the fleet's
+// `claude` (and thus the newest model each chat can reach) is kept current.
+//
+//	GET  /api/fleet/update-cli                 → report this node's CLI version
+//	POST /api/fleet/update-cli                 → update THIS node's CLI (background)
+//	POST /api/fleet/update-cli {"target":"all"} → update this node + fan out to peers
+//
+// The local update runs in the BACKGROUND and the handler returns immediately: `claude
+// update` can take a while, and a running turn keeps its binary regardless (only new
+// spawns pick up the update), so there's nothing to wait on. Cross-sprite it's reachable
+// only with the bearer token.
+func (s *Server) serveUpdateCLI(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]interface{}{"id": s.cfg.AgentID, "cli": claudecli.Version(r.Context())})
+		return
+	case http.MethodPost:
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Target string `json:"target"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // empty body is valid: self-update only
+
+	before := claudecli.Version(r.Context())
+	go func() {
+		b, a, err := claudecli.Update(context.Background())
+		switch {
+		case err != nil:
+			log.Printf("claude CLI update: %v (still %s)", err, b)
+		case a != b:
+			log.Printf("claude CLI update: %s -> %s", b, a)
+		default:
+			log.Printf("claude CLI update: already current (%s)", a)
+		}
+	}()
+
+	resp := map[string]interface{}{"self": "updating", "cli_before": before}
+	if t := strings.TrimSpace(body.Target); t != "" {
+		if s.fleet == nil {
+			http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+			return
+		}
+		res, err := s.fleet.UpdateCLIFleet(r.Context(), t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		resp["fleet"] = res
+	}
+	writeJSON(w, resp)
 }
 
 // serveMemory: GET = the always-loaded index; POST = append a memory (P2.2).

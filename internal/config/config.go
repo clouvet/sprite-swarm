@@ -59,6 +59,12 @@ type Config struct {
 	// so they survive the sprite dying. Default on; SPRITE_AGENT_TRANSCRIPT_BACKUP=0 off.
 	TranscriptBackup bool
 
+	// ClaudeAutoUpdate keeps the Claude Code CLI current (updates after boot and on an
+	// interval) so the fleet reaches the newest models without an operator roll. The CLI
+	// lives outside this binary, so a binary roll never moves it. Default on;
+	// SPRITE_AGENT_CLAUDE_AUTOUPDATE=0 off (the manual fleet roll still works).
+	ClaudeAutoUpdate bool
+
 	// Brain (S3/Tigris) pointer. When BrainBucket is empty the brain is
 	// disabled and the agent runs solo (still fully functional for chat).
 	Brain BrainConfig
@@ -135,6 +141,7 @@ func FromEnv() Config {
 		Model:                os.Getenv("SPRITE_AGENT_MODEL"),
 		RoutinesEnabled:      boolEnv("SPRITE_AGENT_ROUTINES", true),
 		TranscriptBackup:     boolEnv("SPRITE_AGENT_TRANSCRIPT_BACKUP", true),
+		ClaudeAutoUpdate:     boolEnv("SPRITE_AGENT_CLAUDE_AUTOUPDATE", true),
 		SpriteAPIToken:       os.Getenv("SPRITE_API_TOKEN"),
 		SpriteAPIGateway:     os.Getenv("SPRITE_API_GATEWAY"),
 		SpriteAPIConnectorID: os.Getenv("SPRITE_API_CONNECTOR_ID"),

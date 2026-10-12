@@ -19,6 +19,7 @@ import (
 	_ "time/tzdata" // embed the IANA tz database so LoadLocation works on minimal images
 
 	"github.com/clouvet/sprite-swarm/internal/buildinfo"
+	"github.com/clouvet/sprite-swarm/internal/claudecli"
 	"github.com/clouvet/sprite-swarm/internal/config"
 	"github.com/clouvet/sprite-swarm/internal/fleet"
 	"github.com/clouvet/sprite-swarm/internal/gateway"
@@ -743,6 +744,14 @@ func main() {
 			return h.InjectMessage(sessionID, framed)
 		}
 		fleetSvc.StartTaskPolling(context.Background(), inject, h.Generating)
+	}
+
+	// Keep the Claude Code CLI current on its own: the CLI is installed outside this
+	// binary, so a fleet roll never moves it, yet it gates which models a chat can reach.
+	// Best-effort, in the background; each update affects only new claude spawns, never an
+	// in-flight turn. SPRITE_AGENT_CLAUDE_AUTOUPDATE=0 opts out (manual roll still works).
+	if cfg.ClaudeAutoUpdate {
+		claudecli.StartAutoUpdate(context.Background(), 12*time.Hour)
 	}
 
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}

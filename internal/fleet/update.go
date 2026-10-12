@@ -213,6 +213,46 @@ func (s *Service) ReloadFleet(ctx context.Context, target string) (interface{}, 
 	return map[string]interface{}{"targets": results}, nil
 }
 
+// UpdateCLIFleet tells each target to update its Claude Code CLI in place (POST
+// /api/fleet/update-cli with no body — each peer runs its own `claude update` in the
+// background and returns immediately). Same fan-out shape as ReloadFleet; the caller
+// updates its OWN CLI separately (the handler does that before fanning out). target ""
+// or "all" means every OTHER agent, else the single match. Pinned sprites are NOT
+// skipped — the CLI is independent of the pinned agent binary, so an experimental sprite
+// still wants the latest CLI.
+func (s *Service) UpdateCLIFleet(ctx context.Context, target string) (interface{}, error) {
+	roster, err := s.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := []UpdateResult{}
+	for _, e := range roster {
+		if e.ID == s.id {
+			continue
+		}
+		if target != "" && target != "all" && e.ID != target {
+			continue
+		}
+		r := UpdateResult{ID: e.ID}
+		switch {
+		case e.URL == "":
+			r.Status = "no url"
+		default:
+			code, callErr := s.authedPost(ctx, strings.TrimRight(e.URL, "/")+"/api/fleet/update-cli")
+			switch {
+			case callErr != nil:
+				r.Status = callErr.Error()
+			case code/100 == 2:
+				r.OK, r.Status = true, "updating"
+			default:
+				r.Status = fmt.Sprintf("http %d", code)
+			}
+		}
+		results = append(results, r)
+	}
+	return map[string]interface{}{"targets": results}, nil
+}
+
 // authedPost POSTs (empty body) to a peer URL with the sprites token as a Bearer.
 func (s *Service) authedPost(ctx context.Context, url string) (int, error) {
 	tok := s.GetSecret(ctx, SecretSpritesAPIToken)
