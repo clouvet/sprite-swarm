@@ -53,6 +53,49 @@ type pendingMsg struct {
 	ClientID   string      `json:"clientId,omitempty"`   // browser's per-send id, so delivery state can be reported back to the UI
 }
 
+// Delivery state machine.
+//
+// A queued message is only ever in one of two live states, derived from its stored
+// fields (phase()); "done" is not a stored state — a message becomes done by being
+// REMOVED from the queue.
+//
+//	queued     Delivered=false   accepted, not yet handed to a process
+//	in-flight  Delivered=true    handed to a process, awaiting its turn in the transcript
+//	(done)     removed           its turn reached the transcript, or it was dropped
+//
+// Transitions, and the single event that drives each:
+//
+//	enqueue                      → append as queued (dedups an identical unconfirmed turn)
+//	deliver (pump)               queued → in-flight   (writes to the subprocess; one at a time, in order)
+//	confirm (on a result)        in-flight → done     (its turn is now in the transcript)
+//	resetDelivery (process died) in-flight → queued   (or done, if its turn already ran — no double-replay)
+//	deliver stale/attempt-cap    queued → done        (an old replay, or past maxSendAttempts → giveUp)
+//	clearUndelivered (fresh load) queued → done        (ONLY a stale, never-sent backlog; recent stays)
+//
+// Liveness lives in the process manager, not here, and the two can drift (a process dies
+// with a message still in-flight). reconcilePending (in the hub, at pump time) is the
+// single authority that reconciles the two: it is the one place that decides, from
+// (front phase, process liveness), whether to reclaim, replay, or leave a message alone.
+// Every recovery event — a process exit, an interrupt, an env restart, a reconnect, the
+// periodic sweep — ultimately funnels delivery decisions back through the pump.
+
+// phase is a queued message's lifecycle state, derived from its stored fields so there's
+// one legible read of state. The stored fields (Delivered/Attempts/EnqueuedAt) stay the
+// on-disk source of truth (unchanged, for cross-restart compatibility).
+type phase string
+
+const (
+	phaseQueued   phase = "queued"
+	phaseInFlight phase = "in-flight"
+)
+
+func (m pendingMsg) phase() phase {
+	if m.Delivered {
+		return phaseInFlight
+	}
+	return phaseQueued
+}
+
 // PendingView is a client-facing view of one queued message, used to rehydrate the UI's
 // per-message delivery state on connect (so a message still waiting after a refresh is
 // shown as queued, not silently missing until it's delivered).
@@ -275,10 +318,20 @@ func (p *pendingStore) sessionsWithPending() []string {
 // frontDelivered reports whether the head of the queue is marked delivered (in flight).
 // Used to detect a wedge: a delivered front with no live process can never be confirmed.
 func (p *pendingStore) frontDelivered(id string) bool {
+	ph, ok := p.frontPhase(id)
+	return ok && ph == phaseInFlight
+}
+
+// frontPhase returns the lifecycle phase of the head message and whether the queue is
+// non-empty — the single, legible read the reconcile authority branches on.
+func (p *pendingStore) frontPhase(id string) (phase, bool) {
 	sp := p.sess(id)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	return len(sp.msgs) > 0 && sp.msgs[0].Delivered
+	if len(sp.msgs) == 0 {
+		return "", false
+	}
+	return sp.msgs[0].phase(), true
 }
 
 // pending reports how many messages are queued (test/inspection helper).

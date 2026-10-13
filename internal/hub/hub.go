@@ -707,33 +707,42 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	}
 }
 
-// pumpPending delivers the session's next queued message in order — one in flight at
-// a time, the next going only after the current is confirmed (see pendingStore.deliver).
-// Safe to call from any path EXCEPT while holding h.mu — its
-// deliver callback takes GetSession (h.mu.RLock), so h.mu -> pending order would
-// invert the pending -> h.mu order used everywhere else.
-// reconcileOrphanedDelivery heals a wedged queue. If the front message is marked
-// delivered (in flight) but NO subprocess is actually running it, its turn can never be
-// confirmed, so the strict one-in-flight rule holds every queued message behind it
-// forever. This happens when a process vanishes without a clean exit event the manager
-// observes — reaped across a re-exec, OOM/SIGKILL, or a suspend that tore it down — so
-// onExit's resetDelivery never ran. Treat it like a death: resetDelivery drops it if the
-// transcript shows it already ran, else un-delivers it so the pump below replays it onto
-// a fresh process. A normal in-flight turn (a live process) is left untouched. Cheap and
-// idempotent, so pumpPending can call it on every trigger (notably a client reconnect).
-func (h *Hub) reconcileOrphanedDelivery(sessionID string) {
-	if !h.pending.frontDelivered(sessionID) {
-		return
+// reconcilePending is the single authority that reconciles the queue against process
+// liveness before a delivery attempt (the pending store and the process manager each
+// track part of the truth and can drift). Its decision table, given the FRONT message:
+//
+//	front is queued (not delivered)        → do nothing; deliver() below sends it.
+//	front in-flight + a live process       → do nothing; a real turn is running.
+//	front in-flight + NO live process      → reclaim: resetDelivery un-delivers it (or
+//	                                         drops it if its turn already ran), so the
+//	                                         pump replays it onto a fresh process.
+//
+// The last case is a wedge: a process that vanished without a clean exit the manager
+// observed (reaped across a re-exec, OOM/SIGKILL, a suspend that tore it down) leaves a
+// message in-flight-but-unconfirmable, and the strict one-in-flight rule then holds every
+// message behind it forever. (The sibling wedge — a live-but-defunct process whose stdin
+// is closed — is handled in deliver's send path, which reaps the dead process before
+// respawning.) Cheap and idempotent, so every pump can call it.
+func (h *Hub) reconcilePending(sessionID string) {
+	if ph, ok := h.pending.frontPhase(sessionID); !ok || ph != phaseInFlight {
+		return // front is queued (or empty) — nothing in flight to reconcile
 	}
 	if _, err := h.processMgr.Get(sessionID); err == nil {
-		return // a process is live — this is a real in-flight turn, not an orphan
+		return // a live process is running this turn — leave it
 	}
 	log.Printf("[%s] in-flight message has no live process — reclaiming the wedged queue", sessionID)
 	h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
 }
 
+// pumpPending delivers the session's next queued message in order — one in flight at a
+// time, the next going only after the current is confirmed (see pendingStore.deliver). It
+// first runs reconcilePending (the single liveness-vs-queue authority), so every trigger
+// — a connect, a new turn, a process exit, the periodic sweep — self-heals a wedged queue.
+// Safe to call from any path EXCEPT while holding h.mu: its deliver callback takes
+// GetSession (h.mu.RLock), so taking h.mu first would invert the pending -> h.mu order
+// used everywhere else.
 func (h *Hub) pumpPending(sessionID string) {
-	h.reconcileOrphanedDelivery(sessionID)
+	h.reconcilePending(sessionID)
 	err := h.pending.deliver(sessionID,
 		func(m pendingMsg) error { // deliver: send, respawning once if the process is gone/dead
 			if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {
