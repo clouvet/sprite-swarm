@@ -255,6 +255,23 @@ func (p *pendingStore) snapshot(id string) []PendingView {
 	return out
 }
 
+// sessionsWithPending returns the ids of sessions that currently have queued messages,
+// so a periodic sweep can re-drive delivery without waiting for a client action.
+func (p *pendingStore) sessionsWithPending() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ids := make([]string, 0, len(p.m))
+	for id, sp := range p.m {
+		sp.mu.Lock()
+		n := len(sp.msgs)
+		sp.mu.Unlock()
+		if n > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // frontDelivered reports whether the head of the queue is marked delivered (in flight).
 // Used to detect a wedge: a delivered front with no live process can never be confirmed.
 func (p *pendingStore) frontDelivered(id string) bool {

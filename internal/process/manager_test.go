@@ -14,6 +14,25 @@ func fakeProcess(id string) *HeadlessProcess {
 	return &HeadlessProcess{SessionID: id, Cmd: &exec.Cmd{}, ctx: ctx, cancel: cancel}
 }
 
+// KillAndWait must EVICT the process from the map immediately (before blocking on its
+// exit), so a following Spawn creates a fresh one instead of returning the dead handle.
+// The hub's reap-on-send-failure recovery depends on this: when a defunct claude (closed
+// stdin, still mapped) makes delivery fail, it KillAndWaits then respawns, and the respawn
+// must not hand back the same dead process.
+func TestKillAndWaitEvictsImmediately(t *testing.T) {
+	m := NewManager()
+	hp := fakeProcess("s")
+	hp.Exited = make(chan struct{})
+	close(hp.Exited) // already-dead: KillAndWait's wait returns at once
+	m.processes["s"] = hp
+
+	m.KillAndWait("s")
+
+	if m.has("s") {
+		t.Fatal("KillAndWait should evict the process from the map so a respawn is fresh")
+	}
+}
+
 // setGenerating flips IsGenerating under the manager lock, the same lock the
 // grace timer holds when it reads the field — keeps the test race-free.
 func (m *Manager) setGenerating(hp *HeadlessProcess, v bool) {
