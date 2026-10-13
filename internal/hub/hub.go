@@ -123,7 +123,30 @@ func NewHub(cfg Config) *Hub {
 	// reexec, OOM). Delivery happens on the next pump (client connect / new turn).
 	h.pending.load()
 	go h.watchProjectsDirectory()
+	go h.startPumpSweep()
 	return h
+}
+
+// pumpSweepInterval is how often the hub re-drives queued deliveries on its own. var so
+// tests can shrink it.
+var pumpSweepInterval = 30 * time.Second
+
+// startPumpSweep periodically re-pumps every session that still has queued messages, so
+// a stuck queue heals without needing a client action. The healing itself lives in
+// pumpPending (reconcileOrphanedDelivery reclaims a delivered front whose process
+// vanished; the deliver path reaps a defunct process on a failed send) — this just keeps
+// triggering it. pumpPending is a cheap no-op for a healthy in-flight turn (front
+// delivered + a live process), so the sweep only does real work for a queue that isn't
+// draining. This closes the gap where a wedged session had a client attached but no
+// event to re-drive it, so it sat stuck until a human intervened.
+func (h *Hub) startPumpSweep() {
+	t := time.NewTicker(pumpSweepInterval)
+	defer t.Stop()
+	for range t.C {
+		for _, sid := range h.pending.sessionsWithPending() {
+			h.pumpPending(sid)
+		}
+	}
 }
 
 // NewClient builds a client for a WS connection. resume is true when the browser is
@@ -718,6 +741,14 @@ func (h *Hub) pumpPending(sessionID string) {
 				if sess == nil {
 					return err
 				}
+				// The send failed: the process is gone, or it's a finished/defunct claude
+				// whose stdin is closed but is still in the manager's map. Evict it before
+				// respawning — Spawn returns the EXISTING mapped process, so without this
+				// reap the "respawn" is a no-op and the retry writes to the same dead pipe
+				// again. That's the wedge that stranded a live-but-idle session's whole
+				// queue (lever): delivery failing forever with no recovery. KillAndWait
+				// removes it from the map first, so the respawn below is genuinely fresh.
+				h.processMgr.KillAndWait(sessionID)
 				h.spawnClaudeForSession(sessionID, sess)
 				time.Sleep(500 * time.Millisecond)
 				if err := h.processMgr.SendMessage(sessionID, m.Content); err != nil {

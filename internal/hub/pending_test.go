@@ -204,6 +204,35 @@ func TestWedgedQueueRecoversAfterOrphanReset(t *testing.T) {
 	}
 }
 
+// sessionsWithPending lists only sessions that currently hold queued messages — the set
+// the periodic pump sweep re-drives.
+func TestSessionsWithPending(t *testing.T) {
+	p := newPendingStore("")
+	h := &harness{processed: map[string]bool{}}
+	enq(p, "a", "x")
+	enq(p, "b", "y")
+	_ = p.sess("c")  // touched but empty — must NOT be listed
+	enq(p, "b", "y") // dup, deduped — b still has 1
+
+	got := map[string]bool{}
+	for _, id := range p.sessionsWithPending() {
+		got[id] = true
+	}
+	if !got["a"] || !got["b"] || got["c"] || len(got) != 2 {
+		t.Fatalf("sessionsWithPending = %v, want {a,b}", got)
+	}
+
+	// Drain a → it drops out of the set.
+	_ = h.deliver(p, "a")
+	h.processed["x"] = true
+	h.confirm(p, "a")
+	for _, id := range p.sessionsWithPending() {
+		if id == "a" {
+			t.Fatal("a should no longer be pending after it drained")
+		}
+	}
+}
+
 // snapshot reports the queue oldest-first with each message's clientId and whether it's
 // in flight — what the UI needs to re-show queued/working turns on (re)connect.
 func TestSnapshotReportsQueueState(t *testing.T) {
