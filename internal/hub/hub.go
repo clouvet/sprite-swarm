@@ -771,6 +771,12 @@ func (h *Hub) reconcilePending(sessionID string) {
 // GetSession (h.mu.RLock), so taking h.mu first would invert the pending -> h.mu order
 // used everywhere else.
 func (h *Hub) pumpPending(sessionID string) {
+	// Retry the clear: if the in-flight message's turn has already started responding in
+	// the transcript but the live result event failed to confirm it, it would otherwise
+	// stay pinned in-flight forever, wedging everything queued behind it (the "every other
+	// message sticks" bug). confirm only drops a message whose turn demonstrably began, so
+	// this never clears — or loses — a turn that hasn't started.
+	h.pending.confirm(sessionID, h.transcriptTurnStarted(sessionID))
 	h.reconcilePending(sessionID)
 	err := h.pending.deliver(sessionID,
 		func(m pendingMsg) error { // deliver: send, respawning once if the process is gone/dead
@@ -868,6 +874,68 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 			if strings.TrimSpace(extractText(rec.Message.Content)) == text {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// transcriptTurnStarted returns a predicate for confirm(): a delivered message whose
+// turn has begun producing output in the transcript (an assistant record appears AFTER
+// its user turn) is safe to clear from the queue. This is the SAME acceptance signal the
+// live content_block_start confirm uses — it does not clear a message that was received
+// but produced nothing (a stalled/defunct process), so re-running the clear can't lose an
+// un-started turn. pumpPending runs it on every trigger, so a clear that the live result
+// event missed (which otherwise pins the message in-flight forever and wedges everything
+// queued behind it) self-heals on the next pump or periodic sweep.
+func (h *Hub) transcriptTurnStarted(sessionID string) func(pendingMsg) bool {
+	return func(m pendingMsg) bool {
+		path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+		f, err := os.Open(path)
+		if err != nil {
+			return false
+		}
+		defer f.Close()
+		return turnStartedInTranscript(f, m.Text)
+	}
+}
+
+// turnStartedInTranscript reports whether text appears as a user turn AND is followed by
+// any assistant output — i.e. the turn was accepted and began responding. Pure (takes a
+// reader) so it's unit-testable without the transcript-path machinery. Best-effort: false
+// on no match, so we never clear a turn that hasn't demonstrably started.
+func turnStartedInTranscript(r io.Reader, text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	seen := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		isUser := rec.Type == "user" || rec.Message.Role == "user"
+		isAssistant := rec.Type == "assistant" || rec.Message.Role == "assistant"
+		if !seen {
+			if isUser && strings.TrimSpace(extractText(rec.Message.Content)) == text {
+				seen = true // found the user turn; now look for output after it
+			}
+			continue
+		}
+		if isAssistant {
+			return true // the turn produced assistant output → accepted, safe to clear
 		}
 	}
 	return false
