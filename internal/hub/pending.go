@@ -298,6 +298,16 @@ func (p *pendingStore) snapshot(id string) []PendingView {
 	return out
 }
 
+// dump returns a copy of the session's queue for read-only inspection (diagnostics).
+func (p *pendingStore) dump(id string) []pendingMsg {
+	sp := p.sess(id)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	out := make([]pendingMsg, len(sp.msgs))
+	copy(out, sp.msgs)
+	return out
+}
+
 // sessionsWithPending returns the ids of sessions that currently have queued messages,
 // so a periodic sweep can re-drive delivery without waiting for a client action.
 func (p *pendingStore) sessionsWithPending() []string {

@@ -41,6 +41,7 @@ type Fleet interface {
 	DrainInbox(ctx context.Context) error
 	PeerStatus(ctx context.Context, target string) (interface{}, error)
 	PeerResult(ctx context.Context, target, session string) (interface{}, error)
+	PeerPending(ctx context.Context, target, session string) (interface{}, error)
 	PrepareSelfUpdate(ctx context.Context) (bool, string, error)
 	Reexec() error
 	UpdateFleet(ctx context.Context, target string) (interface{}, error)
@@ -275,6 +276,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/nudge", s.serveNudge)
 	mux.HandleFunc("/api/fleet/status", s.serveStatus)
 	mux.HandleFunc("/api/fleet/result", s.serveFleetResult)
+	mux.HandleFunc("/api/fleet/pending", s.serveFleetPending)
 	mux.HandleFunc("/api/fleet/update", s.serveUpdate)
 	mux.HandleFunc("/api/fleet/deploy-app", s.serveDeployApp)
 	mux.HandleFunc("/api/fleet/update-app", s.serveUpdateApp)
@@ -421,6 +423,10 @@ func (s *Server) serveSessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(rest, "/result") {
 		s.serveSessionResult(w, r, strings.TrimSuffix(rest, "/result"))
+		return
+	}
+	if strings.HasSuffix(rest, "/pending") {
+		s.serveSessionPending(w, r, strings.TrimSuffix(rest, "/pending"))
 		return
 	}
 	if strings.HasSuffix(rest, "/context") {
@@ -673,6 +679,50 @@ func (s *Server) serveFleetResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// serveFleetPending returns a read-only diagnostic of a session's pending/delivery queue
+// on any sprite: GET /api/fleet/pending?target=<id>&session=<sid>. No target (or our own
+// id) dumps this sprite's queue directly; otherwise it pulls from the peer. This is the
+// lens for diagnosing a stuck conversation without rebooting it (which destroys the
+// evidence) — it shows each queued message's phase and whether the clear logic matches it.
+func (s *Server) serveFleetPending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	session := q.Get("session")
+	if session == "" {
+		http.Error(w, "session is required", http.StatusBadRequest)
+		return
+	}
+	target := strings.TrimSpace(q.Get("target"))
+	if target == "" || target == s.cfg.AgentID {
+		writeJSON(w, map[string]interface{}{"target": s.cfg.AgentID, "session": session, "pending": s.hub.PendingDump(session)})
+		return
+	}
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	res, err := s.fleet.PeerPending(r.Context(), target, session)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
+// serveSessionPending is the receiving end of a pending-queue pull: it dumps this
+// session's live queue diagnostic (see Hub.PendingDump). Cross-sprite it's reachable
+// only with the bearer on the public URL; on localhost it's open.
+func (s *Server) serveSessionPending(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"session": id, "pending": s.hub.PendingDump(id)})
 }
 
 // serveDeployApp hosts a user app on a fresh, dedicated BARE sprite (no agent), so
