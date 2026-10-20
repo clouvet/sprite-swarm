@@ -99,6 +99,27 @@ func (s *Service) PeerResult(ctx context.Context, target, session string) (inter
 	return res, nil
 }
 
+// PeerPending fetches a session's pending/delivery-queue diagnostic from a worker, by an
+// authenticated GET of its /api/sessions/<session>/pending. Mirrors PeerResult; used to
+// diagnose a stuck conversation on another sprite without rebooting it. Empty session is
+// rejected.
+func (s *Service) PeerPending(ctx context.Context, target, session string) (interface{}, error) {
+	if target == "" || session == "" {
+		return nil, fmt.Errorf("target and session are required")
+	}
+	url := s.agentURL(ctx, target)
+	if url == "" {
+		return map[string]interface{}{"session": session, "state": "gone",
+			"note": "target not in the fleet roster (destroyed, or never registered)"}, nil
+	}
+	res, err := s.authedGetJSON(ctx, strings.TrimRight(url, "/")+"/api/sessions/"+session+"/pending")
+	if err != nil {
+		return map[string]interface{}{"session": session, "state": "paused",
+			"note": "couldn't reach the worker (paused/suspended?): " + err.Error()}, nil
+	}
+	return res, nil
+}
+
 // fetchHealth does an authenticated GET of a peer's /health.
 func (s *Service) fetchHealth(ctx context.Context, baseURL string) (interface{}, error) {
 	return s.authedGetJSON(ctx, strings.TrimRight(baseURL, "/")+"/health")

@@ -48,4 +48,31 @@ func TestTurnStartedInTranscript(t *testing.T) {
 	if turnStartedInTranscript(strings.NewReader(withReply), "   ") {
 		t.Fatal("empty text must not count as started")
 	}
+
+	// Whitespace-robustness: the stored pending text and the transcript's copy differ
+	// only in whitespace (a trailing space, \n vs \n\n). The match must still succeed —
+	// this is the silent-mismatch class that pinned a message in-flight and wedged the
+	// queue behind it.
+	tx := `{"type":"user","message":{"role":"user","content":"Do the validation.\nUpdate the tests."}}` + "\n" +
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}`
+	if !turnStartedInTranscript(strings.NewReader(tx), "Do the validation. \n\nUpdate the tests.") {
+		t.Fatal("a whitespace-only difference must not break the match")
+	}
+}
+
+func TestNormalizeTurnText(t *testing.T) {
+	cases := map[string]string{
+		"a  b":            "a b",
+		"a\n\nb":          "a b",
+		"  trim me  ":     "trim me",
+		"x \n y\t z":      "x y z",
+		"":                "",
+		"   ":             "",
+		"Do the thing.\n": "Do the thing.",
+	}
+	for in, want := range cases {
+		if got := normalizeTurnText(in); got != want {
+			t.Errorf("normalizeTurnText(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

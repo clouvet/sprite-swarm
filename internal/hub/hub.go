@@ -7,7 +7,9 @@ package hub
 
 import (
 	"bufio"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -736,6 +738,37 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	}
 }
 
+// PendingDump returns a read-only diagnostic of a session's pending queue — the lens for
+// a stuck session. For each queued message it reports its phase and delivery bookkeeping
+// plus whether the clear logic currently matches it against the transcript. The tell for
+// a wedge: a message in phase "in-flight" whose turnStarted is true (its turn ran) but
+// that's still here — the clear should have removed it — or in-flight with matchesTurn
+// false though its turn is plainly in the transcript, i.e. the text match is the culprit.
+func (h *Hub) PendingDump(sessionID string) []map[string]interface{} {
+	msgs := h.pending.dump(sessionID)
+	started := h.transcriptTurnStarted(sessionID)
+	out := make([]map[string]interface{}, 0, len(msgs))
+	for _, m := range msgs {
+		var age int64
+		if m.EnqueuedAt > 0 {
+			age = nowUnix() - m.EnqueuedAt
+		}
+		norm := normalizeTurnText(m.Text)
+		sum := sha1.Sum([]byte(norm))
+		out = append(out, map[string]interface{}{
+			"clientId":    m.ClientID,
+			"phase":       string(m.phase()),
+			"attempts":    m.Attempts,
+			"enqueuedAgo": age,
+			"textLen":     len(norm),
+			"textSha1":    hex.EncodeToString(sum[:])[:12],
+			"matchesTurn": h.transcriptHasUserTurn(sessionID, m.Text),
+			"turnStarted": started(m),
+		})
+	}
+	return out
+}
+
 // reconcilePending is the single authority that reconciles the queue against process
 // liveness before a delivery attempt (the pending store and the process manager each
 // track part of the truth and can drift). Its decision table, given the FRONT message:
@@ -839,8 +872,19 @@ func (h *Hub) transcriptProcessed(sessionID string) func(pendingMsg) bool {
 // processed before a death (so a replay doesn't re-run it). Best-effort: on any read
 // / parse trouble it returns false, so we err toward re-delivering (a rare duplicate)
 // rather than dropping (a lost instruction).
+// normalizeTurnText canonicalizes a user turn for matching: trim and collapse every
+// internal whitespace run to a single space. The clear/dedup logic matches a pending
+// message against the transcript's copy of the same turn, and an exact-equality match
+// is brittle — a stray trailing space or a \n vs \n\n difference between what we stored
+// and what the transcript holds silently fails the match, leaving the message pinned
+// in-flight and wedging everything queued behind it. Normalizing both sides removes that
+// whole class of silent mismatch; distinct human turns don't collide after it.
+func normalizeTurnText(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
-	text = strings.TrimSpace(text)
+	text = normalizeTurnText(text)
 	if text == "" {
 		return false
 	}
@@ -871,7 +915,7 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 			continue
 		}
 		if rec.Type == "user" || rec.Message.Role == "user" {
-			if strings.TrimSpace(extractText(rec.Message.Content)) == text {
+			if normalizeTurnText(extractText(rec.Message.Content)) == text {
 				return true
 			}
 		}
@@ -904,7 +948,7 @@ func (h *Hub) transcriptTurnStarted(sessionID string) func(pendingMsg) bool {
 // reader) so it's unit-testable without the transcript-path machinery. Best-effort: false
 // on no match, so we never clear a turn that hasn't demonstrably started.
 func turnStartedInTranscript(r io.Reader, text string) bool {
-	text = strings.TrimSpace(text)
+	text = normalizeTurnText(text)
 	if text == "" {
 		return false
 	}
@@ -929,7 +973,7 @@ func turnStartedInTranscript(r io.Reader, text string) bool {
 		isUser := rec.Type == "user" || rec.Message.Role == "user"
 		isAssistant := rec.Type == "assistant" || rec.Message.Role == "assistant"
 		if !seen {
-			if isUser && strings.TrimSpace(extractText(rec.Message.Content)) == text {
+			if isUser && normalizeTurnText(extractText(rec.Message.Content)) == text {
 				seen = true // found the user turn; now look for output after it
 			}
 			continue
