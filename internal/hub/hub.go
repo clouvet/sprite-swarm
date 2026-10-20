@@ -753,18 +753,90 @@ func (h *Hub) PendingDump(sessionID string) []map[string]interface{} {
 // The last case is a wedge: a process that vanished without a clean exit the manager
 // observed (reaped across a re-exec, OOM/SIGKILL, a suspend that tore it down) leaves a
 // message in-flight-but-unconfirmable, and the strict one-in-flight rule then holds every
-// message behind it forever. (The sibling wedge — a live-but-defunct process whose stdin
-// is closed — is handled in deliver's send path, which reaps the dead process before
-// respawning.) Cheap and idempotent, so every pump can call it.
+// message behind it forever.
+//
+// A sibling wedge the inspector surfaced: a message marked in-flight on a LIVE process
+// that never actually processed it — delivered to a defunct/idle process that silently
+// swallowed the write (attempts=1, but the turn never appears in the transcript). Here a
+// process exists, so the no-process branch doesn't fire; the turn never started, so the
+// sweep-clear correctly won't clear it; and nothing re-sends it, so it sits in-flight
+// forever. reconcile now reaps-and-replays it — but ONLY once the transcript has gone
+// quiet past reclaimGrace, which guarantees no turn is actually running (a live turn
+// writes to the transcript), so we never abort real work (a long tool call has already
+// produced output, so turnStarted would be true and we'd leave it).
+//
+// Cheap and idempotent, so every pump can call it.
 func (h *Hub) reconcilePending(sessionID string) {
-	if ph, ok := h.pending.frontPhase(sessionID); !ok || ph != phaseInFlight {
+	ph, ok := h.pending.frontPhase(sessionID)
+	if !ok || ph != phaseInFlight {
 		return // front is queued (or empty) — nothing in flight to reconcile
 	}
-	if _, err := h.processMgr.Get(sessionID); err == nil {
-		return // a live process is running this turn — leave it
+	_, procErr := h.processMgr.Get(sessionID)
+	switch decideReconcile(true, procErr == nil, h.frontTurnStarted(sessionID), h.transcriptIdle(sessionID), reclaimGrace) {
+	case reconcileReclaim:
+		log.Printf("[%s] in-flight message has no live process — reclaiming the wedged queue", sessionID)
+		h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
+	case reconcileReapReplay:
+		log.Printf("[%s] in-flight message never started and transcript idle — reaping the process and replaying", sessionID)
+		h.processMgr.KillAndWait(sessionID) // evict the process that swallowed the turn
+		h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
 	}
-	log.Printf("[%s] in-flight message has no live process — reclaiming the wedged queue", sessionID)
-	h.pending.resetDelivery(sessionID, h.transcriptProcessed(sessionID))
+}
+
+// reclaimGrace is how long the transcript must be quiet before reconcile treats an
+// in-flight-but-never-started message as a failed delivery (vs. one just handed over, or
+// one legitimately waiting behind active work). A running turn writes to the transcript,
+// so quiet-for-this-long means nothing is actually running. var for tests.
+var reclaimGrace = 90 * time.Second
+
+type reconcileAction int
+
+const (
+	reconcileNone reconcileAction = iota
+	reconcileReclaim
+	reconcileReapReplay
+)
+
+// decideReconcile is the pure decision for a front in-flight message: reclaim when its
+// process is gone; reap-and-replay when it never started and the transcript has been idle
+// past the grace (delivery didn't take); otherwise leave it (a live turn is running, it
+// already started, or it may have just been delivered). Pure so it's unit-testable.
+func decideReconcile(inFlight, hasProcess, turnStarted bool, transcriptIdle, grace time.Duration) reconcileAction {
+	if !inFlight {
+		return reconcileNone
+	}
+	if !hasProcess {
+		return reconcileReclaim
+	}
+	if turnStarted {
+		return reconcileNone // its turn produced output — a real/served turn; confirm clears it
+	}
+	if transcriptIdle < grace {
+		return reconcileNone // maybe just delivered, or waiting behind still-active work
+	}
+	return reconcileReapReplay // delivered but never processed on an idle process
+}
+
+// frontTurnStarted reports whether the head in-flight message's turn has produced output
+// in the transcript. False when the queue is empty.
+func (h *Hub) frontTurnStarted(sessionID string) bool {
+	m, ok := h.pending.front(sessionID)
+	if !ok {
+		return false
+	}
+	return h.transcriptTurnStarted(sessionID)(m)
+}
+
+// transcriptIdle returns how long since the session's transcript was last written — a
+// reliable "is anything running" signal (a live turn appends to it). A missing/unreadable
+// transcript reports a long idle, so a stuck delivery still gets reclaimed.
+func (h *Hub) transcriptIdle(sessionID string) time.Duration {
+	path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return time.Since(fi.ModTime())
 }
 
 // pumpPending delivers the session's next queued message in order — one in flight at a

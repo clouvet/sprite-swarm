@@ -332,6 +332,17 @@ func (p *pendingStore) frontDelivered(id string) bool {
 	return ok && ph == phaseInFlight
 }
 
+// front returns a copy of the head message and whether the queue is non-empty.
+func (p *pendingStore) front(id string) (pendingMsg, bool) {
+	sp := p.sess(id)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if len(sp.msgs) == 0 {
+		return pendingMsg{}, false
+	}
+	return sp.msgs[0], true
+}
+
 // frontPhase returns the lifecycle phase of the head message and whether the queue is
 // non-empty — the single, legible read the reconcile authority branches on.
 func (p *pendingStore) frontPhase(id string) (phase, bool) {
