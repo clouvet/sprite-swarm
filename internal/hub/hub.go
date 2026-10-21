@@ -218,6 +218,83 @@ func (h *Hub) sessionProjectsDir(id string) string {
 	return config.ProjectsDirFor(h.sessionCWD(id))
 }
 
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// resolveTranscriptPath returns where to READ a session's transcript. Normally that's the
+// per-chat path; but a conversation created before the per-chat-workdir change has its
+// .jsonl under a different cwd's projects dir, so when the per-chat path is missing we
+// fall back to finding the orphan and reading it in place. sessionID keys the per-chat
+// dir; fileID is the transcript's basename (the claude session uuid, == sessionID for
+// deterministic ids).
+func (h *Hub) resolveTranscriptPath(sessionID, fileID string) string {
+	perChat := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), fileID)
+	if fileExists(perChat) {
+		return perChat
+	}
+	if orphan := h.findOrphanTranscript(fileID); orphan != "" {
+		return orphan
+	}
+	return perChat
+}
+
+// findOrphanTranscript searches every cwd's projects dir for <fileID>.jsonl and returns
+// the first non-empty match — an older conversation's transcript under the pre-per-chat
+// layout — or "". Only consulted when the per-chat path is absent, so it never shadows a
+// live transcript.
+func (h *Hub) findOrphanTranscript(fileID string) string {
+	root := filepath.Dir(h.sessionProjectsDir(fileID)) // ~/.claude/projects
+	matches, _ := filepath.Glob(filepath.Join(root, "*", fileID+".jsonl"))
+	var empty string
+	for _, m := range matches {
+		fi, err := os.Stat(m)
+		if err != nil {
+			continue
+		}
+		if fi.Size() > 0 {
+			return m
+		}
+		if empty == "" {
+			empty = m
+		}
+	}
+	return empty
+}
+
+// migrateOrphanTranscript copies a pre-per-chat-workdir conversation's transcript into the
+// per-chat location on first open, so `claude --resume` (which reads from the per-chat cwd)
+// can CONTINUE it, not just render it. One-time and idempotent — a no-op once the per-chat
+// file exists. Best-effort: on any failure the read-fallback still renders it, so the chat
+// is never worse off. Writes atomically so a concurrent reader never sees a partial copy.
+func (h *Hub) migrateOrphanTranscript(sessionID string) {
+	perChat := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+	if fileExists(perChat) {
+		return
+	}
+	orphan := h.findOrphanTranscript(sessionID)
+	if orphan == "" || orphan == perChat {
+		return
+	}
+	data, err := os.ReadFile(orphan)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(perChat), 0o755); err != nil {
+		return
+	}
+	tmp := perChat + ".migrating"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, perChat); err != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	log.Printf("[%s] migrated pre-workdir transcript into the per-chat layout (%d bytes) — now loads and resumes", sessionID, len(data))
+}
+
 func (h *Hub) spawnOpts(sessionID string) process.Options {
 	cwd := h.sessionCWD(sessionID)
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
@@ -270,12 +347,17 @@ func (h *Hub) registerClient(client *Client) {
 	h.clients[client.sessionID][client] = true
 	h.processMgr.CancelGracePeriod(client.sessionID)
 
+	// Opening a conversation created before the per-chat-workdir change: pull its
+	// transcript from the old layout into the per-chat location so it both loads and
+	// resumes. No-op for current chats (per-chat file already present).
+	h.migrateOrphanTranscript(client.sessionID)
+
 	sess := h.sessions[client.sessionID]
 	if sess == nil {
 		sess = session.NewSession(client.sessionID, h.sessionCWD(client.sessionID))
 		// Deterministic ids: the transcript is <id>.jsonl. If it already exists
 		// this is a resume (restart recovery / co-presence).
-		if _, err := os.Stat(watcher.TranscriptPath(h.sessionProjectsDir(client.sessionID), client.sessionID)); err == nil {
+		if _, err := os.Stat(h.resolveTranscriptPath(client.sessionID, client.sessionID)); err == nil {
 			log.Printf("session %s: found existing transcript, will resume", client.sessionID)
 		} else {
 			log.Printf("session %s: new", client.sessionID)
@@ -860,7 +942,7 @@ func (h *Hub) frontTurnStarted(sessionID string) bool {
 // reliable "is anything running" signal (a live turn appends to it). A missing/unreadable
 // transcript reports a long idle, so a stuck delivery still gets reclaimed.
 func (h *Hub) transcriptIdle(sessionID string) time.Duration {
-	path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+	path := h.resolveTranscriptPath(sessionID, sessionID)
 	fi, err := os.Stat(path)
 	if err != nil {
 		return 24 * time.Hour
@@ -960,7 +1042,7 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 	if text == "" {
 		return false
 	}
-	path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+	path := h.resolveTranscriptPath(sessionID, sessionID)
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -1005,7 +1087,7 @@ func (h *Hub) transcriptHasUserTurn(sessionID, text string) bool {
 // queued behind it) self-heals on the next pump or periodic sweep.
 func (h *Hub) transcriptTurnStarted(sessionID string) func(pendingMsg) bool {
 	return func(m pendingMsg) bool {
-		path := watcher.TranscriptPath(h.sessionProjectsDir(sessionID), sessionID)
+		path := h.resolveTranscriptPath(sessionID, sessionID)
 		f, err := os.Open(path)
 		if err != nil {
 			return false
@@ -1413,7 +1495,7 @@ func (h *Hub) handleWatcherEvents(sessionID string, w *watcher.SessionWatcher) {
 // the whole payload, so a reconnect on flaky wifi doesn't re-ship hundreds of KB and
 // wipe+rebuild a long conversation's DOM every few seconds (ETag-style).
 func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGenerating bool, clientSig string) {
-	filePath := watcher.TranscriptPath(h.sessionProjectsDir(client.sessionID), claudeUUID)
+	filePath := h.resolveTranscriptPath(client.sessionID, claudeUUID)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return
@@ -1514,7 +1596,7 @@ func (h *Hub) SessionResult(sessionID string) (text string, tsMillis int64, ok b
 	if sess := h.GetSession(sessionID); sess != nil && sess.ClaudeUUID != "" {
 		claudeUUID = sess.ClaudeUUID
 	}
-	file, err := os.Open(watcher.TranscriptPath(h.sessionProjectsDir(sessionID), claudeUUID))
+	file, err := os.Open(h.resolveTranscriptPath(sessionID, claudeUUID))
 	if err != nil {
 		return "", 0, false
 	}
