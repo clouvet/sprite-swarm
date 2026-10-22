@@ -540,24 +540,31 @@ func (h *Hub) handleUserMessage(client *Client, msg *ClientMessage) {
 
 	sess := h.GetSession(client.sessionID)
 
-	// Model selection: the turn carries the chosen model. Record it so (re)spawns
-	// use it, and if a process is already running under a different model, drop it
-	// so the block below respawns with the new --model (the transcript resumes, so
-	// context carries over). Idempotent when the model is unchanged.
+	// The turn carries the chosen model; record it so the (re)spawn below uses --model.
 	if sess != nil && msg.Model != sess.GetModel() {
 		sess.SetModel(msg.Model)
-		if hp, err := h.processMgr.Get(client.sessionID); err == nil && hp.Model != msg.Model {
-			log.Printf("[%s] model change %q -> %q; respawning", client.sessionID, hp.Model, msg.Model)
-			// Wait for the old process to fully die before the pump below respawns —
-			// otherwise two claude --resume processes briefly share this transcript.
-			h.processMgr.KillAndWait(client.sessionID)
+	}
+
+	// Interrupt-with-context: a message sent WHILE a turn is running PREEMPTS it rather
+	// than queuing behind it. We stop the running turn and drop its in-flight message from
+	// the queue if its turn already reached the transcript (its partial work stays there),
+	// so this new message delivers NOW as a fresh --resume turn that sees everything so far
+	// plus the new context. That's how you add context mid-turn — and it keeps on-screen
+	// order matching the transcript: the message is acted on in place, not queued adjacent
+	// to the previous one and then reordered on refresh (msg1, resp1, msg2, resp2). It also
+	// subsumes the old model-change respawn (a model switch mid-turn preempts the same way,
+	// and the new turn spawns under the new --model). If the running turn hadn't yet written
+	// its user turn (a near-instant interrupt), resetDelivery keeps that message queued so
+	// it isn't lost and it simply runs before this one.
+	if _, err := h.processMgr.Get(client.sessionID); err == nil {
+		log.Printf("[%s] mid-turn message — preempting the running turn", client.sessionID)
+		h.processMgr.KillAndWait(client.sessionID)
+		h.pending.resetDelivery(client.sessionID, h.transcriptProcessed(client.sessionID))
+		if sess != nil {
 			sess.SetState(session.StateIdle)
-			// We deliberately killed the in-flight turn. onExit is skipped for a killed
-			// process (it isn't current), so reconcile here — drop turns it already ran
-			// (KillAndWait has flushed its writes), replay only the genuinely unsent ones;
-			// otherwise the aborted turn's message would never resume on the new process.
-			h.pending.resetDelivery(client.sessionID, h.transcriptProcessed(client.sessionID))
 		}
+		resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
+		h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
 	}
 
 	// Queue the turn, then pump: it's persisted first (so a compaction can't drop it,
