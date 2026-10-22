@@ -252,7 +252,15 @@ func NewHeadlessProcess(opts Options) (*HeadlessProcess, error) {
 	return hp, nil
 }
 
-// SendMessage writes a user turn to Claude over stream-json stdin.
+// SendMessage writes a user turn to Claude over stream-json stdin, then CLOSES stdin.
+//
+// One process per turn: a headless `claude --print` reads stream-json from stdin and,
+// on EOF, processes what it got and exits. Closing stdin after the single message is
+// what makes the process run exactly this one turn and then exit cleanly (verified: it
+// emits a `result` and exits 0). The hub drives the next turn off that exit (onExit),
+// not off any inference about a long-lived process's state — which is the whole point:
+// "process running" = turn in progress, "process exited" = turn done, no guessing. Each
+// process therefore takes exactly one SendMessage; the next turn is a fresh process.
 func (hp *HeadlessProcess) SendMessage(content interface{}) error {
 	hp.mu.Lock()
 	defer hp.mu.Unlock()
@@ -272,7 +280,11 @@ func (hp *HeadlessProcess) SendMessage(content interface{}) error {
 	if _, err := hp.Stdin.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("write stdin: %w", err)
 	}
-	log.Printf("[%s] sent message to claude", hp.SessionID)
+	// EOF: tells claude that's the whole input, so it runs this one turn and exits.
+	if err := hp.Stdin.Close(); err != nil {
+		return fmt.Errorf("close stdin: %w", err)
+	}
+	log.Printf("[%s] sent message to claude (one-shot turn)", hp.SessionID)
 	return nil
 }
 
