@@ -1476,12 +1476,20 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 		})
 	}
 
-	// After history, rehydrate any still-queued or in-flight turns — they aren't in the
-	// transcript yet (not delivered, or not completed), so without this a message still
-	// waiting after a refresh would simply vanish from the UI until it's delivered. Sent
-	// on the same connection right after history, so it always lands after the re-render.
+	// After history, rehydrate any still-queued turn the transcript DOESN'T already show —
+	// a message sent then left queued (behind a turn, or on a down process) would otherwise
+	// vanish from the UI until it's delivered. Crucially we EXCLUDE any whose turn is already
+	// in the transcript: those are drawn by the history above, and re-adding them here draws
+	// the "my message shows up again at the bottom" duplicate on reconnect (the client can't
+	// dedup a snapshot bubble against a history bubble — history messages carry no clientId).
 	if h.pending != nil {
-		if snap := h.pending.snapshot(client.sessionID); len(snap) > 0 {
+		var snap []PendingView
+		for _, m := range h.pending.snapshot(client.sessionID) {
+			if !h.transcriptHasUserTurn(client.sessionID, m.Text) {
+				snap = append(snap, m)
+			}
+		}
+		if len(snap) > 0 {
 			h.sendJSON(client, map[string]interface{}{"type": "pending", "messages": snap})
 		}
 	}
