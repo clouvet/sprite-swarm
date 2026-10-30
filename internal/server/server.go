@@ -875,12 +875,17 @@ func (s *Server) performSelfUpdate(w http.ResponseWriter, ctx context.Context) {
 	if willUpdate {
 		go func() {
 			time.Sleep(300 * time.Millisecond) // let the response flush
-			s.hub.PrepareForReexec()           // reap claude children so they don't zombie / double-write across the exec
-			log.Printf("self-update: %s — re-execing", detail)
-			if err := s.fleet.Reexec(); err != nil {
-				log.Printf("self-update: re-exec failed (%v); exiting for service restart", err)
-				os.Exit(0) // boot command keeps the swapped on-disk binary
-			}
+			// Wait for the sprite to be between turns before re-execing, so a roll never
+			// kills an in-flight turn (the binary is already swapped on disk; this just
+			// picks the moment). Queued messages persist and replay after the exec.
+			s.hub.ReexecWhenIdle(func() {
+				s.hub.PrepareForReexec() // reap any straggler so it doesn't zombie / double-write across the exec
+				log.Printf("self-update: %s — re-execing", detail)
+				if err := s.fleet.Reexec(); err != nil {
+					log.Printf("self-update: re-exec failed (%v); exiting for service restart", err)
+					os.Exit(0) // boot command keeps the swapped on-disk binary
+				}
+			})
 		}()
 	}
 }
@@ -893,12 +898,15 @@ func (s *Server) reexecOntoStaged() {
 		return
 	}
 	time.Sleep(300 * time.Millisecond)
-	s.hub.PrepareForReexec() // reap claude children so they don't zombie / double-write across the exec
-	log.Printf("self-upgrade: %s — re-execing", detail)
-	if err := s.fleet.Reexec(); err != nil {
-		log.Printf("self-upgrade: re-exec failed (%v); exiting for service restart", err)
-		os.Exit(0)
-	}
+	// Between-turns re-exec, same as the self-update path: never interrupt a running turn.
+	s.hub.ReexecWhenIdle(func() {
+		s.hub.PrepareForReexec() // reap any straggler so it doesn't zombie / double-write across the exec
+		log.Printf("self-upgrade: %s — re-execing", detail)
+		if err := s.fleet.Reexec(); err != nil {
+			log.Printf("self-upgrade: re-exec failed (%v); exiting for service restart", err)
+			os.Exit(0)
+		}
+	})
 }
 
 // serveUpgrade checks for and applies a release upgrade. GET reports the running

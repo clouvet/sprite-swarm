@@ -731,6 +731,37 @@ func (h *Hub) PrepareForReexec() {
 	}
 }
 
+// reexec timing: how long to wait for in-flight turns to finish before re-execing anyway,
+// and how often to recheck. vars so tests can shrink them.
+var (
+	reexecMaxWait      = 15 * time.Minute
+	reexecPollInterval = 2 * time.Second
+)
+
+// ReexecWhenIdle defers a self-update re-exec until the sprite is BETWEEN turns, so a roll
+// never kills work in progress. One process per turn means a live process == a turn
+// running; when the count hits zero the sprite is idle and re-execing is safe (queued
+// messages are persisted and replay after the exec). It waits up to reexecMaxWait so one
+// very long turn can't block a roll forever, then proceeds. The caller's reexec closure
+// still does PrepareForReexec + Reexec. Call in a goroutine — it blocks.
+func (h *Hub) ReexecWhenIdle(reexec func()) {
+	h.awaitIdle(func() bool { return h.processMgr.GetProcessCount() == 0 }, reexecMaxWait, reexecPollInterval)
+	reexec()
+}
+
+// awaitIdle blocks until idle() is true or maxWait elapses (polling every poll). Factored
+// out (injectable predicate/clock-free loop) so the wait logic is unit-testable.
+func (h *Hub) awaitIdle(idle func() bool, maxWait, poll time.Duration) {
+	deadline := time.Now().Add(maxWait)
+	for !idle() {
+		if !time.Now().Before(deadline) {
+			log.Printf("re-exec: a turn is still running after %s — proceeding (it will be interrupted)", maxWait)
+			return
+		}
+		time.Sleep(poll)
+	}
+}
+
 func (h *Hub) handleInterrupt(client *Client) {
 	log.Printf("[%s] interrupt", client.sessionID)
 	// Stop the running turn's process. One process per turn, so this ends the turn.
