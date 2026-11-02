@@ -26,6 +26,10 @@ func (s *Service) FleetContext(ctx context.Context, memLimit int, cwd string) (s
 	var b strings.Builder
 	b.WriteString(s.timeContext(ctx))
 	b.WriteString("\n")
+	if op := s.operatorContext(ctx); op != "" {
+		b.WriteString(op)
+		b.WriteString("\n")
+	}
 	if pr := s.branchPRContext(cwd); pr != "" {
 		b.WriteString(pr)
 		b.WriteString("\n")
