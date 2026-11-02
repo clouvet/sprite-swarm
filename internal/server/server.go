@@ -53,6 +53,8 @@ type Fleet interface {
 	SearchFleet(ctx context.Context, query string, includeAsleep bool) (interface{}, error)
 	Timezone(ctx context.Context) string
 	SetTimezone(ctx context.Context, name string) error
+	OperatorIdentity(ctx context.Context) string
+	SetOperatorIdentity(ctx context.Context, identity string) error
 	MCPRegistry(ctx context.Context) (map[string]json.RawMessage, error)
 	SetMCPServer(ctx context.Context, name string, config json.RawMessage) error
 	DeleteMCPServer(ctx context.Context, name string) error
@@ -290,6 +292,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fleet/transcripts", s.serveTranscripts)
 	mux.HandleFunc("/api/fleet/search", s.serveFleetSearch)
 	mux.HandleFunc("/api/timezone", s.serveTimezone)
+	mux.HandleFunc("/api/fleet/operator", s.serveOperator)
 	mux.HandleFunc("/api/memory", s.serveMemory)
 	mux.HandleFunc("/api/memory/", s.serveMemoryByPath)
 	mux.HandleFunc("/api/policy", s.servePolicy)
@@ -537,6 +540,29 @@ func (s *Server) serveTimezone(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]string{"timezone": s.fleet.Timezone(r.Context())})
+}
+
+// serveOperator reports (GET) or sets (POST {"identity":"…"}) the operator-identity
+// blob: who runs this fleet and the handles they go by, so every turn's context can
+// tell a worker that a Slack/GitHub/email identity IS the user, not a third party.
+// Fleet-wide (brain); empty identity clears it. Personal data lives only here, never
+// in source.
+func (s *Server) serveOperator(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		http.Error(w, "fleet brain not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var body struct {
+			Identity string `json:"identity"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := s.fleet.SetOperatorIdentity(r.Context(), body.Identity); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"operator": s.fleet.OperatorIdentity(r.Context())})
 }
 
 // serveSpawn creates another sprite running this same artifact (M4). When no

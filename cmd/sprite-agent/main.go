@@ -398,6 +398,13 @@ func fleetAffordance(cfg config.Config, spawnAvailable, githubAvailable bool) st
 		"procedure); anything else can be a top-level .md. It syncs fleet-wide automatically, so the next "+
 		"worker starts already knowing. Make writing memory as second-nature as committing code.",
 		mem, mem, own)
+	b.WriteString(" OPERATOR: the injected fleet context may include a '## Operator' block naming the human " +
+		"you work for and the handles they go by across platforms. Honor it: any of those identities you meet " +
+		"while reading Slack, GitHub, Discourse, or email IS this user — the person in the chat — not a third " +
+		"party, so write 'you'/'your' and never report their own actions back to them in the third person. When " +
+		"the human tells you who they are, or a new handle/alias/email of theirs, persist it fleet-wide: POST " +
+		"/api/fleet/operator {\"identity\":\"<a short blob: name + handle per platform + emails>\"} (GET to read, " +
+		"empty identity clears it). ")
 	b.WriteString(" TIME & LOCATION: the injected fleet context starts with a '## Now' line giving the " +
 		"current time in the user's local timezone AND UTC, plus a note when significant time has passed " +
 		"since the previous turn here. WATCH FOR GAPS — if you're resuming a chat after hours (e.g. " +

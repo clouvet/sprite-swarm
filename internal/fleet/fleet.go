@@ -36,6 +36,8 @@ type Service struct {
 	attendanceProbe func() (bool, string) // reports whether a human is attached + to which session
 	tzName          string                // cached IANA timezone (brain-backed; default Asia/Ho_Chi_Minh)
 	tzFetched       time.Time             // when tzName was last read from the brain
+	opIdentity      string                // cached operator-identity blob (brain-backed; empty until configured)
+	opFetched       time.Time             // when opIdentity was last read from the brain
 	lastContext     time.Time             // last FleetContext render, for per-turn time-gap detection
 
 	taskMu   sync.Mutex                               // serializes inbox drains (one at a time)
