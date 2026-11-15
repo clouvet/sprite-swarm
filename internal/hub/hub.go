@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,8 +128,8 @@ func NewHub(cfg Config) *Hub {
 	// Replay any input that was queued when a previous process exited (self-update
 	// reexec, OOM). Delivery happens on the next pump (client connect / new turn).
 	h.pending.load()
-	go h.watchProjectsDirectory()
-	go h.startPumpSweep()
+	h.goSafe("watchProjectsDirectory", func() { h.watchProjectsDirectory() })
+	h.goSafe("startPumpSweep", func() { h.startPumpSweep() })
 	return h
 }
 
@@ -360,7 +361,7 @@ func (h *Hub) registerClient(client *Client) {
 	// a reconnect after the turn finished (resume but not generating) still gets the
 	// full, authoritative history from the transcript.
 	if sess.ClaudeUUID != "" && !(client.resume && isGenerating) {
-		go h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating, client.historySig)
+		h.goSafe("sendHistoryToClient", func() { h.sendHistoryToClient(client, sess.ClaudeUUID, isGenerating, client.historySig) })
 	}
 
 	// Don't eager-spawn a process on connect. The picker sends the chosen model with
@@ -372,7 +373,7 @@ func (h *Hub) registerClient(client *Client) {
 	// Deliver anything queued from before this connection (e.g. a message that
 	// survived a compaction/restart while no client was attached). Goroutine so it
 	// never runs under h.mu — pumpPending takes h.mu.RLock via GetSession.
-	go h.pumpPending(client.sessionID)
+	h.goSafe("pumpPending", func() { h.pumpPending(client.sessionID) })
 
 	h.sendJSON(client, map[string]interface{}{
 		"type":      "system",
@@ -773,7 +774,7 @@ func (h *Hub) handleInterrupt(client *Client) {
 	h.pending.confirm(client.sessionID, func(pendingMsg) bool { return true })
 	resultMsg, _ := json.Marshal(map[string]interface{}{"type": "result"})
 	h.broadcastToSession(&BroadcastMessage{SessionID: client.sessionID, Data: resultMsg})
-	go h.pumpPending(client.sessionID)
+	h.goSafe("pumpPending", func() { h.pumpPending(client.sessionID) })
 }
 
 // InjectMessage delivers a message into a local session as if a user sent it —
@@ -829,7 +830,7 @@ func (h *Hub) spawnClaudeForSession(sessionID string, sess *session.Session) {
 	// Start the output reader only for a freshly-created process, so racing spawns
 	// (connect + pump) never attach two readers to one OutputChan.
 	if created {
-		go h.handleClaudeOutput(sessionID, hp)
+		h.goSafe("handleClaudeOutput", func() { h.handleClaudeOutput(sessionID, hp) })
 	}
 }
 
@@ -1377,7 +1378,7 @@ func (h *Hub) startFileWatchingLocked(sessionID string, sess *session.Session) {
 	}
 	h.watchers[sessionID] = w
 	w.Start()
-	go h.handleWatcherEvents(sessionID, w)
+	h.goSafe("handleWatcherEvents", func() { h.handleWatcherEvents(sessionID, w) })
 }
 
 // RemoveSession evicts a session from the hub entirely (kills its process, stops
@@ -1490,14 +1491,14 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 
 	// The client already has exactly this history rendered — skip the heavy re-send.
 	if clientSig != "" && clientSig == curSig {
-		h.sendJSON(client, map[string]interface{}{
+		h.sendJSONSafe(client, map[string]interface{}{
 			"type":          "history_nochange",
 			"isGenerating":  isGenerating,
 			"sig":           curSig,
 			"resolvedModel": resolvedModel,
 		})
 	} else if len(messages) > 0 || isGenerating {
-		h.sendJSON(client, map[string]interface{}{
+		h.sendJSONSafe(client, map[string]interface{}{
 			"type":          "history",
 			"messages":      messages,
 			"isGenerating":  isGenerating,
@@ -1521,17 +1522,14 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 			}
 		}
 		if len(snap) > 0 {
-			h.sendJSON(client, map[string]interface{}{"type": "pending", "messages": snap})
+			h.sendJSONSafe(client, map[string]interface{}{"type": "pending", "messages": snap})
 		}
 	}
 
 	if isGenerating {
 		if sess := h.GetSession(client.sessionID); sess != nil {
 			for _, block := range sess.GetStreamingState().ActiveContentBlocks {
-				select {
-				case client.send <- block:
-				default:
-				}
+				h.sendRawSafe(client, block)
 			}
 		}
 	}
@@ -1577,7 +1575,11 @@ func (h *Hub) SessionResult(sessionID string) (text string, tsMillis int64, ok b
 	return text, tsMillis, ok
 }
 
-// sendJSON marshals v and sends it to one client (best-effort).
+// sendJSON marshals v and sends it to one client (best-effort, non-blocking). It does
+// NOT take h.mu, so it is safe ONLY for callers that already hold the lock (e.g.
+// registerClient) or otherwise know the client is live and its send channel open. A
+// detached goroutine must use sendJSONSafe/sendRawSafe, which guard against a concurrent
+// disconnect closing the channel.
 func (h *Hub) sendJSON(client *Client, v interface{}) {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -1587,6 +1589,53 @@ func (h *Hub) sendJSON(client *Client, v interface{}) {
 	case client.send <- data:
 	default:
 	}
+}
+
+// goSafe runs fn in a new goroutine under a recover, so a panic in a detached hub
+// goroutine is logged (with a stack) instead of taking down the whole agent — an
+// unrecovered panic in ANY goroutine crashes the process, which once 502'd every chat.
+// label identifies the goroutine in the log.
+func (h *Hub) goSafe(label string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("hub goroutine %q recovered from panic: %v\n%s", label, r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+}
+
+// sendRawSafe delivers pre-marshaled bytes to one client from a goroutine that does NOT
+// hold h.mu (e.g. the detached history streamer). close(client.send) only happens under
+// h.mu.Lock, so sending under RLock after confirming the client is still registered makes
+// a send-on-closed-channel panic impossible — the fix for the whole agent crashing when a
+// client disconnects (switches chats) mid history-send. A full client is skipped, as in
+// broadcastToSession.
+func (h *Hub) sendRawSafe(client *Client, data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set, ok := h.clients[client.sessionID]
+	if !ok {
+		return
+	}
+	if _, present := set[client]; !present {
+		return
+	}
+	select {
+	case client.send <- data:
+	default:
+	}
+}
+
+// sendJSONSafe is sendRawSafe with JSON marshaling — the disconnect-safe form of sendJSON
+// for detached goroutines.
+func (h *Hub) sendJSONSafe(client *Client, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	h.sendRawSafe(client, data)
 }
 
 // SessionInfo is a hub session for the session-list UI.
