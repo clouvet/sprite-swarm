@@ -1,6 +1,23 @@
 package hub
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// goSafe must contain a panic in a detached hub goroutine (log + continue) rather than
+// letting it crash the whole process — the second half of the chat-switch-crash fix.
+func TestGoSafeRecoversPanic(t *testing.T) {
+	h := &Hub{}
+	done := make(chan struct{})
+	h.goSafe("boom", func() { defer close(done); panic("boom") })
+	select {
+	case <-done:
+		// Reaching here (test process still alive) means the panic was recovered.
+	case <-time.After(2 * time.Second):
+		t.Fatal("goSafe goroutine did not run")
+	}
+}
 
 // Reproduces the crash: a detached history goroutine sending to a client that has
 // just disconnected (chat switch) hit `send on closed channel` and panicked the whole
