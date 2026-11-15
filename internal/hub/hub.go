@@ -1490,14 +1490,14 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 
 	// The client already has exactly this history rendered — skip the heavy re-send.
 	if clientSig != "" && clientSig == curSig {
-		h.sendJSON(client, map[string]interface{}{
+		h.sendJSONSafe(client, map[string]interface{}{
 			"type":          "history_nochange",
 			"isGenerating":  isGenerating,
 			"sig":           curSig,
 			"resolvedModel": resolvedModel,
 		})
 	} else if len(messages) > 0 || isGenerating {
-		h.sendJSON(client, map[string]interface{}{
+		h.sendJSONSafe(client, map[string]interface{}{
 			"type":          "history",
 			"messages":      messages,
 			"isGenerating":  isGenerating,
@@ -1521,17 +1521,14 @@ func (h *Hub) sendHistoryToClient(client *Client, claudeUUID string, isGeneratin
 			}
 		}
 		if len(snap) > 0 {
-			h.sendJSON(client, map[string]interface{}{"type": "pending", "messages": snap})
+			h.sendJSONSafe(client, map[string]interface{}{"type": "pending", "messages": snap})
 		}
 	}
 
 	if isGenerating {
 		if sess := h.GetSession(client.sessionID); sess != nil {
 			for _, block := range sess.GetStreamingState().ActiveContentBlocks {
-				select {
-				case client.send <- block:
-				default:
-				}
+				h.sendRawSafe(client, block)
 			}
 		}
 	}
@@ -1577,7 +1574,11 @@ func (h *Hub) SessionResult(sessionID string) (text string, tsMillis int64, ok b
 	return text, tsMillis, ok
 }
 
-// sendJSON marshals v and sends it to one client (best-effort).
+// sendJSON marshals v and sends it to one client (best-effort, non-blocking). It does
+// NOT take h.mu, so it is safe ONLY for callers that already hold the lock (e.g.
+// registerClient) or otherwise know the client is live and its send channel open. A
+// detached goroutine must use sendJSONSafe/sendRawSafe, which guard against a concurrent
+// disconnect closing the channel.
 func (h *Hub) sendJSON(client *Client, v interface{}) {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -1587,6 +1588,38 @@ func (h *Hub) sendJSON(client *Client, v interface{}) {
 	case client.send <- data:
 	default:
 	}
+}
+
+// sendRawSafe delivers pre-marshaled bytes to one client from a goroutine that does NOT
+// hold h.mu (e.g. the detached history streamer). close(client.send) only happens under
+// h.mu.Lock, so sending under RLock after confirming the client is still registered makes
+// a send-on-closed-channel panic impossible — the fix for the whole agent crashing when a
+// client disconnects (switches chats) mid history-send. A full client is skipped, as in
+// broadcastToSession.
+func (h *Hub) sendRawSafe(client *Client, data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set, ok := h.clients[client.sessionID]
+	if !ok {
+		return
+	}
+	if _, present := set[client]; !present {
+		return
+	}
+	select {
+	case client.send <- data:
+	default:
+	}
+}
+
+// sendJSONSafe is sendRawSafe with JSON marshaling — the disconnect-safe form of sendJSON
+// for detached goroutines.
+func (h *Hub) sendJSONSafe(client *Client, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	h.sendRawSafe(client, data)
 }
 
 // SessionInfo is a hub session for the session-list UI.

@@ -34,7 +34,7 @@ func TestHistoryETag(t *testing.T) {
 	t.Setenv("HOME", home)
 	work := filepath.Join(home, "work")
 
-	h := &Hub{cfg: providers{workDir: work}, sessions: map[string]*session.Session{}}
+	h := &Hub{cfg: providers{workDir: work}, sessions: map[string]*session.Session{}, clients: map[string]map[*Client]bool{}}
 	sid := "sess-etag"
 	dir := config.ProjectsDirFor(filepath.Join(work, "chats", sid))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -49,6 +49,7 @@ func TestHistoryETag(t *testing.T) {
 
 	// First load (no client sig) → full history with a signature.
 	c := &Client{sessionID: sid, send: make(chan []byte, 8)}
+	h.clients[sid] = map[*Client]bool{c: true} // registered, as registerClient does before launching the history goroutine
 	h.sendHistoryToClient(c, sid, false, "")
 	m1 := drainMsg(t, c)
 	if m1["type"] != "history" {
